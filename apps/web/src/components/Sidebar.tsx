@@ -58,9 +58,9 @@ export function Sidebar() {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
-        <div className={styles.mark}>M</div>
+        <div className={styles.mark}>R</div>
         <div className={styles.brandName}>
-          Meridian <span className={styles.brandSuffix}>FinOps</span>
+          RBCZ <span className={styles.brandSuffix}>FinOps</span>
         </div>
       </div>
 

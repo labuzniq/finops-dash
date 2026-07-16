@@ -7,7 +7,7 @@
 
 ## Overview
 
-First page of a multi-page FinOps console ("Meridian FinOps"). It reports GitHub Copilot spend for an org (~1,000 seats): total spend and trend, seat utilization, per-user usage & cost, and wasted spend (idle seats). Data is ingested from GitHub's Copilot APIs, with CSV upload and manual entry as fallbacks. Light/dark mode, filterable by date range, editor/IDE, language, and user search.
+First page of a multi-page FinOps console ("RBCZ FinOps"). It reports GitHub Copilot spend for an org (~1,000 seats): total spend and trend, seat utilization, per-user usage & cost, and wasted spend (idle seats). Data is ingested from GitHub's Copilot APIs, with CSV upload and manual entry as fallbacks. Light/dark mode, filterable by date range, editor/IDE, language, and user search.
 
 **Target implementation: React + TypeScript.** No existing codebase was specified — Vite + React + TS (or Next.js if server rendering is wanted) is the recommended starting point.
 
@@ -77,7 +77,7 @@ interface SpendPoint { date: Date; license: number; premiumOverage: number; }
 One screen: **Copilot spend report**, full-viewport, two-column shell.
 
 ### Shell
-- **Sidebar** — 238px fixed, sticky full height, `--card` background, 1px right border (`--border`). Contents top→bottom: brand row (26px accent square with "M", "Meridian FinOps" 15px/600); group label "OVERVIEW" (10.5px/600, letter-spacing .1em, `--faint`); nav items (13.5px, 8px 10px padding, radius 8, `--muted`, hover `--card2`); groups SPEND (GitHub Copilot **active**: accent text on 10% accent tint, Cloud infrastructure, LLM APIs, SaaS licenses) and DATA (Data sources, Imports); flex spacer; user card (28px round avatar, name 12.5px/600, role 11px `--faint`). Nav icons are simple 11px geometric shapes (square/circle/diamond outlines) in `currentColor` — replace with Phosphor icons in production (Nocturne's icon set).
+- **Sidebar** — 238px fixed, sticky full height, `--card` background, 1px right border (`--border`). Contents top→bottom: brand row (26px accent square with "R", "RBCZ FinOps" 15px/600); group label "OVERVIEW" (10.5px/600, letter-spacing .1em, `--faint`); nav items (13.5px, 8px 10px padding, radius 8, `--muted`, hover `--card2`); groups SPEND (GitHub Copilot **active**: accent text on 10% accent tint, Cloud infrastructure, LLM APIs, SaaS licenses) and DATA (Data sources, Imports); flex spacer; user card (28px round avatar, name 12.5px/600, role 11px `--faint`). Nav icons are simple 11px geometric shapes (square/circle/diamond outlines) in `currentColor` — replace with Phosphor icons in production (Nocturne's icon set).
 - **Main column** — fluid, max-width 1560px, padding 24px 30px 30px, vertical stack with 16px gap.
 
 ### Header row
