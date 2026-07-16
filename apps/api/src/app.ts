@@ -24,9 +24,6 @@ const PUBLIC_PATHS = new Set([
   '/v1/logs',
 ]);
 
-/** Open endpoints: health, and the auth handshake itself. Everything else needs the cookie. */
-const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/me', '/api/auth/logout']);
-
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
