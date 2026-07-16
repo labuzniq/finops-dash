@@ -1,6 +1,7 @@
 import type { RangeDays } from '@dash/shared';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
+import type { GroupBy } from '../lib/metrics/group.js';
 import type { SortDirection, SortKey } from '../lib/metrics/table.js';
 
 /**
@@ -18,6 +19,8 @@ export interface DashboardState {
   search: string;
   sortKey: SortKey;
   sortDirection: SortDirection;
+  /** How the per-user table collapses its rows: none, or by model/activity/editor. */
+  groupBy: GroupBy;
   page: number;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
@@ -32,6 +35,7 @@ export const initialDashboardState: DashboardState = {
   search: '',
   sortKey: 'cost',
   sortDirection: -1,
+  groupBy: 'none',
   page: 0,
   tableView: 'users',
   modalOpen: false,
@@ -44,6 +48,7 @@ export type DashboardAction =
   | { type: 'setLanguage'; language: LanguageFilter }
   | { type: 'setSearch'; search: string }
   | { type: 'toggleSort'; key: SortKey }
+  | { type: 'setGroupBy'; groupBy: GroupBy }
   | { type: 'setPage'; page: number }
   | { type: 'setTableView'; view: TableView }
   | { type: 'openModal' }
@@ -68,6 +73,10 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
       return state.sortKey === action.key
         ? { ...state, sortDirection: state.sortDirection === -1 ? 1 : -1 }
         : { ...state, sortKey: action.key, sortDirection: -1, page: 0 };
+
+    // Grouping supersedes paging; reset the page so returning to the flat view starts at the top.
+    case 'setGroupBy':
+      return { ...state, groupBy: action.groupBy, page: 0 };
 
     case 'setPage':
       return { ...state, page: action.page };

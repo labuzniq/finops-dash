@@ -4,6 +4,8 @@ import type { CopilotSeat, SpendPoint } from '@dash/shared';
 import { buildChartGeometry } from '../lib/metrics/chart.js';
 import type { ChartGeometry } from '../lib/metrics/chart.js';
 import { filterSeats } from '../lib/metrics/filter.js';
+import { groupSeats } from '../lib/metrics/group.js';
+import type { SeatGroup } from '../lib/metrics/group.js';
 import { reclaimCandidates } from '../lib/metrics/idle.js';
 import type { ReclaimCandidate } from '../lib/metrics/idle.js';
 import { paginate, sortSeats } from '../lib/metrics/table.js';
@@ -28,6 +30,8 @@ export interface DashboardMetrics {
   chart: ChartGeometry;
   utilization: Utilization;
   page: Page<CopilotSeat>;
+  /** Sorted seats bucketed by the active group dimension; empty when grouping is off. */
+  groups: SeatGroup[];
   reclaim: ReclaimCandidate[];
   /** Average spend per seat that was actually used in the last 28 days. */
   avgCostPerActiveUser: number;
@@ -66,6 +70,12 @@ export function useDashboardMetrics(
 
   const page = useMemo(() => paginate(sorted, state.page), [sorted, state.page]);
 
+  // Group the already-sorted seats so sections inherit the active sort order.
+  const groups = useMemo(
+    () => groupSeats(sorted, state.groupBy, state.range),
+    [sorted, state.groupBy, state.range],
+  );
+
   const premiumRequestsUsed = useMemo(
     () =>
       Math.round(
@@ -83,6 +93,7 @@ export function useDashboardMetrics(
     chart,
     utilization,
     page,
+    groups,
     reclaim,
     avgCostPerActiveUser: utilization.activeCount === 0 ? 0 : spend.total / utilization.activeCount,
     wastedMonthly,

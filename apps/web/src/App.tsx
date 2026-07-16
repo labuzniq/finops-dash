@@ -138,10 +138,13 @@ export function App() {
                 {state.tableView === 'users' ? (
                   <UserTable
                     page={metrics.page}
+                    groups={metrics.groups}
+                    groupBy={state.groupBy}
                     range={state.range}
                     sortKey={state.sortKey}
                     sortDirection={state.sortDirection}
                     onSort={(key) => dispatch({ type: 'toggleSort', key })}
+                    onGroupByChange={(groupBy) => dispatch({ type: 'setGroupBy', groupBy })}
                     onPageChange={(page) => dispatch({ type: 'setPage', page })}
                   />
                 ) : (
