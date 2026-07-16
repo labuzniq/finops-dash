@@ -130,6 +130,20 @@
   }
 }
 
+/* Input / output / cache small multiples — one series per card. */
+.tokenKindRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .tokenKindRow {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Chart — the same fixed-viewbox SVG treatment as the spend trend. */
 .chartHeader {
   display: flex;
