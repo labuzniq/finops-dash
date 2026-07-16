@@ -1,4 +1,4 @@
-# Dash — Meridian FinOps
+# RBCZ FinOps Dashboard
 
 GitHub Copilot spend dashboard. React + TypeScript frontend, Fastify + Postgres backend,
 in a pnpm monorepo.
