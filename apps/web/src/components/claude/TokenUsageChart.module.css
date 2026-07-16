@@ -1,4 +1,4 @@
-/* Daily-token stacked bars — the CostChart plot treatment, bar-shaped. */
+/* Token-series line charts — the CostChart plot treatment, token-labelled. */
 
 .chartHeader {
   display: flex;
@@ -12,44 +12,15 @@
   font-weight: 600;
 }
 
-.legend {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-weight: 500;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.legendItem {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.swatch {
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-}
-
-/* Monochrome accent ramp: parts of one whole, darkest at the baseline. */
-.input {
-  background: var(--accent);
-}
-
-.output {
-  background: color-mix(in srgb, var(--accent) 55%, var(--card));
-}
-
-.cache {
-  background: color-mix(in srgb, var(--accent) 24%, var(--card));
-}
-
 .plot {
   position: relative;
   height: 250px;
   margin-top: 14px;
+}
+
+/* The input/output/cache small multiples get a shorter plot. */
+.plotSmall {
+  height: 150px;
 }
 
 .gridLine {
@@ -74,27 +45,19 @@
   right: 0;
   top: 0;
   width: 100%;
-  height: 240px;
+  height: calc(100% - 10px);
   display: block;
   overflow: visible;
 }
 
-/* The surface-coloured stroke is the spacer between segments and bars. */
-.segment {
-  stroke: var(--card);
-  stroke-width: 1.5;
+.area {
+  fill: color-mix(in oklab, var(--accent) 13%, transparent);
 }
 
-.segmentInput {
-  fill: var(--accent);
-}
-
-.segmentOutput {
-  fill: color-mix(in srgb, var(--accent) 55%, var(--card));
-}
-
-.segmentCache {
-  fill: color-mix(in srgb, var(--accent) 24%, var(--card));
+.line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
 }
 
 .xLabels {

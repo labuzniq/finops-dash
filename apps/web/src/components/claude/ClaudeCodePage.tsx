@@ -103,7 +103,15 @@ export function ClaudeCodePage() {
     [rollupQuery.data, range, user, model],
   );
   const chart = useMemo(() => buildChartGeometry(summary.points), [summary.points]);
-  const tokenChart = useMemo(() => buildTokenChartGeometry(summary.dailyTokens), [summary.dailyTokens]);
+  const tokenCharts = useMemo(
+    () => ({
+      total: buildTokenChartGeometry(summary.dailyTokens, 'total'),
+      input: buildTokenChartGeometry(summary.dailyTokens, 'input'),
+      output: buildTokenChartGeometry(summary.dailyTokens, 'output'),
+      cache: buildTokenChartGeometry(summary.dailyTokens, 'cache'),
+    }),
+    [summary.dailyTokens],
+  );
 
   const hasAnyData = (rollupQuery.data?.length ?? 0) > 0;
 
@@ -230,7 +238,13 @@ export function ClaudeCodePage() {
 
           <div className={styles.chartRow}>
             <CostChart chart={chart} />
-            <TokenUsageChart geometry={tokenChart} />
+            <TokenUsageChart title="Daily tokens" geometry={tokenCharts.total} />
+          </div>
+
+          <div className={styles.tokenKindRow}>
+            <TokenUsageChart title="Input tokens" geometry={tokenCharts.input} small />
+            <TokenUsageChart title="Output tokens" geometry={tokenCharts.output} small />
+            <TokenUsageChart title="Cache tokens" geometry={tokenCharts.cache} small />
           </div>
 
           <TokenLeaderboard rows={summary.topUsersByTokens} />
