@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.local
+.DS_Store
+*.tsbuildinfo
+part*.json
+*.openapi.json
+.claude/worktrees/

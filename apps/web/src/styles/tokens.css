@@ -1,0 +1,56 @@
+/**
+ * Nocturne tokens — the interface layer of design-system/styles.css.
+ *
+ * The design system ships 100–900 tonal ramps; this is the semantic slice the
+ * dashboard actually paints with, matching the prototype's `.theme` block
+ * value-for-value. Take every colour from here, never a literal hex.
+ *
+ * Light is the base; `.dark` overrides it. Both read the accent from the
+ * `.acc-*` class so the accent is swappable without touching a component.
+ */
+
+.theme {
+  --bg: #f3f5fe;
+  --card: #ffffff;
+  --card2: #e9ecf8;
+  --border: color-mix(in srgb, #292b31 16%, transparent);
+  --border2: color-mix(in srgb, #292b31 8%, transparent);
+  --text: #292b31;
+  --muted: #75798c;
+  --faint: #9397ab;
+  --pos: #1a7f4e;
+  --neg: #c23934;
+  --shadow: 0 1px 2px rgba(41, 43, 49, 0.08);
+
+  /* Light grounds need the deeper accent step to hold contrast. */
+  --accent: var(--acc);
+
+  font-variant-numeric: tabular-nums;
+}
+
+.theme.dark {
+  --bg: #161826;
+  --card: #232532;
+  --card2: #292b31;
+  --border: color-mix(in srgb, #e9e9ed 16%, transparent);
+  --border2: color-mix(in srgb, #e9e9ed 8%, transparent);
+  --text: #e9e9ed;
+  --muted: #9397ab;
+  --faint: #75798c;
+  --pos: #3fae76;
+  --neg: #e2685f;
+  --shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+
+  --accent: var(--acc-hi);
+}
+
+/* Accent pairs: `--acc` for light grounds, `--acc-hi` for dark. */
+.acc-blurple {
+  --acc: #796cbf;
+  --acc-hi: #9184d9;
+}
+
+.acc-steel {
+  --acc: #7972a9;
+  --acc-hi: #a7a1db;
+}

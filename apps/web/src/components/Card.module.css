@@ -1,0 +1,15 @@
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.padded {
+  padding: 18px 20px;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+}

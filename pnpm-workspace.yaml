@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# esbuild ships a native binary and needs its postinstall to run (vite/tsx depend on it).
+allowBuilds:
+  esbuild: true

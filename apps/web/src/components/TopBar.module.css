@@ -1,0 +1,96 @@
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.subtitle {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.toggleLabel {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.track {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--border);
+  position: relative;
+}
+
+.knob {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.18s;
+}
+
+.knobDark {
+  transform: translateX(23px);
+}
+
+.button {
+  height: 34px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Secondary: a plain outlined control. */
+.secondary {
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.secondary:hover {
+  background: var(--card2);
+}
+
+/* Nocturne primaries are an accent outline — never a fill. */
+.primary {
+  padding: 0 16px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.primary:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}

@@ -1,0 +1,94 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1.4fr 0.9fr 0.6fr 0.9fr 1.1fr;
+  gap: 10px;
+  padding: 9px 20px;
+  align-items: center;
+}
+
+.headerStrip {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  border-bottom: 1px solid var(--border2);
+  font-size: 12.5px;
+}
+
+.row:hover {
+  background: var(--card2);
+}
+
+.model {
+  font: 500 12px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shareCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border2);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.shareLabel {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
+
+.empty {
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}

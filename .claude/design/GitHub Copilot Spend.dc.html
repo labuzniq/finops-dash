@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#161826;font-family:Inter,system-ui,sans-serif;}
+a{color:#9184d9;} a:hover{color:#b5abfc;}
+input,select,button{font-family:inherit;}
+.theme{--bg:#f3f5fe;--card:#ffffff;--card2:#e9ecf8;--border:color-mix(in srgb, #292b31 16%, transparent);--border2:color-mix(in srgb, #292b31 8%, transparent);--text:#292b31;--muted:#75798c;--faint:#9397ab;--pos:#1a7f4e;--neg:#c23934;--shadow:0 1px 2px rgba(41,43,49,.08);--accent:var(--acc);font-variant-numeric:tabular-nums;}
+.theme.dark{--bg:#161826;--card:#232532;--card2:#292b31;--border:color-mix(in srgb, #e9e9ed 16%, transparent);--border2:color-mix(in srgb, #e9e9ed 8%, transparent);--text:#e9e9ed;--muted:#9397ab;--faint:#75798c;--pos:#3fae76;--neg:#e2685f;--shadow:0 6px 18px rgba(0,0,0,0.35);--accent:var(--acc-hi);}
+.acc-blurple{--acc:#796cbf;--acc-hi:#9184d9;}
+.acc-steel{--acc:#7972a9;--acc-hi:#a7a1db;}
+.theme :focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.seg-on{background:var(--card) !important;color:var(--text) !important;box-shadow:var(--shadow);}
+.tab-on{color:var(--accent) !important;border-bottom-color:var(--accent) !important;}
+.theme ::placeholder{color:var(--faint);}
+</style>
+</helmet>
+
+<div class="theme {{ accentClass }} {{ a.darkC }}" data-screen-label="Copilot spend" style="min-height:100vh;display:flex;background:var(--bg);color:var(--text);position:relative;">
+
+  <aside style="width:238px;flex-shrink:0;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:22px 14px 18px;position:sticky;top:0;height:100vh;box-sizing:border-box;">
+    <div style="display:flex;align-items:center;gap:10px;padding:2px 10px 22px;">
+      <div style="width:26px;height:26px;border-radius:7px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:13px;">M</div>
+      <div style="font-weight:600;font-size:15px;">Meridian <span style="color:var(--faint);font-weight:400;">FinOps</span></div>
+    </div>
+    <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.1em;padding:6px 10px 6px;">OVERVIEW</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:11px;height:11px;border:1.6px solid currentColor;border-radius:3px;"></div>Dashboard</div>
+    <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.1em;padding:14px 10px 6px;">SPEND</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;background:color-mix(in oklab, var(--accent) 10%, transparent);color:var(--accent);font-weight:600;cursor:pointer;"><div style="width:11px;height:11px;background:currentColor;border-radius:3.5px;"></div>GitHub Copilot</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:11px;height:11px;border:1.6px solid currentColor;border-radius:50%;"></div>Cloud infrastructure</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:10px;height:10px;border:1.6px solid currentColor;transform:rotate(45deg);border-radius:2px;"></div>LLM APIs</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:11px;height:11px;background:currentColor;border-radius:50%;opacity:.55;"></div>SaaS licenses</div>
+    <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.1em;padding:14px 10px 6px;">DATA</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:11px;height:7px;border:1.6px solid currentColor;border-radius:5px;"></div>Data sources</div>
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--muted);cursor:pointer;" style-hover="background:var(--card2);color:var(--text);"><div style="width:11px;height:11px;border:1.6px dashed currentColor;border-radius:3px;"></div>Imports</div>
+    <div style="flex:1;"></div>
+    <div style="border-top:1px solid var(--border2);padding-top:12px;display:flex;align-items:center;gap:10px;padding-left:10px;padding-right:10px;">
+      <div style="width:28px;height:28px;border-radius:50%;background:color-mix(in oklab, var(--accent) 22%, var(--card2));display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--accent);">EK</div>
+      <div style="min-width:0;"><div style="font-size:12.5px;font-weight:600;">Elena K.</div><div style="font-size:11px;color:var(--faint);">FinOps admin</div></div>
+    </div>
+  </aside>
+
+  <main style="flex:1;min-width:0;padding:24px 30px 30px;display:flex;flex-direction:column;gap:16px;max-width:1560px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;">
+      <div>
+        <h1 style="margin:0;font-size:20px;font-weight:600;">GitHub Copilot</h1>
+        <div style="font-size:12.5px;color:var(--muted);margin-top:3px;">Spend report · Acme Corp · <span>1,000</span> seats assigned</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <div onClick="{{ a.toggleDark }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <span style="font-size:12px;color:var(--muted);">{{ a.themeLabel }}</span>
+          <div style="width:44px;height:24px;border-radius:12px;background:var(--border);position:relative;">
+            <div style="width:18px;height:18px;border-radius:50%;background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.25);position:absolute;top:3px;left:3px;transition:transform .18s;transform:{{ a.knobX }};"></div>
+          </div>
+        </div>
+        <button style="height:34px;padding:0 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;" style-hover="background:var(--card2);">Export CSV</button>
+        <button onClick="{{ a.openModal }}" style="height:34px;padding:0 16px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;" style-hover="background:color-mix(in srgb, var(--accent) 12%, transparent);">+ Add data</button>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <div style="display:flex;background:var(--border2);padding:3px;border-radius:9px;gap:2px;">
+        <button class="{{ a.r28c }}" onClick="{{ a.r28 }}" style="border:0;background:transparent;padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--muted);cursor:pointer;">28d</button>
+        <button class="{{ a.r56c }}" onClick="{{ a.r56 }}" style="border:0;background:transparent;padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--muted);cursor:pointer;">56d</button>
+        <button class="{{ a.r90c }}" onClick="{{ a.r90 }}" style="border:0;background:transparent;padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--muted);cursor:pointer;">90d</button>
+      </div>
+      <select value="{{ a.editor }}" onChange="{{ a.onEditor }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;cursor:pointer;">
+        <option value="All">All editors</option><option value="VS Code">VS Code</option><option value="JetBrains">JetBrains</option><option value="Visual Studio">Visual Studio</option><option value="Neovim">Neovim</option><option value="Xcode">Xcode</option>
+      </select>
+      <select value="{{ a.language }}" onChange="{{ a.onLang }}" style="height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;cursor:pointer;">
+        <option value="All">All languages</option><option value="TypeScript">TypeScript</option><option value="Python">Python</option><option value="Java">Java</option><option value="Go">Go</option><option value="C#">C#</option><option value="Ruby">Ruby</option><option value="Kotlin">Kotlin</option><option value="Rust">Rust</option>
+      </select>
+      <input value="{{ a.search }}" onChange="{{ a.onSearch }}" placeholder="Search user or login…" style="height:32px;width:210px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;" style-focus="border-color:var(--accent);">
+      <div style="flex:1;"></div>
+      <div style="font:500 11px Inter,sans-serif;color:var(--faint);">usage metrics API · synced 2h ago</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;">
+        <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.08em;">TOTAL SPEND · {{ a.rangeLbl }}</div>
+        <div style="font-size:26px;font-weight:600;margin-top:8px;">{{ a.spendFmt }}</div>
+        <div style="font-size:12px;margin-top:5px;font-weight:500;color:{{ a.deltaCol }};">{{ a.deltaTxt }}</div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;">
+        <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.08em;">AVG COST / ACTIVE USER</div>
+        <div style="font-size:26px;font-weight:600;margin-top:8px;">{{ a.avgFmt }}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:5px;">license + premium requests</div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;">
+        <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.08em;">SEAT UTILIZATION</div>
+        <div style="font-size:26px;font-weight:600;margin-top:8px;">{{ a.utilPct }}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:5px;">{{ a.activeTxt }} active in 28d</div>
+      </div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:16px 18px;">
+        <div style="font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.08em;">WASTED SPEND / MO</div>
+        <div style="font-size:26px;font-weight:600;margin-top:8px;color:var(--neg);">{{ a.wastedFmt }}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:5px;">{{ a.idleTxt }}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:14px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:14px;font-weight:600;">Spend trend</div>
+          <div style="display:flex;gap:16px;font-size:11.5px;color:var(--muted);">
+            <div style="display:flex;align-items:center;gap:6px;"><div style="width:10px;height:3px;border-radius:2px;background:var(--accent);"></div>Total spend</div>
+            <div style="display:flex;align-items:center;gap:6px;"><div style="width:10px;height:3px;border-radius:2px;background:var(--faint);"></div>Premium requests</div>
+          </div>
+        </div>
+        <div style="position:relative;height:250px;margin-top:14px;">
+          <sc-for list="{{ a.grid }}" as="g" hint-placeholder-count="3">
+            <div style="position:absolute;left:0;right:0;top:{{ g.top }};border-top:1px dashed var(--border2);">
+              <span style="position:absolute;right:0;top:-15px;font:500 10.5px Inter,sans-serif;color:var(--faint);">{{ g.lbl }}</span>
+            </div>
+          </sc-for>
+          <svg viewBox="0 0 900 240" preserveAspectRatio="none" style="position:absolute;left:0;right:0;top:0;width:100%;height:240px;display:block;overflow:visible;">
+            <path d="{{ a.areaPath }}" style="fill:color-mix(in oklab, var(--accent) 13%, transparent);"></path>
+            <path d="{{ a.linePath }}" vector-effect="non-scaling-stroke" style="fill:none;stroke:var(--accent);stroke-width:2;"></path>
+            <path d="{{ a.premPath }}" vector-effect="non-scaling-stroke" stroke-dasharray="4 4" style="fill:none;stroke:var(--faint);stroke-width:1.5;"></path>
+          </svg>
+          <div style="position:absolute;left:0;right:0;bottom:-6px;display:flex;justify-content:space-between;">
+            <sc-for list="{{ a.xLabels }}" as="x" hint-placeholder-count="5">
+              <div style="font:500 10.5px Inter,sans-serif;color:var(--faint);">{{ x.t }}</div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;gap:22px;margin-top:18px;padding-top:14px;border-top:1px solid var(--border2);font-size:12px;color:var(--muted);flex-wrap:wrap;">
+          <div>License: <span style="color:var(--text);font-weight:600;">{{ a.licFmt }}</span></div>
+          <div>Premium request overage: <span style="color:var(--text);font-weight:600;">{{ a.premFmt }}</span></div>
+          <div>Premium requests used: <span style="color:var(--text);font-weight:600;">{{ a.reqTotFmt }}</span></div>
+        </div>
+      </div>
+
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;display:flex;flex-direction:column;">
+        <div style="font-size:14px;font-weight:600;">Seat utilization</div>
+        <div style="display:flex;align-items:center;gap:20px;margin-top:14px;">
+          <div style="position:relative;width:150px;height:150px;flex-shrink:0;">
+            <svg viewBox="0 0 140 140" style="width:150px;height:150px;transform:rotate(-90deg);">
+              <circle cx="70" cy="70" r="56" style="fill:none;stroke:var(--border2);stroke-width:16;"></circle>
+              <circle cx="70" cy="70" r="56" stroke-dasharray="{{ a.seg4dash }}" stroke-dashoffset="{{ a.seg4off }}" style="fill:none;stroke:var(--border);stroke-width:16;"></circle>
+              <circle cx="70" cy="70" r="56" stroke-dasharray="{{ a.seg3dash }}" stroke-dashoffset="{{ a.seg3off }}" style="fill:none;stroke:var(--faint);stroke-width:16;"></circle>
+              <circle cx="70" cy="70" r="56" stroke-dasharray="{{ a.seg2dash }}" stroke-dashoffset="{{ a.seg2off }}" style="fill:none;stroke:color-mix(in oklab, var(--accent) 45%, var(--card));stroke-width:16;"></circle>
+              <circle cx="70" cy="70" r="56" stroke-dasharray="{{ a.seg1dash }}" stroke-dashoffset="{{ a.seg1off }}" style="fill:none;stroke:var(--accent);stroke-width:16;"></circle>
+            </svg>
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+              <div style="font-size:24px;font-weight:600;">{{ a.utilPct }}</div>
+              <div style="font-size:10.5px;color:var(--faint);">utilized</div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div style="width:9px;height:9px;border-radius:3px;background:var(--accent);flex-shrink:0;"></div>Active · 7d<div style="flex:1;"></div><span style="color:var(--text);">{{ a.leg1 }}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div style="width:9px;height:9px;border-radius:3px;background:color-mix(in oklab, var(--accent) 45%, var(--card));flex-shrink:0;"></div>Active · 8–28d<div style="flex:1;"></div><span style="color:var(--text);">{{ a.leg2 }}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div style="width:9px;height:9px;border-radius:3px;background:var(--faint);flex-shrink:0;"></div>Dormant · 30d+<div style="flex:1;"></div><span style="color:var(--text);">{{ a.leg3 }}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);"><div style="width:9px;height:9px;border-radius:3px;background:var(--border);flex-shrink:0;"></div>Never used<div style="flex:1;"></div><span style="color:var(--text);">{{ a.leg4 }}</span></div>
+          </div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border2);font-size:12px;color:var(--muted);line-height:1.5;">Seats from the Copilot user-management API; activity from <span>last_activity_at</span>.</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:14px;">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;">
+          <div style="font-size:14px;font-weight:600;">Per-user usage &amp; cost</div>
+          <div style="font-size:11.5px;color:var(--faint);">{{ a.pageTxt }}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:2.1fr .8fr 1fr .95fr .95fr 1fr .9fr;padding:8px 20px;background:var(--card2);border-top:1px solid var(--border2);border-bottom:1px solid var(--border2);font:600 10.5px Inter,sans-serif;color:var(--faint);letter-spacing:.06em;">
+          <div>USER</div>
+          <div>PLAN</div>
+          <div>EDITOR</div>
+          <div onClick="{{ a.sortReq }}" style="cursor:pointer;" style-hover="color:var(--text);">PREM REQS {{ a.arrReq }}</div>
+          <div onClick="{{ a.sortAcc }}" style="cursor:pointer;" style-hover="color:var(--text);">ACCEPT {{ a.arrAcc }}</div>
+          <div onClick="{{ a.sortLast }}" style="cursor:pointer;" style-hover="color:var(--text);">LAST ACTIVE {{ a.arrLast }}</div>
+          <div onClick="{{ a.sortCost }}" style="cursor:pointer;text-align:right;" style-hover="color:var(--text);">COST {{ a.arrCost }}</div>
+        </div>
+        <sc-for list="{{ a.rows }}" as="u" hint-placeholder-count="12">
+          <div style="display:grid;grid-template-columns:2.1fr .8fr 1fr .95fr .95fr 1fr .9fr;align-items:center;padding:8px 20px;border-bottom:1px solid var(--border2);font-size:12.5px;" style-hover="background:var(--card2);">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              <div style="width:28px;height:28px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--text);background:{{ u.av }};">{{ u.ini }}</div>
+              <div style="min-width:0;"><div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ u.name }}</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--faint);">{{ u.login }}</div></div>
+            </div>
+            <div><span style="padding:2px 8px;border:1px solid var(--border);border-radius:20px;font-size:10.5px;color:var(--muted);">{{ u.plan }}</span></div>
+            <div style="color:var(--muted);">{{ u.editor }}</div>
+            <div>{{ u.req }}</div>
+            <div>{{ u.acc }}</div>
+            <div style="color:var(--muted);">{{ u.last }}</div>
+            <div style="font-weight:600;text-align:right;">{{ u.cost }}</div>
+          </div>
+        </sc-for>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 20px;">
+          <button onClick="{{ a.prev }}" style="height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:12px;cursor:pointer;" style-hover="color:var(--text);">← Prev</button>
+          <button onClick="{{ a.next }}" style="height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:12px;cursor:pointer;" style-hover="color:var(--text);">Next →</button>
+        </div>
+      </div>
+
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;display:flex;flex-direction:column;">
+        <div style="font-size:14px;font-weight:600;">Wasted spend</div>
+        <div style="font-size:28px;font-weight:600;color:var(--neg);margin-top:8px;">{{ a.wastedFmt }}<span style="font-size:13px;color:var(--faint);font-weight:500;"> /mo</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">{{ a.idleTxt }}</div>
+        <div style="display:flex;flex-direction:column;margin-top:12px;">
+          <sc-for list="{{ a.idle }}" as="u" hint-placeholder-count="6">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border2);font-size:12.5px;">
+              <div style="width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:600;color:var(--text);background:{{ u.av }};">{{ u.ini }}</div>
+              <div style="min-width:0;flex:1;"><div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ u.name }}</div><div style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--faint);">{{ u.last }}</div></div>
+              <div style="font-weight:600;color:var(--neg);">{{ u.cost }}</div>
+            </div>
+          </sc-for>
+        </div>
+        <div style="flex:1;"></div>
+        <button style="margin-top:14px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-size:12.5px;font-weight:600;cursor:pointer;" style-hover="border-color:var(--neg);color:var(--neg);">Review all idle seats</button>
+      </div>
+    </div>
+  </main>
+
+  <sc-if value="{{ a.modalOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ a.closeModal }}" style="position:fixed;inset:0;background:rgba(10,12,18,.5);display:flex;align-items:center;justify-content:center;z-index:40;">
+      <div onClick="{{ a.stop }}" style="width:620px;max-width:calc(100vw - 40px);background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px 0;">
+          <div style="font-size:16px;font-weight:600;">Add data</div>
+          <div onClick="{{ a.closeModal }}" style="width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer;font-size:16px;" style-hover="background:var(--card2);color:var(--text);">×</div>
+        </div>
+        <div style="display:flex;gap:4px;padding:12px 22px 0;border-bottom:1px solid var(--border2);">
+          <div class="{{ a.tabSc }}" onClick="{{ a.tabS }}" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;">Connected sources</div>
+          <div class="{{ a.tabCc }}" onClick="{{ a.tabC }}" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;">Upload CSV</div>
+          <div class="{{ a.tabMc }}" onClick="{{ a.tabM }}" style="padding:8px 12px;font-size:13px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;">Manual entry</div>
+        </div>
+        <div style="padding:20px 22px;min-height:280px;">
+          <sc-if value="{{ a.tabSOn }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--pos);flex-shrink:0;"></div>
+                <div style="flex:1;"><div style="font-size:13px;font-weight:600;">Copilot usage metrics API</div><div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--faint);margin-top:2px;">enterprise · users-28-day · ai_credits_used</div></div>
+                <div style="font-size:11.5px;color:var(--pos);font-weight:600;">Connected · 2h ago</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--pos);flex-shrink:0;"></div>
+                <div style="flex:1;"><div style="font-size:13px;font-weight:600;">Copilot user management API</div><div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--faint);margin-top:2px;">seats · last_activity_at · plan_type</div></div>
+                <div style="font-size:11.5px;color:var(--pos);font-weight:600;">Connected · 2h ago</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--pos);flex-shrink:0;"></div>
+                <div style="flex:1;"><div style="font-size:13px;font-weight:600;">GitHub billing API</div><div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--faint);margin-top:2px;">ai_credit usage · by model, SKU, cost center</div></div>
+                <div style="font-size:11.5px;color:var(--pos);font-weight:600;">Connected · 6h ago</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px dashed var(--border);border-radius:10px;">
+                <div style="width:8px;height:8px;border-radius:50%;background:var(--faint);flex-shrink:0;"></div>
+                <div style="flex:1;"><div style="font-size:13px;font-weight:600;color:var(--muted);">Azure Cost Management</div><div style="font:400 11px ui-monospace,Menlo,monospace;color:var(--faint);margin-top:2px;">for the Cloud infrastructure page</div></div>
+                <button style="height:28px;padding:0 12px;border-radius:7px;border:1px solid var(--border);background:var(--card);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer;">Connect</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ a.tabCOn }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <label for="fileFin" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;height:150px;border:1.5px dashed var(--border);border-radius:12px;background:var(--card2);cursor:pointer;" style-hover="border-color:var(--accent);">
+                <div style="width:34px;height:34px;border-radius:50%;background:color-mix(in oklab, var(--accent) 12%, transparent);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:16px;font-weight:600;">↑</div>
+                <div style="font-size:13px;font-weight:600;">Drop a CSV or NDJSON export here</div>
+                <div style="font-size:11.5px;color:var(--faint);">or click to browse — up to 25 MB</div>
+              </label>
+              <input id="fileFin" type="file" accept=".csv,.ndjson,.json" onChange="{{ a.onFile }}" style="display:none;">
+              <sc-if value="{{ a.fileOn }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--card2);">
+                  <div style="width:8px;height:8px;border-radius:50%;background:var(--pos);"></div>
+                  <div style="font:500 12px ui-monospace,Menlo,monospace;flex:1;">{{ a.file }}</div>
+                  <div style="font-size:11.5px;color:var(--pos);font-weight:600;">Ready to import</div>
+                </div>
+              </sc-if>
+              <div style="margin-top:14px;font-size:11.5px;color:var(--muted);line-height:1.6;">Expected columns: <span style="font-family:ui-monospace,Menlo,monospace;color:var(--text);">user_login · plan · ai_credits_used · last_activity_at · editor · language</span> — matching the users-28-day report. <a href="#" style="font-weight:600;">Download template</a></div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ a.tabMOn }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <div><div style="font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">User login</div><input placeholder="e.g. akovacs" style="width:100%;box-sizing:border-box;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;" style-focus="border-color:var(--accent);"></div>
+              <div><div style="font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">Plan</div><select style="width:100%;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;"><option>Business — $19/mo</option><option>Enterprise — $39/mo</option></select></div>
+              <div><div style="font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">Premium requests (28d)</div><input placeholder="0" style="width:100%;box-sizing:border-box;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;" style-focus="border-color:var(--accent);"></div>
+              <div><div style="font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:5px;">Last activity</div><input placeholder="2026-07-14" style="width:100%;box-sizing:border-box;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12.5px;" style-focus="border-color:var(--accent);"></div>
+              <div style="grid-column:1 / -1;"><button style="height:32px;padding:0 14px;border-radius:8px;border:1px dashed var(--border);background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer;" style-hover="color:var(--accent);border-color:var(--accent);">+ Add another row</button></div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid var(--border2);background:var(--card2);">
+          <button onClick="{{ a.closeModal }}" style="height:34px;padding:0 16px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;font-weight:500;cursor:pointer;">Cancel</button>
+          <button onClick="{{ a.importNow }}" style="height:34px;padding:0 18px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;" style-hover="background:color-mix(in srgb, var(--accent) 12%, transparent);">Import</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;blurple&quot;,&quot;steel&quot;],&quot;default&quot;:&quot;blurple&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;defaultTheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.today = new Date(2026, 6, 14);
+    this.buildData();
+    const dark = (props.defaultTheme ?? 'dark') === 'dark';
+    this.state = { range: 28, editor: 'All', language: 'All', search: '', sortKey: 'cost', sortDir: -1, page: 0, modal: false, tab: 'sources', file: '', dark };
+  }
+
+  rnd() { this._s = Math.imul(48271, this._s) % 2147483647; return (this._s & 2147483647) / 2147483648; }
+
+  buildData() {
+    this._s = 987654321;
+    const F = ['Ana','Liam','Maya','Noah','Ivy','Owen','Zoe','Eli','Ruth','Marc','Nina','Theo','Lena','Kofi','Sara','Yuki','Omar','Priya','Jan','Rosa','Dmitri','Wei','Aoife','Tariq'];
+    const L = ['Kovacs','Silva','Haugen','Okafor','Meyer','Tanaka','Novak','Fischer','Iqbal','Moreau','Larsen','Petrov','Santos','Weber','Nakamura','Kaur','Olsen','Duarte','Farrell','Bianchi','Sorensen','Kim','Nguyen','Haas'];
+    const eds = [['VS Code', .55], ['JetBrains', .26], ['Visual Studio', .08], ['Neovim', .06], ['Xcode', .05]];
+    const langs = [['TypeScript', .28], ['Python', .22], ['Java', .14], ['Go', .11], ['C#', .09], ['Ruby', .06], ['Kotlin', .05], ['Rust', .05]];
+    const wpick = (arr) => { const r = this.rnd(); let acc = 0; for (const p of arr) { acc += p[1]; if (r <= acc) return p[0]; } return arr[arr.length - 1][0]; };
+    const users = []; const seen = {};
+    for (let i = 0; i < 1000; i++) {
+      const f = F[Math.floor(this.rnd() * F.length)], l = L[Math.floor(this.rnd() * L.length)];
+      let login = (f[0] + l).toLowerCase(); if (seen[login]) login = login + i; seen[login] = 1;
+      const r = this.rnd();
+      const arch = r < .60 ? 'active' : r < .78 ? 'light' : r < .92 ? 'dormant' : 'never';
+      const lastDays = arch === 'active' ? Math.floor(this.rnd() * 7) : arch === 'light' ? 3 + Math.floor(this.rnd() * 23) : arch === 'dormant' ? 30 + Math.floor(this.rnd() * 58) : null;
+      const ent = this.rnd() < .2;
+      const price = ent ? 39 : 19, allow = ent ? 1000 : 300;
+      const req = arch === 'active' ? Math.round(120 + this.rnd() * 780) : arch === 'light' ? Math.round(10 + this.rnd() * 140) : 0;
+      const overage = Math.max(0, req - allow) * 0.04;
+      users.push({ name: f + ' ' + l, login, plan: ent ? 'Enterprise' : 'Business', price, allow, editor: wpick(eds), lang: wpick(langs), arch, lastDays, req, overage, acc: Math.round(16 + this.rnd() * 30), hue: Math.floor(this.rnd() * 360) });
+    }
+    this.users = users;
+    const totOver = users.reduce((s, u) => s + u.overage, 0);
+    const series = [];
+    for (let d = 89; d >= 0; d--) {
+      const dt = new Date(this.today); dt.setDate(dt.getDate() - d);
+      const seats = Math.round(1000 - d * 1.35 - (d > 60 ? 15 : 0));
+      const lic = seats * 23 / 30;
+      const dow = dt.getDay(); const wk = (dow === 0 || dow === 6) ? .3 : 1;
+      const ramp = 1.12 - d * 0.004;
+      const prem = (totOver / 20) * wk * ramp * (0.85 + this.rnd() * 0.3);
+      series.push({ dt, lic, prem });
+    }
+    this.series = series;
+  }
+
+  usd(n, dec) { const d = dec == null ? 0 : dec; return '$' + n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); }
+  kfmt(v) { return v >= 1000 ? '$' + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(v); }
+  ago(days) { return days == null ? 'Never used' : days === 0 ? 'Today' : days === 1 ? '1d ago' : days + 'd ago'; }
+  dlbl(dt) { return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+  avc(u) { const c = ['#9184d9', '#a7a1db', '#9397ab'][u.hue % 3]; return 'color-mix(in srgb, ' + c + ' 35%, transparent)'; }
+  ini(u) { return u.name.split(' ').map(x => x[0]).join(''); }
+  set(p) { this.setState(p); }
+
+  renderVals() {
+    const st = this.state;
+    const pk = (this.props.accent ?? 'blurple') + '|' + (this.props.defaultTheme ?? 'dark');
+    if (this._memo && this._memo.st === st && this._memo.pk === pk) return this._memo.out;
+    const set = (p) => this.set(p);
+    const q = st.search.trim().toLowerCase();
+    const filt = this.users.filter(u =>
+      (st.editor === 'All' || u.editor === st.editor) &&
+      (st.language === 'All' || u.lang === st.language) &&
+      (!q || u.login.indexOf(q) >= 0 || u.name.toLowerCase().indexOf(q) >= 0));
+    const n = filt.length, ratio = n / this.users.length;
+    const R = st.range;
+    const win = this.series.slice(90 - R).map(p => ({ dt: p.dt, lic: p.lic * ratio, prem: p.prem * ratio, tot: (p.lic + p.prem) * ratio }));
+    const spend = win.reduce((s, p) => s + p.tot, 0);
+    const licSum = win.reduce((s, p) => s + p.lic, 0);
+    const premSum = win.reduce((s, p) => s + p.prem, 0);
+    let pct = 0;
+    if (R * 2 <= 90) {
+      const prev = this.series.slice(90 - 2 * R, 90 - R).reduce((s, p) => s + (p.lic + p.prem) * ratio, 0);
+      if (prev > 0) pct = (spend - prev) / prev * 100;
+    } else {
+      const half = Math.floor(win.length / 2);
+      const A = win.slice(0, half).reduce((s, p) => s + p.tot, 0) / half;
+      const B = win.slice(half).reduce((s, p) => s + p.tot, 0) / (win.length - half);
+      if (A > 0) pct = (B - A) / A * 100;
+    }
+    const act7 = filt.filter(u => u.lastDays != null && u.lastDays <= 7).length;
+    const act28 = filt.filter(u => u.lastDays != null && u.lastDays <= 28).length;
+    const occ = filt.filter(u => u.lastDays != null && u.lastDays > 7 && u.lastDays < 30).length;
+    const idleArr = filt.filter(u => u.lastDays == null || u.lastDays >= 30);
+    const never = filt.filter(u => u.lastDays == null).length;
+    const dorm = idleArr.length - never;
+    const wasted = idleArr.reduce((s, u) => s + u.price, 0);
+    const reqTot = Math.round(filt.reduce((s, u) => s + u.req, 0) * R / 28);
+
+    const maxV = Math.max.apply(null, win.map(p => p.tot)) * 1.12 || 1;
+    const X = i => (i / (win.length - 1) * 900);
+    const Y = v => 234 - (v / maxV) * 220;
+    const line = 'M' + win.map((p, i) => X(i).toFixed(1) + ' ' + Y(p.tot).toFixed(1)).join(' L');
+    const area = line + ' L900 240 L0 240 Z';
+    const premPath = 'M' + win.map((p, i) => X(i).toFixed(1) + ' ' + Y(p.prem).toFixed(1)).join(' L');
+    const grid = [0.25, 0.5, 0.75, 1].map(f => ({ top: (Y(maxV * f) / 240 * 100).toFixed(1) + '%', lbl: this.kfmt(maxV * f) }));
+    const xIdx = [0, 1, 2, 3, 4].map(i => Math.round(i * (win.length - 1) / 4));
+    const xLabels = xIdx.map(i => ({ t: this.dlbl(win[i].dt) }));
+
+    const C = 2 * Math.PI * 56;
+    const fr = [act7, occ, dorm, never].map(v => n ? v / n : 0);
+    let off = 0; const segs = fr.map(f => { const o = { dash: (f * C).toFixed(1) + ' ' + C.toFixed(1), off: (-off * C).toFixed(1) }; off += f; return o; });
+    const pc = v => n ? Math.round(v / n * 100) : 0;
+
+    const costf = u => u.price * R / 30 + u.overage * R / 28;
+    const keyf = { cost: costf, req: u => u.req, acc: u => u.acc, last: u => u.lastDays == null ? 9999 : u.lastDays };
+    const sorted = filt.slice().sort((x, y) => (keyf[st.sortKey](x) - keyf[st.sortKey](y)) * st.sortDir);
+    const pages = Math.max(1, Math.ceil(sorted.length / 12));
+    const page = Math.min(st.page, pages - 1);
+    const rows = sorted.slice(page * 12, page * 12 + 12).map(u => ({
+      name: u.name, login: u.login, ini: this.ini(u), av: this.avc(u),
+      plan: u.plan, editor: u.editor, req: u.req.toLocaleString(), acc: u.acc + '%',
+      last: this.ago(u.lastDays), cost: this.usd(costf(u), 2)
+    }));
+    const arrow = key => st.sortKey === key ? (st.sortDir < 0 ? '▾' : '▴') : '';
+    const mkSort = key => () => set(st.sortKey === key ? { sortDir: -st.sortDir } : { sortKey: key, sortDir: -1, page: 0 });
+
+    const idle = idleArr.slice().sort((x, y) => ((y.lastDays == null ? 999 : y.lastDays) - (x.lastDays == null ? 999 : x.lastDays)) || y.price - x.price).slice(0, 6)
+      .map(u => ({ name: u.name, login: u.login, ini: this.ini(u), av: this.avc(u), last: this.ago(u.lastDays), cost: this.usd(u.price) + '/mo' }));
+
+    const out = {
+      accentClass: 'acc-' + (this.props.accent ?? 'blurple'),
+      darkC: st.dark ? 'dark' : '',
+      themeLabel: st.dark ? 'Dark' : 'Light',
+      knobX: st.dark ? 'translateX(23px)' : 'translateX(0px)',
+      toggleDark: () => set({ dark: !st.dark }),
+      rangeLbl: R + 'd',
+      r28c: R === 28 ? 'seg-on' : '', r56c: R === 56 ? 'seg-on' : '', r90c: R === 90 ? 'seg-on' : '',
+      r28: () => set({ range: 28, page: 0 }), r56: () => set({ range: 56, page: 0 }), r90: () => set({ range: 90, page: 0 }),
+      editor: st.editor, onEditor: e => set({ editor: e.target.value, page: 0 }),
+      language: st.language, onLang: e => set({ language: e.target.value, page: 0 }),
+      search: st.search, onSearch: e => set({ search: e.target.value, page: 0 }),
+      spendFmt: this.usd(spend),
+      deltaTxt: (pct >= 0 ? '↑ +' : '↓ ') + pct.toFixed(1) + '% vs prev period',
+      deltaCol: pct >= 0 ? 'var(--neg)' : 'var(--pos)',
+      avgFmt: this.usd(act28 ? spend / act28 : 0, 2),
+      utilPct: (n ? Math.round(act28 / n * 100) : 0) + '%',
+      activeTxt: act28.toLocaleString() + ' of ' + n.toLocaleString(),
+      wastedFmt: this.usd(wasted),
+      idleTxt: idleArr.length.toLocaleString() + ' idle seats · 30d+ or never used',
+      licFmt: this.usd(licSum), premFmt: this.usd(premSum),
+      reqTotFmt: reqTot.toLocaleString(),
+      areaPath: area, linePath: line, premPath: premPath, grid, xLabels,
+      seg1dash: segs[0].dash, seg1off: segs[0].off, seg2dash: segs[1].dash, seg2off: segs[1].off,
+      seg3dash: segs[2].dash, seg3off: segs[2].off, seg4dash: segs[3].dash, seg4off: segs[3].off,
+      leg1: act7.toLocaleString() + ' · ' + pc(act7) + '%', leg2: occ.toLocaleString() + ' · ' + pc(occ) + '%',
+      leg3: dorm.toLocaleString() + ' · ' + pc(dorm) + '%', leg4: never.toLocaleString() + ' · ' + pc(never) + '%',
+      rows, pageTxt: (page * 12 + 1) + '–' + Math.min(sorted.length, page * 12 + 12) + ' of ' + sorted.length.toLocaleString(),
+      prev: () => set({ page: Math.max(0, page - 1) }), next: () => set({ page: Math.min(pages - 1, page + 1) }),
+      sortReq: mkSort('req'), sortAcc: mkSort('acc'), sortLast: mkSort('last'), sortCost: mkSort('cost'),
+      arrReq: arrow('req'), arrAcc: arrow('acc'), arrLast: arrow('last'), arrCost: arrow('cost'),
+      idle,
+      modalOpen: st.modal,
+      openModal: () => set({ modal: true }), closeModal: () => set({ modal: false }),
+      stop: (e) => e.stopPropagation(),
+      tabS: () => set({ tab: 'sources' }), tabC: () => set({ tab: 'csv' }), tabM: () => set({ tab: 'manual' }),
+      tabSOn: st.tab === 'sources', tabCOn: st.tab === 'csv', tabMOn: st.tab === 'manual',
+      tabSc: st.tab === 'sources' ? 'tab-on' : '', tabCc: st.tab === 'csv' ? 'tab-on' : '', tabMc: st.tab === 'manual' ? 'tab-on' : '',
+      file: st.file, fileOn: !!st.file,
+      onFile: e => set({ file: e.target.files && e.target.files[0] ? e.target.files[0].name : '' }),
+      importNow: () => set({ modal: false, file: '' })
+    };
+    this._memo = { st, pk, out };
+    return out;
+  }
+}
+</script>
+</body>
+</html>

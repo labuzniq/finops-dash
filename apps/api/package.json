@@ -1,0 +1,29 @@
+{
+  "name": "@dash/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file=../../.env src/db/migrate-cli.ts",
+    "refresh": "tsx --env-file=../../.env src/refresh-once.ts"
+  },
+  "dependencies": {
+    "@dash/shared": "workspace:*",
+    "@fastify/cors": "^10.0.2",
+    "drizzle-orm": "^0.38.3",
+    "fastify": "^5.2.1",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "drizzle-kit": "^0.30.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "dash",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm db && pnpm --filter @dash/shared build && pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter @dash/web dev",
+    "db": "docker compose up -d --wait postgres",
+    "stack:up": "docker compose --profile full up --build -d",
+    "stack:down": "docker compose --profile full down",
+    "build": "pnpm --recursive build",
+    "typecheck": "pnpm --recursive typecheck",
+    "db:generate": "pnpm --filter @dash/api db:generate",
+    "db:migrate": "pnpm --filter @dash/api db:migrate"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
