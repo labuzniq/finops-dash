@@ -23,6 +23,11 @@ const schema = z
      * auth story — see auth/session.ts.
      */
     STATIC_LOGIN_TOKEN: z.string().min(1).default('let-me-in'),
+    /**
+     * Bearer token OTLP exporters must present on /v1/*. Unset means the
+     * ingest is open — acceptable on localhost, not beyond it.
+     */
+    OTLP_INGEST_TOKEN: z.string().optional(),
   })
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',

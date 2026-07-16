@@ -15,6 +15,13 @@
       "when": 1784204197023,
       "tag": "0001_clammy_havok",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784237825342,
+      "tag": "0002_slim_wolfsbane",
+      "breakpoints": true
     }
   ]
 }

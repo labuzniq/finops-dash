@@ -1,4 +1,11 @@
-import type { CopilotSeat, ImportResult, ModelUsage, RefreshJob, SpendPoint } from '@dash/shared';
+import type {
+  CopilotSeat,
+  ImportResult,
+  ModelUsage,
+  RefreshJob,
+  SpendPoint,
+  TelemetryRollupRow,
+} from '@dash/shared';
 
 /** Vite proxies /api to the backend in dev; same-origin in production. */
 const BASE = '/api';
@@ -82,6 +89,14 @@ export async function importData(content: string): Promise<ImportResult> {
     throw new Error(`Import failed: ${response.status}`);
   }
   return payload.result;
+}
+
+/** Claude Code telemetry, rolled up to (day, user, model, metric, type). */
+export async function fetchTelemetryRollup(days: number): Promise<TelemetryRollupRow[]> {
+  const { rollup } = await request<{ rollup: TelemetryRollupRow[] }>(
+    `/telemetry/rollup?days=${days}`,
+  );
+  return rollup;
 }
 
 export async function startRefresh(): Promise<RefreshJob> {
