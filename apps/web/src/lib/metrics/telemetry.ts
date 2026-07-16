@@ -10,6 +10,9 @@ import type { ScaledSpendPoint } from './spend.js';
  * page, like the Copilot pipeline.
  */
 
+/** Leaderboard depth — enough to show the shape without scrolling. */
+const TOP_USERS_LIMIT = 8;
+
 export interface TelemetryFilters {
   /** A user identity (email, else id) or ALL. */
   user: string;
@@ -28,10 +31,35 @@ export interface TelemetryUserRow {
   linesAdded: number;
   linesRemoved: number;
   commits: number;
+  pullRequests: number;
   /** ISO date of the most recent activity in range. */
   lastActiveDate: string | null;
   /** Model with the most tokens for this user; null before any token data. */
   topModel: string | null;
+}
+
+export interface DailyTokenPoint {
+  date: Date;
+  input: number;
+  output: number;
+  cache: number;
+  total: number;
+}
+
+export interface TokenLeaderboardRow {
+  user: string;
+  input: number;
+  output: number;
+  cache: number;
+  total: number;
+}
+
+/** Org-wide range totals; null when the metric has no rows at all in range. */
+export interface TelemetryTotals {
+  linesAdded: number | null;
+  linesRemoved: number | null;
+  commits: number | null;
+  pullRequests: number | null;
 }
 
 export interface TelemetrySummary {
@@ -41,6 +69,12 @@ export interface TelemetrySummary {
   activeUsers: number;
   /** Daily cost, zero-filled across the whole range so the chart has a spine. */
   points: ScaledSpendPoint[];
+  /** Daily token volumes by kind, zero-filled across the whole range. */
+  dailyTokens: DailyTokenPoint[];
+  /** Top users by total tokens in range — the leaderboard card. */
+  topUsersByTokens: TokenLeaderboardRow[];
+  /** Org-wide engineering-output totals for the KPI tiles. */
+  totals: TelemetryTotals;
   users: TelemetryUserRow[];
   /** Distinct identities/models in range, unfiltered — the select options. */
   userOptions: string[];
@@ -80,6 +114,7 @@ function emptyUserRow(user: string): MutableUserRow {
     linesAdded: 0,
     linesRemoved: 0,
     commits: 0,
+    pullRequests: 0,
     lastActiveDate: null,
     topModel: null,
     modelTokens: new Map(),
@@ -111,6 +146,9 @@ function accumulateUser(acc: MutableUserRow, row: TelemetryRollupRow): void {
       break;
     case TELEMETRY_METRICS.commits:
       acc.commits += row.value;
+      break;
+    case TELEMETRY_METRICS.pullRequests:
+      acc.pullRequests += row.value;
       break;
     default:
       break;
@@ -158,6 +196,11 @@ export function deriveTelemetry(
   let sessions = 0;
   const activeUsers = new Set<string>();
   const costByDate = new Map<string, number>();
+  const tokensByDate = new Map<string, { input: number; output: number; cache: number }>();
+  let linesAdded: number | null = null;
+  let linesRemoved: number | null = null;
+  let commits: number | null = null;
+  let pullRequests: number | null = null;
   const byUser = new Map<string, MutableUserRow>();
 
   for (const row of filtered) {
@@ -166,8 +209,21 @@ export function deriveTelemetry(
       costByDate.set(row.date, (costByDate.get(row.date) ?? 0) + row.value);
     } else if (row.metric === TELEMETRY_METRICS.tokens) {
       totalTokens += row.value;
+      const day = tokensByDate.get(row.date) ?? { input: 0, output: 0, cache: 0 };
+      if (row.type === 'input') day.input += row.value;
+      else if (row.type === 'output') day.output += row.value;
+      else day.cache += row.value;
+      tokensByDate.set(row.date, day);
     } else if (row.metric === TELEMETRY_METRICS.sessions) {
       sessions += row.value;
+    } else if (row.metric === TELEMETRY_METRICS.linesOfCode) {
+      // Null-start: a metric that never appears stays unknown, not zero.
+      if (row.type === 'removed') linesRemoved = (linesRemoved ?? 0) + row.value;
+      else linesAdded = (linesAdded ?? 0) + row.value;
+    } else if (row.metric === TELEMETRY_METRICS.commits) {
+      commits = (commits ?? 0) + row.value;
+    } else if (row.metric === TELEMETRY_METRICS.pullRequests) {
+      pullRequests = (pullRequests ?? 0) + row.value;
     }
 
     const user = rowUser(row);
@@ -186,9 +242,32 @@ export function deriveTelemetry(
     points.push({ date: parseIsoDate(iso), license: cost, premiumOverage: 0, total: cost });
   }
 
+  const dailyTokens: DailyTokenPoint[] = [];
+  for (let daysBack = rangeDays - 1; daysBack >= 0; daysBack -= 1) {
+    const iso = isoDaysAgo(daysBack);
+    const day = tokensByDate.get(iso) ?? { input: 0, output: 0, cache: 0 };
+    dailyTokens.push({
+      date: parseIsoDate(iso),
+      ...day,
+      total: day.input + day.output + day.cache,
+    });
+  }
+
   const users = [...byUser.values()]
     .map(({ modelTokens, ...row }) => ({ ...row, topModel: topModel(modelTokens) }))
     .sort((a, b) => b.costUsd - a.costUsd);
+
+  const topUsersByTokens: TokenLeaderboardRow[] = users
+    .filter((row) => row.tokens > 0)
+    .map((row) => ({
+      user: row.user,
+      input: row.inputTokens,
+      output: row.outputTokens,
+      cache: row.cacheTokens,
+      total: row.tokens,
+    }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, TOP_USERS_LIMIT);
 
   return {
     totalCostUsd,
@@ -196,6 +275,9 @@ export function deriveTelemetry(
     sessions,
     activeUsers: activeUsers.size,
     points,
+    dailyTokens,
+    topUsersByTokens,
+    totals: { linesAdded, linesRemoved, commits, pullRequests },
     users,
     userOptions: [...userSet].sort((a, b) => a.localeCompare(b)),
     modelOptions: [...modelSet].sort((a, b) => a.localeCompare(b)),
