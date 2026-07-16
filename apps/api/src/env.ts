@@ -17,6 +17,12 @@ const schema = z
     GITHUB_ORG: z.string().optional(),
     /** Reports API needs a recent version; overridable if GitHub bumps it. */
     GITHUB_API_VERSION: z.string().default('2026-03-10'),
+    /**
+     * The one shared admin secret that unlocks the dashboard. Defaulted so a
+     * fresh clone still boots; override it anywhere real. This is the entire
+     * auth story — see auth/session.ts.
+     */
+    STATIC_LOGIN_TOKEN: z.string().min(1).default('let-me-in'),
   })
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',
