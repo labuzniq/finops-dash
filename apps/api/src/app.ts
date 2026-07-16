@@ -6,7 +6,23 @@ import { hasSession } from './auth/session.js';
 import { authRoutes } from './routes/auth.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { importRoutes } from './routes/import.js';
+import { otlpRoutes } from './routes/otlp.js';
 import { refreshRoutes } from './routes/refresh.js';
+import { telemetryRoutes } from './routes/telemetry.js';
+
+/**
+ * Open endpoints: health, the auth handshake itself, and the OTLP ingest —
+ * exporters are headless and carry a bearer token (routes/otlp.ts), not the
+ * dashboard cookie. Everything else needs the cookie.
+ */
+const PUBLIC_PATHS = new Set([
+  '/api/health',
+  '/api/auth/login',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/v1/metrics',
+  '/v1/logs',
+]);
 
 /** Open endpoints: health, and the auth handshake itself. Everything else needs the cookie. */
 const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/me', '/api/auth/logout']);
@@ -35,6 +51,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dashboardRoutes);
   await app.register(refreshRoutes);
   await app.register(importRoutes);
+  await app.register(otlpRoutes);
+  await app.register(telemetryRoutes);
 
   return app;
 }

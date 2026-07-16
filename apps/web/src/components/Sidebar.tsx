@@ -5,23 +5,27 @@ import {
   GithubLogo,
   Package,
   SquaresFour,
+  TerminalWindow,
   UploadSimple,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import styles from './Sidebar.module.css';
 
 /**
- * The FinOps console's nav. Copilot is the only page that exists today; the
- * rest are the shell this dashboard is page 1 of.
+ * The FinOps console's nav. Copilot and Claude Code are the pages that exist
+ * today; the rest are the shell this dashboard is page 1 of.
  *
  * The prototype drew geometric placeholders here and the handoff calls for
  * Phosphor in production — these are the Phosphor equivalents.
  */
 
+/** The views the app can show; items without one are inert placeholders. */
+export type AppView = 'copilot' | 'claude-code';
+
 interface NavItem {
   label: string;
   icon: Icon;
-  active?: boolean;
+  view?: AppView;
 }
 
 interface NavGroup {
@@ -37,7 +41,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'SPEND',
     items: [
-      { label: 'GitHub Copilot', icon: GithubLogo, active: true },
+      { label: 'GitHub Copilot', icon: GithubLogo, view: 'copilot' },
+      { label: 'Claude Code', icon: TerminalWindow, view: 'claude-code' },
       { label: 'Cloud infrastructure', icon: Cloud },
       { label: 'LLM APIs', icon: Brain },
       { label: 'SaaS licenses', icon: Package },
@@ -54,7 +59,12 @@ const NAV_GROUPS: NavGroup[] = [
 
 const ICON_SIZE = 15;
 
-export function Sidebar() {
+interface SidebarProps {
+  activeView: AppView;
+  onNavigate: (view: AppView) => void;
+}
+
+export function Sidebar({ activeView, onNavigate }: SidebarProps) {
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
@@ -67,17 +77,22 @@ export function Sidebar() {
       {NAV_GROUPS.map((group) => (
         <div key={group.label}>
           <div className={styles.groupLabel}>{group.label}</div>
-          {group.items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              className={`${styles.item} ${item.active ? styles.itemActive : ''}`}
-              aria-current={item.active ? 'page' : undefined}
-            >
-              <item.icon size={ICON_SIZE} weight={item.active ? 'fill' : 'regular'} />
-              {item.label}
-            </button>
-          ))}
+          {group.items.map((item) => {
+            const { view } = item;
+            const active = view !== undefined && view === activeView;
+            return (
+              <button
+                key={item.label}
+                type="button"
+                className={`${styles.item} ${active ? styles.itemActive : ''}`}
+                aria-current={active ? 'page' : undefined}
+                onClick={view === undefined ? undefined : () => onNavigate(view)}
+              >
+                <item.icon size={ICON_SIZE} weight={active ? 'fill' : 'regular'} />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       ))}
 

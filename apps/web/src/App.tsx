@@ -1,4 +1,4 @@
-import { useMemo, useReducer } from 'react';
+import { useMemo, useReducer, useState } from 'react';
 import { RANGE_DAYS } from '@dash/shared';
 import type { RangeDays } from '@dash/shared';
 import { cx } from './lib/cx.js';
@@ -19,6 +19,8 @@ import { FilterBar } from './components/FilterBar.js';
 import { KpiRow } from './components/KpiRow.js';
 import { ModelTable } from './components/ModelTable.js';
 import { Sidebar } from './components/Sidebar.js';
+import type { AppView } from './components/Sidebar.js';
+import { ClaudeCodePage } from './components/claude/ClaudeCodePage.js';
 import { SpendTrendChart } from './components/SpendTrendChart.js';
 import { TopBar } from './components/TopBar.js';
 import { UserTable } from './components/UserTable.js';
@@ -36,6 +38,7 @@ const EMPTY_MODELS = [] as const;
 
 export function App() {
   const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
+  const [view, setView] = useState<AppView>('copilot');
   const { isDark, toggle } = useTheme();
 
   const seatsQuery = useSeats();
@@ -66,8 +69,15 @@ export function App() {
 
   return (
     <div className={cx('theme', ACCENT_CLASS, isDark && 'dark', styles.shell)}>
-      <Sidebar />
+      <Sidebar activeView={view} onNavigate={setView} />
 
+      {view === 'claude-code' && (
+        <main className={styles.main}>
+          <ClaudeCodePage />
+        </main>
+      )}
+
+      {view === 'copilot' && (
       <main className={styles.main}>
         <TopBar
           seatCount={seatsQuery.data?.length ?? 0}
@@ -161,6 +171,7 @@ export function App() {
           </>
         )}
       </main>
+      )}
 
       {state.modalOpen && (
         <AddDataModal

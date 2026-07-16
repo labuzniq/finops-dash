@@ -87,6 +87,32 @@ from compose. Both need `.env` to exist — copy it from `.env.example` first.
 | `POST /api/refresh` | start a sync → `202` + the job to poll |
 | `GET /api/refresh/:id` | one job's status |
 | `GET /api/refresh/latest` | last job of any status — drives the "synced 2h ago" note |
+| `GET /api/telemetry/rollup?days=90` | Claude Code telemetry, rolled up per (day, user, model, metric, type) |
+| `POST /v1/metrics` / `POST /v1/logs` | **OTLP/HTTP ingest** (JSON encoding) — see below |
+
+## OTLP ingest (Claude Code telemetry)
+
+The API doubles as an OTLP/HTTP server on the standard exporter paths, so Claude Code
+clients can stream their metrics straight into the dashboard. These are the only
+endpoints outside the login gate — exporters are headless. Protect them with
+`OTLP_INGEST_TOKEN` (bearer auth); unset means open, for local development.
+
+Point a Claude Code install at it:
+
+```bash
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json     # this ingest speaks JSON, not protobuf
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4000
+# with OTLP_INGEST_TOKEN set:
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
+```
+
+Datapoints land in `otlp_metric_points` (cumulative counters are normalised to deltas
+at ingest, so reads are plain SUMs); events land in `otlp_log_records`. The **Claude
+Code** page in the sidebar renders the rollup — cost, tokens, sessions and per-user
+activity, filterable by user and model.
 
 ### The refresh is asynchronous
 

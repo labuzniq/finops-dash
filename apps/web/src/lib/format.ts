@@ -20,6 +20,13 @@ export function count(value: number): string {
   return value.toLocaleString('en-US');
 }
 
+/** Compact large counts: 840, 1.2k, 12k, 3.4M — token volumes need the room. */
+export function compactCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`;
+  return count(Math.round(value));
+}
+
 export function percent(value: number): string {
   return `${Math.round(value)}%`;
 }
