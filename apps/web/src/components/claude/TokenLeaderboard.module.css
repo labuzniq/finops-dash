@@ -1,0 +1,102 @@
+/* Top users by tokens — horizontal segmented bars, table-card voice. */
+
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px 10px;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+.rows {
+  display: grid;
+  gap: 10px;
+  padding: 4px 20px 18px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) 3fr auto;
+  gap: 12px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.user {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar {
+  display: flex;
+  gap: 2px;
+  height: 14px;
+}
+
+.segment {
+  border-radius: 3px;
+  min-width: 2px;
+}
+
+/* The chart's monochrome accent ramp, same order: input darkest. */
+.input {
+  background: var(--accent);
+}
+
+.output {
+  background: color-mix(in srgb, var(--accent) 55%, var(--card));
+}
+
+.cache {
+  background: color-mix(in srgb, var(--accent) 24%, var(--card));
+}
+
+.total {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.empty {
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}

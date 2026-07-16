@@ -9,8 +9,11 @@ import type { ChartGeometry } from '../../lib/metrics/chart.js';
 import { ALL } from '../../lib/metrics/filter.js';
 import { deriveTelemetry } from '../../lib/metrics/telemetry.js';
 import type { TelemetryUserRow } from '../../lib/metrics/telemetry.js';
+import { buildTokenChartGeometry } from '../../lib/metrics/tokenChart.js';
 import { useTelemetryRollup } from '../../hooks/useTelemetry.js';
 import { Card } from '../Card.js';
+import { TokenLeaderboard } from './TokenLeaderboard.js';
+import { TokenUsageChart } from './TokenUsageChart.js';
 import styles from './ClaudeCodePage.module.css';
 
 /**
@@ -22,7 +25,7 @@ import styles from './ClaudeCodePage.module.css';
 const EMPTY_ROWS = [] as const;
 const MS_PER_DAY = 86_400_000;
 
-function KpiCard({ kicker, value, children }: { kicker: string; value: string; children: ReactNode }) {
+function KpiCard({ kicker, value, children }: { kicker: string; value: ReactNode; children: ReactNode }) {
   return (
     <Card padded={false} className={styles.kpiCard}>
       <div className={styles.kicker}>{kicker}</div>
@@ -69,7 +72,7 @@ function daysSinceIso(iso: string | null): number | null {
   return Math.max(0, Math.floor((Date.now() - then.getTime()) / MS_PER_DAY));
 }
 
-function UserRow({ row }: { row: TelemetryUserRow }) {
+function UserRow({ row, hasPrData }: { row: TelemetryUserRow; hasPrData: boolean }) {
   return (
     <div className={cx(styles.columns, styles.row)}>
       <div className={styles.user}>{row.user}</div>
@@ -82,6 +85,7 @@ function UserRow({ row }: { row: TelemetryUserRow }) {
         <span className={styles.linesRemoved}>−{compactCount(row.linesRemoved)}</span>
       </div>
       <div className={styles.right}>{count(Math.round(row.commits))}</div>
+      <div className={styles.right}>{hasPrData ? count(Math.round(row.pullRequests)) : EMPTY}</div>
       <div className={styles.right}>{lastActiveLabel(daysSinceIso(row.lastActiveDate))}</div>
     </div>
   );
@@ -99,6 +103,7 @@ export function ClaudeCodePage() {
     [rollupQuery.data, range, user, model],
   );
   const chart = useMemo(() => buildChartGeometry(summary.points), [summary.points]);
+  const tokenChart = useMemo(() => buildTokenChartGeometry(summary.dailyTokens), [summary.dailyTokens]);
 
   const hasAnyData = (rollupQuery.data?.length ?? 0) > 0;
 
@@ -193,7 +198,42 @@ export function ClaudeCodePage() {
             </KpiCard>
           </div>
 
-          <CostChart chart={chart} />
+          <div className={styles.kpiRowOutput}>
+            <KpiCard
+              kicker={`LINES OF CODE · ${range}d`}
+              value={
+                summary.totals.linesAdded === null && summary.totals.linesRemoved === null ? (
+                  EMPTY
+                ) : (
+                  <>
+                    <span className={styles.linesAdded}>+{compactCount(summary.totals.linesAdded ?? 0)}</span>{' '}
+                    <span className={styles.linesRemoved}>−{compactCount(summary.totals.linesRemoved ?? 0)}</span>
+                  </>
+                )
+              }
+            >
+              added / removed by Claude Code
+            </KpiCard>
+            <KpiCard
+              kicker={`COMMITS · ${range}d`}
+              value={summary.totals.commits === null ? EMPTY : count(Math.round(summary.totals.commits))}
+            >
+              commits created via Claude Code
+            </KpiCard>
+            <KpiCard
+              kicker={`PULL REQUESTS · ${range}d`}
+              value={summary.totals.pullRequests === null ? EMPTY : count(Math.round(summary.totals.pullRequests))}
+            >
+              PRs opened via Claude Code
+            </KpiCard>
+          </div>
+
+          <div className={styles.chartRow}>
+            <CostChart chart={chart} />
+            <TokenUsageChart geometry={tokenChart} />
+          </div>
+
+          <TokenLeaderboard rows={summary.topUsersByTokens} />
 
           <Card padded={false} className={styles.tableCard}>
             <div className={styles.tableHeader}>
@@ -209,13 +249,16 @@ export function ClaudeCodePage() {
               <div className={styles.right}>SESSIONS</div>
               <div className={styles.right}>LINES</div>
               <div className={styles.right}>COMMITS</div>
+              <div className={styles.right}>PRS</div>
               <div className={styles.right}>LAST ACTIVE</div>
             </div>
 
             {summary.users.length === 0 ? (
               <div className={styles.empty}>No activity matches these filters.</div>
             ) : (
-              summary.users.map((row) => <UserRow key={row.user} row={row} />)
+              summary.users.map((row) => (
+                <UserRow key={row.user} row={row} hasPrData={summary.totals.pullRequests !== null} />
+              ))
             )}
           </Card>
         </>

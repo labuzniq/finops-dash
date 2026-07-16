@@ -1,0 +1,113 @@
+/* Daily-token stacked bars — the CostChart plot treatment, bar-shaped. */
+
+.chartHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chartTitle {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+/* Monochrome accent ramp: parts of one whole, darkest at the baseline. */
+.input {
+  background: var(--accent);
+}
+
+.output {
+  background: color-mix(in srgb, var(--accent) 55%, var(--card));
+}
+
+.cache {
+  background: color-mix(in srgb, var(--accent) 24%, var(--card));
+}
+
+.plot {
+  position: relative;
+  height: 250px;
+  margin-top: 14px;
+}
+
+.gridLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--border2);
+}
+
+.gridLabel {
+  position: absolute;
+  right: 0;
+  top: -15px;
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.svg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
+  height: 240px;
+  display: block;
+  overflow: visible;
+}
+
+/* The surface-coloured stroke is the spacer between segments and bars. */
+.segment {
+  stroke: var(--card);
+  stroke-width: 1.5;
+}
+
+.segmentInput {
+  fill: var(--accent);
+}
+
+.segmentOutput {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--card));
+}
+
+.segmentCache {
+  fill: color-mix(in srgb, var(--accent) 24%, var(--card));
+}
+
+.xLabels {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.xLabel {
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--faint);
+}
