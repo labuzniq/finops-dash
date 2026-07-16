@@ -3,12 +3,41 @@ import type { CopilotSeat, ImportResult, ModelUsage, RefreshJob, SpendPoint } fr
 /** Vite proxies /api to the backend in dev; same-origin in production. */
 const BASE = '/api';
 
+/**
+ * Auth is a single shared token. Login sets an 8h session cookie; every other
+ * call rides on it. See apps/api/src/auth/session.ts.
+ */
+export async function fetchAuthStatus(): Promise<boolean> {
+  const response = await fetch(`${BASE}/auth/me`, { credentials: 'include' });
+  return response.ok;
+}
+
+/** Resolves on success; throws with the server's message on a bad token. */
+export async function login(token: string): Promise<void> {
+  const response = await fetch(`${BASE}/auth/login`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? 'Login failed');
+  }
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' });
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // Only advertise a JSON body when we're actually sending one. A POST that sets
   // Content-Type: application/json with an empty body makes Fastify reject it 400
   // (FST_ERR_CTP_EMPTY_JSON_BODY) — which is exactly what POST /refresh did.
   const response = await fetch(`${BASE}${path}`, {
     ...init,
+    // Carry the session cookie on every call.
+    credentials: 'include',
     ...(init?.body
       ? { headers: { 'Content-Type': 'application/json', ...init.headers } }
       : {}),
