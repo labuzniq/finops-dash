@@ -81,13 +81,13 @@ from compose. Both need `.env` to exist — copy it from `.env.example` first.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/finops/health` | liveness + which data source is active |
-| `GET /api/finops/seats` | every seat (~1,000 rows; the client filters and pages) |
-| `GET /api/finops/spend?days=90` | daily spend, split license vs premium overage |
-| `POST /api/finops/refresh` | start a sync → `202` + the job to poll |
-| `GET /api/finops/refresh/:id` | one job's status |
-| `GET /api/finops/refresh/latest` | last job of any status — drives the "synced 2h ago" note |
-| `GET /api/finops/telemetry/rollup?days=90` | Claude Code telemetry, rolled up per (day, user, model, metric, type) |
+| `GET /api/health` | liveness + which data source is active |
+| `GET /api/seats` | every seat (~1,000 rows; the client filters and pages) |
+| `GET /api/spend?days=90` | daily spend, split license vs premium overage |
+| `POST /api/refresh` | start a sync → `202` + the job to poll |
+| `GET /api/refresh/:id` | one job's status |
+| `GET /api/refresh/latest` | last job of any status — drives the "synced 2h ago" note |
+| `GET /api/telemetry/rollup?days=90` | Claude Code telemetry, rolled up per (day, user, model, metric, type) |
 | `POST /v1/metrics` / `POST /v1/logs` | **OTLP/HTTP ingest** (JSON encoding) — see below |
 
 ## OTLP ingest (Claude Code telemetry)
@@ -116,7 +116,7 @@ activity, filterable by user and model.
 
 ### The refresh is asynchronous
 
-`POST /api/finops/refresh` inserts a job row, returns `202` immediately, and syncs in the
+`POST /api/refresh` inserts a job row, returns `202` immediately, and syncs in the
 background. The client polls the job until it reaches `succeeded` or `failed`, then
 invalidates its data queries. There is no broker: the job table *is* the queue, the audit
 log, and the UI's status source.

@@ -55,7 +55,7 @@ where data comes from: `mock.ts` (seeded 1,000-seat generator, fixed Lehmer seed
 `env.ts`. `services/refresh.ts` writes; `services/dashboard.ts` reads; `routes/` is HTTP only. `index.ts`
 migrates on boot and, finding an empty seat table, kicks off a seeding refresh in the background.
 
-**Refresh is a job table, not a broker.** `POST /api/finops/refresh` inserts a row, returns `202`, and syncs in
+**Refresh is a job table, not a broker.** `POST /api/refresh` inserts a row, returns `202`, and syncs in
 the background; the client polls until `succeeded`/`failed`, then invalidates its queries. The
 `refresh_jobs` table is simultaneously the queue, the audit log, and the UI's "synced 2h ago" source.
 Two invariants live in `services/refresh.ts` — an in-flight job is returned rather than duplicated, and

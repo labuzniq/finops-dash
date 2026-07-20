@@ -13,11 +13,11 @@ const dateWindowQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q
 });
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/api/finops/seats', async () => {
+  app.get('/api/seats', async () => {
     return { seats: await listSeats() };
   });
 
-  app.get('/api/finops/spend', async (request, reply) => {
+  app.get('/api/spend', async (request, reply) => {
     const parsed = daysQuery.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
@@ -25,7 +25,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     return { spend: await listSpend(parsed.data.days) };
   });
 
-  app.get('/api/finops/models', async (request, reply) => {
+  app.get('/api/models', async (request, reply) => {
     // A query mentioning either endpoint is a calendar window; anything else
     // is the "last N days" form. A union would let a bad window (from > to)
     // fall through to the days default and silently return 90 days.
