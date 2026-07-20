@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
@@ -12,6 +13,7 @@ import {
   smallint,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
 import { PLANS, REFRESH_STATUSES } from '@dash/shared';
@@ -154,14 +156,25 @@ export const spendDaily = pgTable('spend_daily', {
 });
 
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
-export const refreshJobs = pgTable('refresh_jobs', {
-  id: text('id').primaryKey(),
-  status: refreshStatusEnum('status').notNull().default('pending'),
-  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
-  finishedAt: timestamp('finished_at', { withTimezone: true }),
-  seatsSynced: integer('seats_synced'),
-  error: text('error'),
-});
+export const refreshJobs = pgTable(
+  'refresh_jobs',
+  {
+    id: text('id').primaryKey(),
+    status: refreshStatusEnum('status').notNull().default('pending'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    seatsSynced: integer('seats_synced'),
+    error: text('error'),
+  },
+  // Single-flight is enforced here, not by a check-then-insert race: at most one
+  // job may sit in an active status at a time. A concurrent insert loses on this
+  // partial unique index instead of starting a second, colliding sync.
+  (table) => [
+    uniqueIndex('refresh_jobs_single_flight_idx')
+      .on(sql`(true)`)
+      .where(sql`${table.status} in ('pending', 'running')`),
+  ],
+);
 
 /**
  * Raw OTLP metric datapoints from Claude Code (and any other OTLP client).
