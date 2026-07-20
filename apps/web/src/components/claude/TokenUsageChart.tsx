@@ -2,6 +2,7 @@ import { cx } from '../../lib/cx.js';
 import { TOKEN_CHART_VIEWBOX } from '../../lib/metrics/tokenChart.js';
 import type { TokenChartGeometry } from '../../lib/metrics/tokenChart.js';
 import { Card } from '../Card.js';
+import { ChartHoverLayer } from '../ChartHoverLayer.js';
 import styles from './TokenUsageChart.module.css';
 
 /**
@@ -41,6 +42,7 @@ export function TokenUsageChart({
           <path className={styles.area} d={geometry.areaPath} />
           <path className={styles.line} d={geometry.linePath} vectorEffect="non-scaling-stroke" />
         </svg>
+        <ChartHoverLayer points={geometry.hoverPoints} />
         <div className={styles.xLabels}>
           {geometry.xLabels.map((label, index) => (
             // Dates can repeat across a short range, so pair them with position.

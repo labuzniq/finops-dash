@@ -1,0 +1,85 @@
+/* Crosshair + tooltip overlay. Same box as the plot SVG (calc(100% - 10px)
+   matches both the 250px and 150px plots), so percentage positions from the
+   900×240 viewbox land on the stretched paths exactly. */
+
+.layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: calc(100% - 10px);
+  z-index: 1;
+}
+
+.layer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.layer > * {
+  pointer-events: none;
+}
+
+.hairline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+.marker {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--card);
+  transform: translate(-50%, -50%);
+}
+
+.tooltip {
+  position: absolute;
+  top: 4px;
+  margin: 0 10px;
+  padding: 7px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.tooltipDate {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+
+.tooltipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+
+/* Line key, not a box — mirrors the legend swatch at tooltip density. */
+.tooltipKey {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.tooltipValue {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tooltipLabel {
+  color: var(--muted);
+}
