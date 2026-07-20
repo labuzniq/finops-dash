@@ -1,4 +1,4 @@
-import { ACTIVE_WINDOW_DAYS, IDLE_THRESHOLD_DAYS, isActiveWithin } from '@dash/shared';
+import { ACTIVE_WINDOW_DAYS, isActiveWithin } from '@dash/shared';
 import type { CopilotSeat } from '@dash/shared';
 
 /**
@@ -37,7 +37,7 @@ export interface Utilization {
 const LABELS: Record<UtilizationBucketKey, string> = {
   active7: 'Active · 7d',
   active28: 'Active · 8–28d',
-  dormant: 'Dormant · 30d+',
+  dormant: 'Dormant · 29d+',
   never: 'Never used',
 };
 
@@ -50,10 +50,10 @@ export function buildUtilization(seats: readonly CopilotSeat[]): Utilization {
       (seat) =>
         seat.lastActivityDays !== null &&
         seat.lastActivityDays > RECENTLY_ACTIVE_DAYS &&
-        seat.lastActivityDays < IDLE_THRESHOLD_DAYS,
+        seat.lastActivityDays <= ACTIVE_WINDOW_DAYS,
     ).length,
     dormant: seats.filter(
-      (seat) => seat.lastActivityDays !== null && seat.lastActivityDays >= IDLE_THRESHOLD_DAYS,
+      (seat) => seat.lastActivityDays !== null && seat.lastActivityDays > ACTIVE_WINDOW_DAYS,
     ).length,
     never: seats.filter((seat) => seat.lastActivityDays === null).length,
   };

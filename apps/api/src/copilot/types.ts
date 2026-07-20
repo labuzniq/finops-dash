@@ -99,9 +99,21 @@ export interface ModelDailySnapshot {
   locDeleted: number;
 }
 
+/**
+ * Premium usage for a user who is in the 28-day report but no longer on the
+ * roster — offboarded mid-window. The bill still counts their overage, so spend
+ * must too, even though they have no seat to attribute it to.
+ */
+export interface OffRosterPremium {
+  login: string;
+  /** `ai_credits_used` (28d), rounded — non-null, else there is nothing to bill. */
+  premiumRequests28d: number;
+}
+
 /** Everything one refresh pulls from a source. */
 export interface CopilotSnapshot {
   seats: SeatSnapshot[];
+  offRosterPremiumRequests: OffRosterPremium[];
   orgDaily: OrgDailySnapshot[];
   modelDaily: ModelDailySnapshot[];
   breakdownDaily: BreakdownDailySnapshot[];
