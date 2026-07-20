@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "refresh_jobs_single_flight_idx" ON "refresh_jobs" USING btree ((true)) WHERE "refresh_jobs"."status" in ('pending', 'running');

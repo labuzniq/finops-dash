@@ -44,6 +44,16 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Postgres unique-violation SQLSTATE — the single-flight index rejecting a duplicate. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '23505'
+  );
+}
+
 function toCents(dollars: number): number {
   return Math.round(dollars * 100);
 }
@@ -278,7 +288,10 @@ async function run(jobId: string): Promise<void> {
  * Starts a refresh and returns immediately with the job to poll.
  *
  * If one is already in flight its job is returned instead, so a double-click
- * on "Refresh" cannot start two concurrent syncs of the same table.
+ * on "Refresh" cannot start two concurrent syncs of the same table. Single-flight
+ * is enforced by a partial unique index on `refresh_jobs` (one active row max),
+ * so two concurrent callers race safely: the loser's insert hits the index and
+ * is answered with the winner's in-flight job, never a second sync.
  */
 export async function startRefresh(): Promise<RefreshJob> {
   // Fail any job left running past the stale threshold before we dedup, so a
@@ -293,16 +306,32 @@ export async function startRefresh(): Promise<RefreshJob> {
       ),
     );
 
-  const [inFlight] = await db
+  const [existing] = await db
     .select()
     .from(refreshJobs)
     .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
     .orderBy(desc(refreshJobs.startedAt))
     .limit(1);
 
-  if (inFlight) return toJob(inFlight);
+  if (existing) return toJob(existing);
 
-  const [job] = await db.insert(refreshJobs).values({ id: randomUUID() }).returning();
+  let job: RefreshJobRow | undefined;
+  try {
+    [job] = await db.insert(refreshJobs).values({ id: randomUUID() }).returning();
+  } catch (error) {
+    // Lost the race to the single-flight index: another caller's job is now
+    // active. Return it rather than surfacing the constraint violation.
+    if (isUniqueViolation(error)) {
+      const [inFlight] = await db
+        .select()
+        .from(refreshJobs)
+        .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
+        .orderBy(desc(refreshJobs.startedAt))
+        .limit(1);
+      if (inFlight) return toJob(inFlight);
+    }
+    throw error;
+  }
   if (!job) throw new Error('failed to create refresh job');
 
   // Deliberately not awaited — the request returns 202 while this runs.
