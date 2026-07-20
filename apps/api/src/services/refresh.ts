@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { PLAN_PRICE, BILLING_MONTH_DAYS, PREMIUM_WINDOW_DAYS, premiumOverage } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -90,11 +91,30 @@ export function deriveSpend(
   });
 }
 
+/** `excluded.<col>` — the value the failed insert would have written. */
+function incoming(col: AnyPgColumn) {
+  return sql`excluded.${sql.identifier(col.name)}`;
+}
+
 /**
- * Replaces the seat table with a fresh snapshot and upserts the daily series.
+ * `coalesce(excluded.<col>, <col>)` — take the incoming value only when it is
+ * non-null, otherwise keep what's already stored. GitHub leaves these metrics
+ * null on live orgs; a CSV import may have enriched them, and a sync must not
+ * blank that back out.
+ */
+function keepIfNull(col: AnyPgColumn) {
+  return sql`coalesce(${incoming(col)}, ${col})`;
+}
+
+/**
+ * Reconciles the seat table with a fresh snapshot and upserts the daily series.
  *
- * Seats are deleted-then-inserted inside a transaction: a refresh represents
- * the org as it is now, so a seat that vanished upstream must vanish here.
+ * Seats are upserted by login inside a transaction, then any login missing from
+ * the snapshot is deleted: a refresh represents the org as it is now, so a seat
+ * that vanished upstream must vanish here. On conflict the GitHub-authoritative
+ * columns (name, plan, lastActivityAt, team) always overwrite, but the nullable
+ * metric columns only overwrite when the incoming value is non-null — so
+ * CSV-imported enrichment survives a sync that reports those metrics as null.
  * The daily tables are upserted, since past days are settled and only the most
  * recent ones move.
  */
@@ -103,26 +123,52 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
   const spend = deriveSpend(seats, org);
 
   await db.transaction(async (tx) => {
-    await tx.delete(copilotSeats);
-
     if (seats.length > 0) {
-      await tx.insert(copilotSeats).values(
-        seats.map((seat) => ({
-          login: seat.login,
-          name: seat.name,
-          plan: seat.plan,
-          editor: seat.editor,
-          language: seat.language,
-          lastActivityAt: seat.lastActivityAt,
-          premiumRequests28d: seat.premiumRequests28d,
-          acceptanceRate: seat.acceptanceRate,
-          usedAgent: seat.usedAgent,
-          usedChat: seat.usedChat,
-          topModel: seat.topModel,
-          team: seat.team,
-        })),
-      );
+      await tx
+        .insert(copilotSeats)
+        .values(
+          seats.map((seat) => ({
+            login: seat.login,
+            name: seat.name,
+            plan: seat.plan,
+            editor: seat.editor,
+            language: seat.language,
+            lastActivityAt: seat.lastActivityAt,
+            premiumRequests28d: seat.premiumRequests28d,
+            acceptanceRate: seat.acceptanceRate,
+            usedAgent: seat.usedAgent,
+            usedChat: seat.usedChat,
+            topModel: seat.topModel,
+            team: seat.team,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: copilotSeats.login,
+          set: {
+            name: incoming(copilotSeats.name),
+            plan: incoming(copilotSeats.plan),
+            lastActivityAt: incoming(copilotSeats.lastActivityAt),
+            team: incoming(copilotSeats.team),
+            editor: keepIfNull(copilotSeats.editor),
+            language: keepIfNull(copilotSeats.language),
+            premiumRequests28d: keepIfNull(copilotSeats.premiumRequests28d),
+            acceptanceRate: keepIfNull(copilotSeats.acceptanceRate),
+            usedAgent: keepIfNull(copilotSeats.usedAgent),
+            usedChat: keepIfNull(copilotSeats.usedChat),
+            topModel: keepIfNull(copilotSeats.topModel),
+            syncedAt: new Date(),
+          },
+        });
     }
+
+    // Anything not in this snapshot has vanished upstream — an empty snapshot
+    // clears the table (notInArray of an empty set matches every row).
+    await tx.delete(copilotSeats).where(
+      notInArray(
+        copilotSeats.login,
+        seats.map((seat) => seat.login),
+      ),
+    );
 
     for (const point of spend) {
       await tx
