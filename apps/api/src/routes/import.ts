@@ -9,7 +9,7 @@ const importBody = z.object({
 
 export const importRoutes: FastifyPluginAsync = async (app) => {
   /** Manual CSV / JSON / NDJSON import of seat rows. Upserts by login. */
-  app.post('/api/import', async (request, reply) => {
+  app.post('/api/finops/import', async (request, reply) => {
     const parsed = importBody.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Body must be { content: string }' });

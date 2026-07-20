@@ -16,10 +16,10 @@ import { telemetryRoutes } from './routes/telemetry.js';
  * dashboard cookie. Everything else needs the cookie.
  */
 const PUBLIC_PATHS = new Set([
-  '/api/health',
-  '/api/auth/login',
-  '/api/auth/me',
-  '/api/auth/logout',
+  '/api/finops/health',
+  '/api/finops/auth/login',
+  '/api/finops/auth/me',
+  '/api/finops/auth/logout',
   '/v1/metrics',
   '/v1/logs',
 ]);
@@ -42,7 +42,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.code(401).send({ error: 'Not authenticated' });
   });
 
-  app.get('/api/health', async () => ({ status: 'ok', source: env.COPILOT_SOURCE }));
+  app.get('/api/finops/health', async () => ({ status: 'ok', source: env.COPILOT_SOURCE }));
 
   await app.register(authRoutes);
   await app.register(dashboardRoutes);
