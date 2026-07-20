@@ -8,7 +8,7 @@ const daysQuery = z.object({
 
 /** Claude Code telemetry reads. Behind the session cookie like the rest of /api. */
 export const telemetryRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/api/finops/telemetry/rollup', async (request, reply) => {
+  app.get('/api/telemetry/rollup', async (request, reply) => {
     const parsed = daysQuery.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });

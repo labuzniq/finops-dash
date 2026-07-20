@@ -9,7 +9,7 @@ import type {
 } from '@dash/shared';
 
 /** Vite proxies /api to the backend in dev; same-origin in production. */
-const BASE = '/api/finops';
+const BASE = '/api';
 
 /**
  * Auth is a single shared token. Login sets an 8h session cookie; every other
