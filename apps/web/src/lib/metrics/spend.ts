@@ -45,13 +45,19 @@ function mean(points: readonly ScaledSpendPoint[]): number {
   return points.length === 0 ? 0 : sumTotal(points) / points.length;
 }
 
-/** The last `rangeDays` of the series, scaled to the filtered seat subset. */
+/**
+ * The last `rangeDays` calendar days of the series, scaled to the filtered
+ * seat subset. Anchored on the last point's date so gaps (days GitHub answered
+ * 204) can't stretch a preset past its calendar span.
+ */
 export function sliceRange(
   series: readonly SpendPoint[],
   rangeDays: number,
   ratio: number,
 ): ScaledSpendPoint[] {
-  return series.slice(Math.max(0, series.length - rangeDays)).map((point) => scale(point, ratio));
+  const last = series[series.length - 1];
+  if (last === undefined) return [];
+  return sliceDates(series, shiftIso(last.date, -(rangeDays - 1)), last.date, ratio);
 }
 
 /** The points between two inclusive ISO dates, scaled like `sliceRange`. */
@@ -84,8 +90,12 @@ function previousWindow(
   ratio: number,
 ): ScaledSpendPoint[] | null {
   if (range.kind === 'preset') {
-    if (range.days * 2 > series.length) return null;
-    return sliceRange(series.slice(0, series.length - range.days), range.days, ratio);
+    const last = series[series.length - 1];
+    const first = series[0];
+    if (last === undefined || first === undefined) return null;
+    const previousFrom = shiftIso(last.date, -(range.days * 2 - 1));
+    if (first.date > previousFrom) return null;
+    return sliceDates(series, previousFrom, shiftIso(last.date, -range.days), ratio);
   }
 
   const days = rangeDayCount(range);

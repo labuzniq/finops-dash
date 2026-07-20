@@ -72,10 +72,10 @@ function toSpendPoint(row: SpendRow): SpendPoint {
   };
 }
 
-/** ISO date `days` days before now. */
+/** ISO date `days` days before now, computed in UTC to match the ISO render. */
 function earliestDate(days: number): string {
   const earliest = new Date();
-  earliest.setDate(earliest.getDate() - days);
+  earliest.setUTCDate(earliest.getUTCDate() - days);
   return earliest.toISOString().slice(0, 10);
 }
 
