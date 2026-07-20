@@ -30,6 +30,7 @@ services:
       API_PORT: 4000
       # Inside the compose network the host is the service name, not localhost.
       DATABASE_URL: postgres://${POSTGRES_USER:-dash}:${POSTGRES_PASSWORD:-dash}@postgres:5432/${POSTGRES_DB:-dash}
+      DB_SCHEMA: ${DB_SCHEMA:-public}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       COPILOT_SOURCE: ${COPILOT_SOURCE:-mock}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}

@@ -11,6 +11,16 @@ const schema = z
     API_PORT: z.coerce.number().int().positive().default(4000),
     HOST: z.string().default('0.0.0.0'),
     DATABASE_URL: z.string().url(),
+    /**
+     * Postgres schema the app's tables live in. Applied as the connection
+     * `search_path`, so migrations and queries never name it — the migration
+     * SQL stays schema-agnostic. Restricted to a plain identifier because the
+     * value is interpolated into `CREATE SCHEMA` (see db/migrate.ts).
+     */
+    DB_SCHEMA: z
+      .string()
+      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'must be a plain Postgres identifier')
+      .default('public'),
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     COPILOT_SOURCE: z.enum(['mock', 'github']).default('mock'),
     GITHUB_TOKEN: z.string().optional(),
