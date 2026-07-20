@@ -47,6 +47,9 @@ function toCents(dollars: number): number {
   return Math.round(dollars * 100);
 }
 
+/** A derived spend point, tagged with whether it falls in the premium window. */
+type DerivedSpend = SpendInsert & { inPremiumWindow: boolean };
+
 /**
  * Derive the daily spend series. GitHub exposes no dollar billing to this org
  * (usage endpoint 404s), so money comes entirely from the cost model:
@@ -57,12 +60,17 @@ function toCents(dollars: number): number {
  *     28 report days in proportion to that day's code-generation activity, so
  *     the trend has real shape without inventing dollars outside the window.
  *
+ * Only points inside that window carry a meaningful overage figure. Older days
+ * are flagged `inPremiumWindow: false` with `premiumOverageCents: 0`; the caller
+ * uses the flag to preserve whatever overage those days recorded on the refresh
+ * when they were still in-window, rather than clobbering settled history to $0.
+ *
  * Documented in docs/github-integration.md.
  */
 export function deriveSpend(
   seats: readonly SeatSnapshot[],
   org: CopilotSnapshot['orgDaily'],
-): SpendInsert[] {
+): DerivedSpend[] {
   if (org.length === 0) return [];
 
   const licenseDollarsPerDay =
@@ -79,14 +87,15 @@ export function deriveSpend(
   const genTotal = recent.reduce((sum, d) => sum + d.generations, 0);
 
   return org.map((day) => {
+    const inPremiumWindow = windowDates.has(day.date);
     let premiumOverageCents = 0;
-    if (windowDates.has(day.date)) {
+    if (inPremiumWindow) {
       premiumOverageCents =
         genTotal > 0
           ? Math.round((overageTotalCents * day.generations) / genTotal)
           : Math.round(overageTotalCents / recent.length);
     }
-    return { date: day.date, licenseCents, premiumOverageCents };
+    return { date: day.date, licenseCents, premiumOverageCents, inPremiumWindow };
   });
 }
 
@@ -124,13 +133,18 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
       );
     }
 
-    for (const point of spend) {
+    for (const { inPremiumWindow, ...point } of spend) {
+      // In-window days settle both columns; older days only refresh license and
+      // keep the overage they recorded while in-window, so falling out of the
+      // 28-day window doesn't erase a day's premium spend from the 90-day chart.
       await tx
         .insert(spendDaily)
         .values(point)
         .onConflictDoUpdate({
           target: spendDaily.date,
-          set: { licenseCents: point.licenseCents, premiumOverageCents: point.premiumOverageCents },
+          set: inPremiumWindow
+            ? { licenseCents: point.licenseCents, premiumOverageCents: point.premiumOverageCents }
+            : { licenseCents: point.licenseCents },
         });
     }
 
