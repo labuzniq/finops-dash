@@ -37,17 +37,5 @@
   "35": "GitHub Copilot integration",
   "36": "Manual import format (CSV / JSON / NDJSON)",
   "37": "Theme CSS variable layer (.theme / .theme.dark / accent classes)",
-  "38": "Inter 400/500/600 from Google Fonts",
-  "39": "format.ts",
-  "40": "reports.ts",
-  "41": "Claude Code Telemetry — Visibility Expansion",
-  "42": "Dashboard calendar date-range picker — design",
-  "43": "ClaudeCodePage.tsx",
-  "44": "UserTable.tsx",
-  "45": "Global Constraints",
-  "46": "AGENTS.md",
-  "47": "ConnectedSourcesTab.tsx",
-  "48": "Static token login — design",
-  "49": "[impl] Implementation notes",
-  "50": "Mock dataset (CSV)"
+  "38": "Inter 400/500/600 from Google Fonts"
 }
