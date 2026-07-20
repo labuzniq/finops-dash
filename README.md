@@ -24,8 +24,10 @@ pnpm dev
 That starts Postgres in Docker, waits for it to be healthy, and runs the API (`:4000`)
 and the web app (`:5173`) in watch mode. Open **http://localhost:5173**.
 
-The API migrates on boot and, finding an empty database, seeds itself with 1,000 mock
-seats — so this works with no GitHub credentials.
+The API migrates on boot but never creates data — a fresh database starts empty.
+Populate it from the exported CSVs in `data/mock/` (see `data/mock/README.md`), via the
+UI's **+ Add data → Import**, or by triggering a sync (`POST /api/refresh`) against a
+configured source.
 
 > `pnpm dev` runs the API **locally** for watch mode. Don't also run the API container:
 > both bind port 4000. `docker compose up` deliberately starts Postgres only — the API
@@ -135,7 +137,9 @@ In the UI the sync is triggered from **+ Add data → Connected sources → Impo
 Set by `COPILOT_SOURCE`:
 
 - **`mock`** (default) — a seeded 1,000-seat generator ported from the design prototype.
-  No credentials; deterministic roster; activity dates anchored to today.
+  No credentials; deterministic roster; activity dates anchored to today. Only used when
+  a sync is explicitly triggered — nothing is generated on boot. `pnpm --filter
+  @dash/api mock:export` writes the same dataset to CSVs in `data/mock/`.
 - **`github`** — the live Copilot APIs. Requires `GITHUB_TOKEN` (scope
   `manage_billing:copilot`) and `GITHUB_ORG`. The API refuses to boot if either is
   missing.

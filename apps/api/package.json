@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file=../../.env src/db/migrate-cli.ts",
-    "refresh": "tsx --env-file=../../.env src/refresh-once.ts"
+    "refresh": "tsx --env-file=../../.env src/refresh-once.ts",
+    "mock:export": "tsx --env-file=../../.env src/export-mock-csv.ts"
   },
   "dependencies": {
     "@dash/shared": "workspace:*",

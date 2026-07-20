@@ -51,7 +51,10 @@ function toCents(dollars: number): number {
  *
  * Documented in docs/github-integration.md.
  */
-function deriveSpend(seats: readonly SeatSnapshot[], org: CopilotSnapshot['orgDaily']): SpendInsert[] {
+export function deriveSpend(
+  seats: readonly SeatSnapshot[],
+  org: CopilotSnapshot['orgDaily'],
+): SpendInsert[] {
   if (org.length === 0) return [];
 
   const licenseDollarsPerDay =
@@ -228,10 +231,4 @@ export async function getRefreshJob(id: string): Promise<RefreshJob | null> {
 export async function getLatestRefreshJob(): Promise<RefreshJob | null> {
   const [row] = await db.select().from(refreshJobs).orderBy(desc(refreshJobs.startedAt)).limit(1);
   return row ? toJob(row) : null;
-}
-
-/** True when the seat table has never been populated — used to auto-seed on boot. */
-export async function isSeatTableEmpty(): Promise<boolean> {
-  const [row] = await db.select({ login: copilotSeats.login }).from(copilotSeats).limit(1);
-  return row === undefined;
 }
