@@ -185,20 +185,14 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
       await tx.insert(adoptionPhaseDaily).values(adoptionDaily);
     }
 
-    for (const row of models) {
-      await tx
-        .insert(modelDaily)
-        .values(row)
-        .onConflictDoUpdate({
-          target: [modelDaily.date, modelDaily.model],
-          set: {
-            generations: row.generations,
-            acceptances: row.acceptances,
-            locAdded: row.locAdded,
-            locDeleted: row.locDeleted,
-            syncedAt: new Date(),
-          },
-        });
+    // model_daily gets the same per-day replacement treatment: the set of models
+    // reported for a day can shrink or re-bucket between refreshes, and a stale
+    // (date, model) key would linger under an upsert and double-count in
+    // listModels. Replace only the days this refresh fetched — leave the rest.
+    if (models.length > 0) {
+      const modelDates = [...new Set(models.map((row) => row.date))];
+      await tx.delete(modelDaily).where(inArray(modelDaily.date, modelDates));
+      await tx.insert(modelDaily).values(models);
     }
   });
 }
