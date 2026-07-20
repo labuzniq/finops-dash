@@ -194,6 +194,10 @@ export function App() {
               usage={usageQuery.data}
               seats={metrics.filteredSeats}
               range={state.range}
+              usageMetric={state.usageMetric}
+              onMetricChange={(section, metric) =>
+                dispatch({ type: 'setUsageMetric', section, metric })
+              }
             />
           </>
         )}
