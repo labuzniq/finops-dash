@@ -33,7 +33,7 @@ function csv(headers: readonly string[], rows: ReadonlyArray<readonly Cell[]>): 
 }
 
 const snapshot = await new MockCopilotClient().fetchSnapshot(days);
-const spend = deriveSpend(snapshot.seats, snapshot.orgDaily);
+const spend = deriveSpend(snapshot.seats, snapshot.offRosterPremiumRequests, snapshot.orgDaily);
 
 mkdirSync(outDir, { recursive: true });
 

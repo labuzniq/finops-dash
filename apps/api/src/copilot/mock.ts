@@ -354,6 +354,7 @@ export class MockCopilotClient implements CopilotClient {
     const modelDaily = buildModelDaily(orgDaily, random);
     const breakdownDaily = buildBreakdownDaily(orgDaily, random);
     const adoptionDaily = buildAdoptionDaily(orgDaily, random);
-    return { seats, orgDaily, modelDaily, breakdownDaily, adoptionDaily };
+    // The mock roster is self-contained: every user with usage holds a seat.
+    return { seats, offRosterPremiumRequests: [], orgDaily, modelDaily, breakdownDaily, adoptionDaily };
   }
 }

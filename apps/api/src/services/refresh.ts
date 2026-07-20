@@ -56,11 +56,14 @@ function toCents(dollars: number): number {
  *   • Premium overage is the modelled 28-day total, distributed across the last
  *     28 report days in proportion to that day's code-generation activity, so
  *     the trend has real shape without inventing dollars outside the window.
+ *     Off-roster users (offboarded mid-window) hold no seat but still carry
+ *     billed usage, so their overage is added at the lower 'Business' rate.
  *
  * Documented in docs/github-integration.md.
  */
 export function deriveSpend(
   seats: readonly SeatSnapshot[],
+  offRosterPremiumRequests: CopilotSnapshot['offRosterPremiumRequests'],
   org: CopilotSnapshot['orgDaily'],
 ): SpendInsert[] {
   if (org.length === 0) return [];
@@ -70,7 +73,11 @@ export function deriveSpend(
   const licenseCents = toCents(licenseDollarsPerDay);
 
   const overageTotalCents = toCents(
-    seats.reduce((total, seat) => total + premiumOverage(seat.plan, seat.premiumRequests28d), 0),
+    seats.reduce((total, seat) => total + premiumOverage(seat.plan, seat.premiumRequests28d), 0) +
+      offRosterPremiumRequests.reduce(
+        (total, user) => total + premiumOverage('Business', user.premiumRequests28d),
+        0,
+      ),
   );
 
   // The premium window is the newest PREMIUM_WINDOW_DAYS report days.
@@ -99,8 +106,8 @@ export function deriveSpend(
  * recent ones move.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
-  const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
-  const spend = deriveSpend(seats, org);
+  const { seats, offRosterPremiumRequests, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
+  const spend = deriveSpend(seats, offRosterPremiumRequests, org);
 
   await db.transaction(async (tx) => {
     await tx.delete(copilotSeats);
