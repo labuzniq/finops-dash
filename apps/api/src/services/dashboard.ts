@@ -1,9 +1,33 @@
 import { and, asc, gte, lte } from 'drizzle-orm';
-import { EDITORS } from '@dash/shared';
-import type { CopilotSeat, Editor, ModelUsage, SpendPoint } from '@dash/shared';
+import { EDITORS, USAGE_DIMENSIONS } from '@dash/shared';
+import type {
+  AdoptionPhasePoint,
+  BreakdownPoint,
+  CopilotSeat,
+  Editor,
+  ModelUsage,
+  OrgDailyPoint,
+  SpendPoint,
+  UsageDimension,
+  UsageHistory,
+} from '@dash/shared';
 import { db } from '../db/client.js';
-import { copilotSeats, modelDaily, spendDaily } from '../db/schema.js';
-import type { ModelDailyRow, SeatRow, SpendRow } from '../db/schema.js';
+import {
+  adoptionPhaseDaily,
+  copilotSeats,
+  modelDaily,
+  orgDaily,
+  spendDaily,
+  usageBreakdownDaily,
+} from '../db/schema.js';
+import type {
+  AdoptionPhaseRow,
+  ModelDailyRow,
+  OrgDailyRow,
+  SeatRow,
+  SpendRow,
+  UsageBreakdownRow,
+} from '../db/schema.js';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -77,6 +101,58 @@ export async function listSpend(days: number): Promise<SpendPoint[]> {
     .orderBy(asc(spendDaily.date));
 
   return rows.map(toSpendPoint);
+}
+
+function toOrgDailyPoint(row: OrgDailyRow): OrgDailyPoint {
+  const { syncedAt: _syncedAt, ...point } = row;
+  return point;
+}
+
+function toBreakdownPoint(row: UsageBreakdownRow): BreakdownPoint | null {
+  const dimension = narrow<UsageDimension>(USAGE_DIMENSIONS, row.dimension);
+  if (dimension === null) return null;
+  const { syncedAt: _syncedAt, ...rest } = row;
+  return { ...rest, dimension };
+}
+
+function toAdoptionPoint(row: AdoptionPhaseRow): AdoptionPhasePoint {
+  const { syncedAt: _syncedAt, ...point } = row;
+  return point;
+}
+
+/**
+ * The full usage history in one payload — org days, breakdown rows, adoption
+ * phases. The web app fetches it once and slices by range client-side, the
+ * same contract as /api/seats and /api/spend.
+ */
+export async function getUsageHistory(days: number): Promise<UsageHistory> {
+  const floor = earliestDate(days);
+
+  const [orgRows, breakdownRows, adoptionRows] = await Promise.all([
+    db.select().from(orgDaily).where(gte(orgDaily.date, floor)).orderBy(asc(orgDaily.date)),
+    db
+      .select()
+      .from(usageBreakdownDaily)
+      .where(gte(usageBreakdownDaily.date, floor))
+      .orderBy(
+        asc(usageBreakdownDaily.date),
+        asc(usageBreakdownDaily.dimension),
+        asc(usageBreakdownDaily.key),
+      ),
+    db
+      .select()
+      .from(adoptionPhaseDaily)
+      .where(gte(adoptionPhaseDaily.date, floor))
+      .orderBy(asc(adoptionPhaseDaily.date), asc(adoptionPhaseDaily.phaseNumber)),
+  ]);
+
+  return {
+    orgDaily: orgRows.map(toOrgDailyPoint),
+    breakdowns: breakdownRows
+      .map(toBreakdownPoint)
+      .filter((point): point is BreakdownPoint => point !== null),
+    adoption: adoptionRows.map(toAdoptionPoint),
+  };
 }
 
 /** "Last N days" tail, or an explicit inclusive calendar window. */
