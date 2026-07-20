@@ -1,0 +1,1001 @@
+user_login,name,plan,editor,language,last_activity_at,premium_requests_28d,acceptance_rate,used_agent,used_chat,top_model
+nfischer,Nina Fischer,Business,VS Code,go,2026-05-17T14:17:37.978Z,0,23,false,true,claude-sonnet-5
+oiqbal,Owen Iqbal,Business,Neovim,ruby,2026-07-18T14:17:37.978Z,226,25,false,true,claude-sonnet-5
+nkaur,Nina Kaur,Business,VS Code,python,2026-07-14T14:17:37.978Z,337,16,false,false,claude-sonnet-5
+zkaur,Zoe Kaur,Business,Visual Studio,kotlin,2026-04-26T14:17:37.978Z,0,20,false,true,claude-sonnet-5
+jsantos,Jan Santos,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,325,20,true,true,gpt-5.3-codex
+ynguyen,Yuki Nguyen,Business,JetBrains,go,2026-07-18T14:17:37.978Z,639,32,false,true,claude-sonnet-5
+iduarte,Ivy Duarte,Business,JetBrains,python,2026-07-16T14:17:37.978Z,172,45,false,false,claude-opus-4.6
+rmeyer,Rosa Meyer,Business,Neovim,python,2026-07-05T14:17:37.978Z,103,44,true,true,claude-4.5-haiku
+msilva,Marc Silva,Business,JetBrains,go,2026-06-26T14:17:37.978Z,70,27,false,false,gpt-5.3-codex
+lmeyer,Lena Meyer,Business,VS Code,kotlin,2026-07-07T14:17:37.978Z,91,45,false,false,claude-opus-4.6
+zfarrell,Zoe Farrell,Business,VS Code,ruby,2026-07-14T14:17:37.978Z,182,41,true,true,claude-opus-4.6
+kokafor,Kofi Okafor,Business,Neovim,typescript,2026-07-15T14:17:37.978Z,35,45,false,true,claude-sonnet-5
+shaugen,Sara Haugen,Enterprise,JetBrains,csharp,2026-07-15T14:17:37.978Z,791,37,false,false,claude-opus-4.6
+spetrov,Sara Petrov,Business,JetBrains,python,2026-05-08T14:17:37.978Z,0,27,true,true,gpt-5.6-sol
+ohaas,Owen Haas,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,787,38,true,false,claude-sonnet-5
+zokafor,Zoe Okafor,Business,JetBrains,python,2026-07-03T14:17:37.978Z,52,23,true,false,claude-sonnet-5
+dsorensen,Dmitri Sorensen,Business,VS Code,java,2026-06-28T14:17:37.978Z,96,41,false,true,claude-sonnet-5
+ykaur,Yuki Kaur,Business,JetBrains,java,2026-07-14T14:17:37.978Z,428,42,true,true,claude-opus-4.6
+aweber,Ana Weber,Enterprise,VS Code,java,2026-07-19T14:17:37.978Z,402,27,false,true,claude-4.5-haiku
+smoreau,Sara Moreau,Business,VS Code,python,2026-07-15T14:17:37.978Z,780,34,true,false,gpt-5.6-sol
+piqbal,Priya Iqbal,Business,JetBrains,go,2026-07-01T14:17:37.978Z,52,36,true,false,claude-opus-4.6
+msantos,Maya Santos,Enterprise,JetBrains,java,2026-07-14T14:17:37.978Z,735,41,false,false,claude-opus-4.6
+miqbal,Maya Iqbal,Business,JetBrains,python,2026-07-19T14:17:37.978Z,509,22,false,true,claude-sonnet-5
+rokafor,Ruth Okafor,Business,VS Code,ruby,2026-07-13T14:17:37.978Z,43,19,false,true,claude-4.5-haiku
+zsantos,Zoe Santos,Enterprise,VS Code,go,2026-07-18T14:17:37.978Z,830,34,false,false,claude-opus-4.6
+shaugen25,Sara Haugen,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,172,18,false,true,claude-sonnet-5
+oduarte,Omar Duarte,Enterprise,Neovim,typescript,2026-05-22T14:17:37.978Z,0,27,false,true,gpt-5.6-sol
+ynovak,Yuki Novak,Business,VS Code,go,2026-07-20T14:17:37.978Z,851,17,false,false,gpt-5.3-codex
+lfarrell,Lena Farrell,Enterprise,JetBrains,typescript,2026-06-27T14:17:37.978Z,14,32,false,false,gpt-5.3-codex
+rnguyen,Ruth Nguyen,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,688,40,true,true,claude-sonnet-5
+ookafor,Omar Okafor,Business,VS Code,python,2026-07-20T14:17:37.978Z,367,16,false,false,claude-sonnet-5
+omeyer,Omar Meyer,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,572,42,false,true,gpt-5.3-codex
+ssantos,Sara Santos,Business,VS Code,rust,2026-07-14T14:17:37.978Z,361,24,true,false,claude-sonnet-5
+ekim,Eli Kim,Business,JetBrains,python,2026-07-15T14:17:37.978Z,750,35,true,true,claude-sonnet-5
+wduarte,Wei Duarte,Enterprise,VS Code,typescript,2026-07-19T14:17:37.978Z,420,33,true,true,claude-opus-4.6
+tkim,Tariq Kim,Business,Neovim,python,2026-06-27T14:17:37.978Z,130,25,true,true,claude-4.5-haiku
+obianchi,Owen Bianchi,Enterprise,VS Code,ruby,2026-07-15T14:17:37.978Z,158,21,true,true,gpt-5.3-codex
+mnovak,Maya Novak,Business,VS Code,go,2026-07-15T14:17:37.978Z,349,18,true,true,gpt-5.3-codex
+afarrell,Ana Farrell,Business,VS Code,typescript,2026-07-08T14:17:37.978Z,140,19,false,true,gpt-5.6-sol
+mokafor,Maya Okafor,Business,VS Code,go,2026-06-06T14:17:37.978Z,0,40,false,true,claude-opus-4.6
+rweber,Rosa Weber,Business,VS Code,typescript,2026-05-25T14:17:37.978Z,0,33,false,true,claude-opus-4.6
+kkaur,Kofi Kaur,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,518,31,true,false,claude-sonnet-5
+lnakamura,Lena Nakamura,Business,JetBrains,go,2026-07-17T14:17:37.978Z,489,19,true,true,claude-sonnet-5
+ilarsen,Ivy Larsen,Business,Neovim,go,2026-07-01T14:17:37.978Z,148,25,true,true,claude-4.5-haiku
+ebianchi,Eli Bianchi,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,38,43,true,false,claude-sonnet-5
+ahaas,Aoife Haas,Business,JetBrains,go,2026-07-18T14:17:37.978Z,147,17,false,true,gpt-5.3-codex
+ameyer,Ana Meyer,Business,Visual Studio,ruby,2026-07-19T14:17:37.978Z,636,40,false,true,claude-sonnet-5
+ahaugen,Aoife Haugen,Business,VS Code,python,2026-07-17T14:17:37.978Z,128,34,false,true,gpt-5.3-codex
+wweber,Wei Weber,Enterprise,Visual Studio,typescript,2026-07-16T14:17:37.978Z,331,36,true,false,claude-sonnet-5
+mfarrell,Marc Farrell,Business,,,,0,,,,
+mkim,Marc Kim,Business,JetBrains,typescript,2026-07-09T14:17:37.978Z,33,44,true,true,claude-sonnet-5
+pnovak,Priya Novak,Enterprise,Visual Studio,python,2026-05-19T14:17:37.978Z,0,46,true,true,claude-sonnet-5
+nolsen,Noah Olsen,Business,Neovim,typescript,2026-07-16T14:17:37.978Z,688,22,true,true,claude-sonnet-5
+tmeyer,Tariq Meyer,Business,,,,0,,,,
+ifarrell,Ivy Farrell,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,733,36,true,true,claude-sonnet-5
+dfarrell,Dmitri Farrell,Business,VS Code,java,2026-07-14T14:17:37.978Z,816,43,true,false,claude-sonnet-5
+tnguyen,Tariq Nguyen,Enterprise,VS Code,typescript,2026-07-02T14:17:37.978Z,106,32,false,true,claude-sonnet-5
+lnakamura57,Lena Nakamura,Enterprise,JetBrains,python,2026-07-14T14:17:37.978Z,317,23,false,false,claude-sonnet-5
+jhaas,Jan Haas,Business,VS Code,csharp,2026-07-17T14:17:37.978Z,358,45,true,true,claude-opus-4.6
+pkaur,Priya Kaur,Enterprise,VS Code,java,2026-07-17T14:17:37.978Z,642,27,true,true,claude-sonnet-5
+ysilva,Yuki Silva,Enterprise,Neovim,java,2026-07-09T14:17:37.978Z,120,28,true,true,claude-sonnet-5
+khaas,Kofi Haas,Enterprise,VS Code,java,2026-07-19T14:17:37.978Z,288,39,false,false,claude-sonnet-5
+jmeyer,Jan Meyer,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,226,28,true,true,gpt-5.3-codex
+ekaur,Eli Kaur,Enterprise,VS Code,python,2026-06-18T14:17:37.978Z,0,41,true,true,claude-opus-4.6
+mlarsen,Maya Larsen,Business,VS Code,ruby,2026-07-18T14:17:37.978Z,357,23,false,true,gpt-5.3-codex
+rtanaka,Rosa Tanaka,Business,VS Code,python,2026-07-14T14:17:37.978Z,685,27,false,false,gpt-5.6-sol
+tkovacs,Tariq Kovacs,Business,JetBrains,python,2026-07-18T14:17:37.978Z,149,42,false,true,claude-sonnet-5
+psorensen,Priya Sorensen,Business,VS Code,python,2026-07-18T14:17:37.978Z,611,31,true,true,gpt-5.3-codex
+asilva,Aoife Silva,Business,JetBrains,csharp,2026-07-18T14:17:37.978Z,430,35,false,true,gpt-5.3-codex
+nfarrell,Nina Farrell,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,308,40,false,true,gpt-5.6-sol
+rnovak,Rosa Novak,Business,VS Code,go,2026-06-13T14:17:37.978Z,0,33,true,false,claude-opus-4.6
+mduarte,Maya Duarte,Business,VS Code,go,2026-07-10T14:17:37.978Z,130,40,false,false,claude-sonnet-5
+olarsen,Owen Larsen,Enterprise,JetBrains,ruby,2026-07-17T14:17:37.978Z,832,43,false,false,claude-opus-4.6
+mfischer,Maya Fischer,Business,JetBrains,java,2026-07-15T14:17:37.978Z,786,38,false,false,claude-opus-4.6
+amoreau,Aoife Moreau,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,167,39,true,true,claude-opus-4.6
+afarrell75,Ana Farrell,Business,JetBrains,java,2026-07-16T14:17:37.978Z,725,31,false,false,gpt-5.3-codex
+mmeyer,Maya Meyer,Business,Xcode,typescript,2026-07-19T14:17:37.978Z,597,40,false,false,claude-4.5-haiku
+lsantos,Liam Santos,Enterprise,VS Code,python,2026-07-11T14:17:37.978Z,16,38,false,true,gpt-5.3-codex
+ntanaka,Noah Tanaka,Business,,,,0,,,,
+omeyer79,Owen Meyer,Business,VS Code,python,2026-07-14T14:17:37.978Z,747,35,false,true,claude-opus-4.6
+afarrell80,Ana Farrell,Enterprise,VS Code,rust,2026-07-14T14:17:37.978Z,199,28,false,true,claude-sonnet-5
+ohaas81,Owen Haas,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,526,23,true,true,claude-sonnet-5
+aokafor,Ana Okafor,Business,JetBrains,java,2026-07-16T14:17:37.978Z,350,30,false,false,claude-4.5-haiku
+kfarrell,Kofi Farrell,Business,VS Code,python,2026-07-16T14:17:37.978Z,533,30,true,true,claude-sonnet-5
+lnguyen,Lena Nguyen,Business,JetBrains,csharp,2026-06-08T14:17:37.978Z,0,37,true,false,claude-sonnet-5
+dnakamura,Dmitri Nakamura,Enterprise,VS Code,python,2026-05-17T14:17:37.978Z,0,32,true,true,claude-sonnet-5
+nsorensen,Nina Sorensen,Business,,,,0,,,,
+nweber,Nina Weber,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,301,21,false,false,claude-opus-4.6
+dlarsen,Dmitri Larsen,Business,VS Code,typescript,2026-05-26T14:17:37.978Z,0,17,false,false,claude-4.5-haiku
+rolsen,Rosa Olsen,Business,VS Code,ruby,2026-07-15T14:17:37.978Z,301,43,false,true,claude-4.5-haiku
+dsantos,Dmitri Santos,Business,VS Code,java,2026-07-16T14:17:37.978Z,381,20,false,true,claude-sonnet-5
+aokafor91,Ana Okafor,Enterprise,VS Code,csharp,2026-07-19T14:17:37.978Z,738,32,true,false,claude-opus-4.6
+ookafor92,Omar Okafor,Business,Neovim,python,2026-06-18T14:17:37.978Z,0,16,true,true,claude-sonnet-5
+onguyen,Owen Nguyen,Business,VS Code,python,2026-07-18T14:17:37.978Z,141,43,false,true,claude-sonnet-5
+pkim,Priya Kim,Business,VS Code,python,2026-07-15T14:17:37.978Z,737,27,false,true,claude-opus-4.6
+riqbal,Ruth Iqbal,Business,Visual Studio,typescript,2026-07-17T14:17:37.978Z,418,41,true,true,claude-sonnet-5
+rmeyer96,Ruth Meyer,Enterprise,VS Code,rust,2026-07-14T14:17:37.978Z,359,39,false,true,claude-sonnet-5
+tkim97,Theo Kim,Enterprise,JetBrains,java,2026-04-25T14:17:37.978Z,0,29,true,true,claude-sonnet-5
+kweber,Kofi Weber,Business,VS Code,kotlin,2026-07-20T14:17:37.978Z,395,32,false,false,claude-sonnet-5
+nsorensen99,Nina Sorensen,Enterprise,VS Code,java,2026-07-14T14:17:37.978Z,247,37,true,true,claude-opus-4.6
+kkaur100,Kofi Kaur,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,342,43,false,false,claude-sonnet-5
+zduarte,Zoe Duarte,Business,Xcode,python,2026-07-15T14:17:37.978Z,676,30,false,true,claude-sonnet-5
+onguyen102,Omar Nguyen,Business,JetBrains,kotlin,2026-07-19T14:17:37.978Z,663,36,true,false,claude-sonnet-5
+enakamura,Eli Nakamura,Business,JetBrains,python,2026-05-15T14:17:37.978Z,0,23,true,false,gpt-5.3-codex
+npetrov,Nina Petrov,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,440,35,true,false,gpt-5.3-codex
+rnguyen105,Rosa Nguyen,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,233,42,true,true,claude-sonnet-5
+nfischer106,Noah Fischer,Business,JetBrains,csharp,2026-07-17T14:17:37.978Z,220,23,true,false,claude-4.5-haiku
+jweber,Jan Weber,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,21,39,false,true,claude-sonnet-5
+esantos,Eli Santos,Business,Visual Studio,typescript,2026-07-15T14:17:37.978Z,374,40,false,true,claude-sonnet-5
+mmoreau,Maya Moreau,Enterprise,JetBrains,typescript,2026-07-15T14:17:37.978Z,373,26,false,true,claude-sonnet-5
+wnovak,Wei Novak,Enterprise,VS Code,java,2026-07-16T14:17:37.978Z,230,38,true,true,claude-sonnet-5
+tweber,Tariq Weber,Business,VS Code,go,2026-07-17T14:17:37.978Z,868,17,true,true,claude-opus-4.6
+lweber,Liam Weber,Enterprise,JetBrains,typescript,2026-07-15T14:17:37.978Z,575,33,true,true,gpt-5.3-codex
+kkovacs,Kofi Kovacs,Enterprise,VS Code,java,2026-04-28T14:17:37.978Z,0,44,true,true,claude-sonnet-5
+sokafor,Sara Okafor,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,305,32,false,false,gpt-5.3-codex
+znovak,Zoe Novak,Business,VS Code,python,2026-06-28T14:17:37.978Z,82,18,true,true,claude-opus-4.6
+tweber116,Theo Weber,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,186,39,false,true,claude-sonnet-5
+tpetrov,Tariq Petrov,Business,Visual Studio,typescript,2026-07-18T14:17:37.978Z,678,17,true,true,claude-opus-4.6
+ofarrell,Owen Farrell,Business,VS Code,kotlin,2026-07-14T14:17:37.978Z,647,43,false,false,claude-sonnet-5
+pkim119,Priya Kim,Enterprise,VS Code,python,2026-07-20T14:17:37.978Z,309,30,false,true,claude-sonnet-5
+ysantos,Yuki Santos,Enterprise,JetBrains,python,2026-07-20T14:17:37.978Z,277,30,true,false,claude-sonnet-5
+zokafor121,Zoe Okafor,Business,Neovim,kotlin,2026-07-19T14:17:37.978Z,391,39,false,true,gpt-5.6-sol
+ksantos,Kofi Santos,Enterprise,VS Code,typescript,2026-07-19T14:17:37.978Z,885,41,false,true,gpt-5.6-sol
+nokafor,Nina Okafor,Business,VS Code,python,2026-07-16T14:17:37.978Z,440,24,true,false,claude-sonnet-5
+kduarte,Kofi Duarte,Business,VS Code,go,2026-07-20T14:17:37.978Z,474,24,false,true,claude-sonnet-5
+obianchi125,Omar Bianchi,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,850,21,true,true,claude-4.5-haiku
+imeyer,Ivy Meyer,Business,VS Code,csharp,2026-07-18T14:17:37.978Z,268,43,true,true,gpt-5.6-sol
+lfischer,Lena Fischer,Business,VS Code,csharp,2026-07-15T14:17:37.978Z,553,32,true,true,gpt-5.3-codex
+rkovacs,Rosa Kovacs,Business,JetBrains,go,2026-07-19T14:17:37.978Z,807,38,false,true,claude-4.5-haiku
+obianchi129,Owen Bianchi,Business,VS Code,go,2026-07-06T14:17:37.978Z,13,26,false,true,gpt-5.6-sol
+osantos,Omar Santos,Business,VS Code,java,2026-07-15T14:17:37.978Z,388,37,true,true,claude-opus-4.6
+lduarte,Liam Duarte,Business,JetBrains,csharp,2026-07-17T14:17:37.978Z,289,27,true,true,claude-4.5-haiku
+tokafor,Tariq Okafor,Enterprise,VS Code,python,2026-07-19T14:17:37.978Z,526,31,true,true,claude-opus-4.6
+llarsen,Liam Larsen,Business,VS Code,python,2026-07-20T14:17:37.978Z,232,26,false,true,gpt-5.3-codex
+ymoreau,Yuki Moreau,Business,Visual Studio,python,2026-06-17T14:17:37.978Z,0,30,false,true,gpt-5.6-sol
+kokafor135,Kofi Okafor,Business,JetBrains,csharp,2026-07-02T14:17:37.978Z,17,44,false,true,claude-sonnet-5
+dkaur,Dmitri Kaur,Business,,,,0,,,,
+onovak,Omar Novak,Business,VS Code,python,2026-07-18T14:17:37.978Z,371,29,true,false,claude-opus-4.6
+anguyen,Ana Nguyen,Business,VS Code,java,2026-07-14T14:17:37.978Z,748,30,false,true,claude-opus-4.6
+jsilva,Jan Silva,Business,JetBrains,csharp,2026-07-16T14:17:37.978Z,21,23,false,true,claude-sonnet-5
+skaur,Sara Kaur,Business,,,,0,,,,
+osilva,Owen Silva,Business,VS Code,typescript,2026-06-26T14:17:37.978Z,45,18,false,true,claude-4.5-haiku
+sokafor142,Sara Okafor,Enterprise,JetBrains,go,2026-07-16T14:17:37.978Z,101,26,false,true,claude-sonnet-5
+yfischer,Yuki Fischer,Enterprise,VS Code,csharp,2026-07-17T14:17:37.978Z,285,30,false,true,claude-opus-4.6
+dfischer,Dmitri Fischer,Enterprise,VS Code,typescript,2026-07-20T14:17:37.978Z,210,19,true,true,gpt-5.3-codex
+ohaugen,Omar Haugen,Business,Visual Studio,java,2026-07-20T14:17:37.978Z,447,44,false,true,claude-sonnet-5
+mtanaka,Maya Tanaka,Business,Neovim,csharp,2026-05-11T14:17:37.978Z,0,32,true,true,claude-sonnet-5
+ehaugen,Eli Haugen,Business,Neovim,typescript,2026-07-16T14:17:37.978Z,764,40,false,true,claude-sonnet-5
+rmeyer148,Ruth Meyer,Business,Xcode,go,2026-06-03T14:17:37.978Z,0,23,false,true,claude-sonnet-5
+mhaas,Maya Haas,Enterprise,Neovim,rust,2026-06-18T14:17:37.978Z,0,34,false,true,gpt-5.3-codex
+dkaur150,Dmitri Kaur,Business,JetBrains,typescript,2026-06-20T14:17:37.978Z,0,40,false,false,claude-opus-4.6
+onguyen151,Owen Nguyen,Business,JetBrains,python,2026-07-15T14:17:37.978Z,128,38,false,true,claude-sonnet-5
+rmoreau,Rosa Moreau,Business,VS Code,kotlin,2026-06-29T14:17:37.978Z,84,21,false,true,claude-opus-4.6
+osantos153,Owen Santos,Enterprise,Xcode,java,2026-06-30T14:17:37.978Z,130,45,true,true,claude-sonnet-5
+ofarrell154,Owen Farrell,Business,,,,0,,,,
+esorensen,Eli Sorensen,Business,VS Code,csharp,2026-07-20T14:17:37.978Z,269,44,true,false,claude-opus-4.6
+nfischer156,Noah Fischer,Business,VS Code,go,2026-07-04T14:17:37.978Z,131,34,true,false,claude-sonnet-5
+zweber,Zoe Weber,Business,Xcode,csharp,2026-07-15T14:17:37.978Z,737,44,true,true,claude-sonnet-5
+ohaas158,Owen Haas,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,455,38,true,true,claude-4.5-haiku
+asantos,Ana Santos,Enterprise,VS Code,typescript,2026-07-07T14:17:37.978Z,96,20,true,true,claude-opus-4.6
+rnovak160,Rosa Novak,Business,VS Code,typescript,2026-05-23T14:17:37.978Z,0,17,true,true,claude-opus-4.6
+dokafor,Dmitri Okafor,Enterprise,JetBrains,typescript,2026-04-25T14:17:37.978Z,0,40,false,true,claude-sonnet-5
+onakamura,Omar Nakamura,Business,VS Code,python,2026-07-19T14:17:37.978Z,284,21,false,false,gpt-5.3-codex
+aokafor163,Ana Okafor,Business,VS Code,go,2026-07-16T14:17:37.978Z,285,18,true,false,claude-sonnet-5
+dpetrov,Dmitri Petrov,Enterprise,VS Code,csharp,2026-07-16T14:17:37.978Z,705,31,true,true,claude-sonnet-5
+zokafor165,Zoe Okafor,Business,VS Code,python,2026-07-16T14:17:37.978Z,531,25,false,false,gpt-5.3-codex
+piqbal166,Priya Iqbal,Business,VS Code,typescript,2026-05-17T14:17:37.978Z,0,42,false,false,claude-sonnet-5
+tiqbal,Tariq Iqbal,Business,VS Code,ruby,2026-06-19T14:17:37.978Z,0,24,true,false,claude-sonnet-5
+rmoreau168,Ruth Moreau,Enterprise,JetBrains,java,2026-07-19T14:17:37.978Z,577,22,false,false,gpt-5.3-codex
+pweber,Priya Weber,Business,VS Code,rust,2026-07-18T14:17:37.978Z,308,27,true,true,claude-sonnet-5
+lolsen,Liam Olsen,Business,VS Code,java,2026-07-20T14:17:37.978Z,830,39,false,false,gpt-5.3-codex
+ihaugen,Ivy Haugen,Business,VS Code,python,2026-05-23T14:17:37.978Z,0,32,true,true,claude-sonnet-5
+elarsen,Eli Larsen,Business,JetBrains,typescript,2026-07-16T14:17:37.978Z,134,30,false,true,claude-opus-4.6
+mokafor173,Maya Okafor,Business,VS Code,java,2026-07-12T14:17:37.978Z,116,41,true,true,claude-sonnet-5
+stanaka,Sara Tanaka,Business,Visual Studio,java,2026-06-29T14:17:37.978Z,93,22,true,true,gpt-5.6-sol
+nlarsen,Noah Larsen,Business,VS Code,ruby,2026-07-14T14:17:37.978Z,272,46,false,true,gpt-5.3-codex
+nmeyer,Nina Meyer,Business,Neovim,java,2026-07-18T14:17:37.978Z,209,45,false,false,gpt-5.3-codex
+mkim177,Maya Kim,Enterprise,VS Code,typescript,2026-06-26T14:17:37.978Z,33,41,true,true,claude-4.5-haiku
+tiqbal178,Tariq Iqbal,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,833,32,true,true,claude-sonnet-5
+apetrov,Aoife Petrov,Business,Visual Studio,typescript,2026-07-14T14:17:37.978Z,273,17,false,true,claude-sonnet-5
+nolsen180,Noah Olsen,Business,VS Code,java,2026-07-14T14:17:37.978Z,585,31,false,false,claude-sonnet-5
+smoreau181,Sara Moreau,Business,VS Code,python,2026-07-14T14:17:37.978Z,867,19,true,true,claude-opus-4.6
+rpetrov,Rosa Petrov,Business,JetBrains,java,2026-07-20T14:17:37.978Z,808,26,false,true,claude-sonnet-5
+asorensen,Aoife Sorensen,Business,VS Code,rust,2026-07-14T14:17:37.978Z,300,31,false,true,claude-opus-4.6
+ohaas184,Omar Haas,Enterprise,JetBrains,java,2026-07-14T14:17:37.978Z,604,27,false,true,claude-opus-4.6
+knovak,Kofi Novak,Business,VS Code,ruby,2026-07-18T14:17:37.978Z,844,31,false,true,claude-4.5-haiku
+mkaur,Marc Kaur,Business,VS Code,python,2026-05-10T14:17:37.978Z,0,40,false,false,gpt-5.3-codex
+zhaas,Zoe Haas,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,567,19,true,true,claude-sonnet-5
+rlarsen,Ruth Larsen,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,557,30,false,true,claude-sonnet-5
+lolsen189,Lena Olsen,Business,,,,0,,,,
+sbianchi,Sara Bianchi,Business,Visual Studio,python,2026-07-18T14:17:37.978Z,679,37,true,false,claude-sonnet-5
+aolsen,Ana Olsen,Business,VS Code,kotlin,2026-07-19T14:17:37.978Z,434,20,false,false,gpt-5.6-sol
+lpetrov,Lena Petrov,Business,VS Code,typescript,2026-05-14T14:17:37.978Z,0,36,false,true,claude-4.5-haiku
+aolsen193,Ana Olsen,Business,VS Code,python,2026-07-06T14:17:37.978Z,11,28,true,false,claude-sonnet-5
+ekim194,Eli Kim,Business,JetBrains,kotlin,2026-05-22T14:17:37.978Z,0,44,false,false,claude-sonnet-5
+zduarte195,Zoe Duarte,Business,JetBrains,java,2026-06-28T14:17:37.978Z,79,22,false,false,claude-opus-4.6
+emoreau,Eli Moreau,Business,JetBrains,python,2026-07-08T14:17:37.978Z,137,45,false,true,gpt-5.6-sol
+rsilva,Rosa Silva,Business,JetBrains,ruby,2026-07-17T14:17:37.978Z,344,44,false,true,claude-4.5-haiku
+ekaur198,Eli Kaur,Enterprise,JetBrains,csharp,2026-07-11T14:17:37.978Z,98,40,true,true,claude-sonnet-5
+rweber199,Rosa Weber,Business,VS Code,typescript,2026-05-02T14:17:37.978Z,0,25,false,true,gpt-5.3-codex
+jiqbal,Jan Iqbal,Business,JetBrains,java,2026-07-20T14:17:37.978Z,493,31,true,true,claude-4.5-haiku
+iweber,Ivy Weber,Business,Visual Studio,typescript,2026-07-14T14:17:37.978Z,845,41,true,false,claude-sonnet-5
+jnguyen,Jan Nguyen,Business,VS Code,python,2026-07-14T14:17:37.978Z,409,40,true,false,claude-sonnet-5
+zsantos203,Zoe Santos,Business,Visual Studio,csharp,2026-07-15T14:17:37.978Z,557,21,false,false,claude-sonnet-5
+mlarsen204,Marc Larsen,Business,Neovim,java,2026-07-14T14:17:37.978Z,520,37,false,true,claude-sonnet-5
+lnovak,Liam Novak,Business,VS Code,ruby,2026-07-14T14:17:37.978Z,124,28,true,true,claude-sonnet-5
+mnakamura,Maya Nakamura,Business,VS Code,python,2026-07-18T14:17:37.978Z,172,23,false,true,claude-sonnet-5
+rpetrov207,Rosa Petrov,Business,,,,0,,,,
+onguyen208,Omar Nguyen,Business,JetBrains,ruby,2026-07-17T14:17:37.978Z,432,23,true,true,gpt-5.3-codex
+thaugen,Tariq Haugen,Business,VS Code,csharp,2026-07-18T14:17:37.978Z,259,40,true,true,claude-4.5-haiku
+nkovacs,Nina Kovacs,Business,,,,0,,,,
+enguyen,Eli Nguyen,Business,,,,0,,,,
+wsorensen,Wei Sorensen,Business,JetBrains,python,2026-04-30T14:17:37.978Z,0,36,false,true,claude-sonnet-5
+tokafor213,Theo Okafor,Business,VS Code,ruby,2026-07-03T14:17:37.978Z,56,19,false,true,gpt-5.6-sol
+sokafor214,Sara Okafor,Business,Visual Studio,typescript,2026-05-05T14:17:37.978Z,0,35,false,true,claude-opus-4.6
+rnovak215,Rosa Novak,Enterprise,JetBrains,python,2026-06-30T14:17:37.978Z,43,33,true,false,claude-sonnet-5
+mhaas216,Maya Haas,Business,Xcode,go,2026-06-08T14:17:37.978Z,0,41,false,false,claude-sonnet-5
+akovacs,Aoife Kovacs,Business,VS Code,typescript,2026-05-17T14:17:37.978Z,0,44,true,true,claude-opus-4.6
+jtanaka,Jan Tanaka,Business,VS Code,ruby,2026-07-18T14:17:37.978Z,889,26,true,false,claude-sonnet-5
+efischer,Eli Fischer,Business,JetBrains,python,2026-05-06T14:17:37.978Z,0,17,true,true,gpt-5.3-codex
+lsantos220,Liam Santos,Business,Neovim,typescript,2026-07-17T14:17:37.978Z,741,43,false,false,claude-sonnet-5
+jnakamura,Jan Nakamura,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,121,27,false,true,claude-4.5-haiku
+nmoreau,Nina Moreau,Business,VS Code,csharp,2026-07-17T14:17:37.978Z,846,17,false,true,gpt-5.3-codex
+oiqbal223,Owen Iqbal,Business,JetBrains,java,2026-07-14T14:17:37.978Z,241,37,true,true,claude-opus-4.6
+tpetrov224,Tariq Petrov,Business,Neovim,python,2026-07-04T14:17:37.978Z,60,44,true,true,claude-sonnet-5
+dweber,Dmitri Weber,Business,VS Code,java,2026-07-16T14:17:37.978Z,778,32,true,true,gpt-5.6-sol
+rfarrell,Rosa Farrell,Enterprise,JetBrains,typescript,2026-07-19T14:17:37.978Z,143,19,true,false,claude-opus-4.6
+tmeyer227,Tariq Meyer,Enterprise,VS Code,csharp,2026-07-19T14:17:37.978Z,862,31,true,false,claude-sonnet-5
+eokafor,Eli Okafor,Business,JetBrains,python,2026-07-20T14:17:37.978Z,716,26,true,true,claude-opus-4.6
+ahaas229,Ana Haas,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,307,30,true,false,claude-sonnet-5
+tnovak,Tariq Novak,Business,VS Code,java,2026-05-30T14:17:37.978Z,0,24,true,true,claude-sonnet-5
+rlarsen231,Ruth Larsen,Business,VS Code,python,2026-06-29T14:17:37.978Z,24,26,true,false,gpt-5.3-codex
+kmoreau,Kofi Moreau,Business,VS Code,kotlin,2026-06-08T14:17:37.978Z,0,35,true,true,claude-sonnet-5
+rolsen233,Rosa Olsen,Enterprise,VS Code,typescript,2026-07-16T14:17:37.978Z,435,30,false,false,claude-sonnet-5
+kpetrov,Kofi Petrov,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,792,42,false,true,claude-opus-4.6
+kmoreau235,Kofi Moreau,Business,VS Code,python,2026-07-17T14:17:37.978Z,552,36,false,false,claude-sonnet-5
+mkim236,Marc Kim,Business,VS Code,go,2026-07-14T14:17:37.978Z,598,36,true,true,claude-sonnet-5
+zhaugen,Zoe Haugen,Business,VS Code,kotlin,2026-07-06T14:17:37.978Z,86,22,true,false,claude-sonnet-5
+rfischer,Ruth Fischer,Business,,,,0,,,,
+emeyer,Eli Meyer,Business,VS Code,typescript,2026-07-01T14:17:37.978Z,150,23,true,true,gpt-5.3-codex
+lweber240,Liam Weber,Business,VS Code,go,2026-07-15T14:17:37.978Z,652,35,true,false,claude-opus-4.6
+lpetrov241,Liam Petrov,Enterprise,Neovim,ruby,2026-07-17T14:17:37.978Z,383,37,true,false,claude-sonnet-5
+msilva242,Marc Silva,Business,JetBrains,csharp,2026-07-15T14:17:37.978Z,682,35,false,true,gpt-5.6-sol
+lkovacs,Lena Kovacs,Enterprise,JetBrains,typescript,2026-05-24T14:17:37.978Z,0,45,true,false,claude-sonnet-5
+mhaas244,Maya Haas,Business,JetBrains,kotlin,2026-07-19T14:17:37.978Z,845,17,false,true,gpt-5.6-sol
+nsorensen245,Nina Sorensen,Business,VS Code,java,2026-07-20T14:17:37.978Z,744,26,true,true,claude-sonnet-5
+ahaugen246,Aoife Haugen,Business,VS Code,typescript,2026-06-29T14:17:37.978Z,118,18,true,true,gpt-5.3-codex
+niqbal,Noah Iqbal,Business,Xcode,python,2026-07-14T14:17:37.978Z,94,41,true,true,claude-sonnet-5
+nokafor248,Nina Okafor,Business,VS Code,java,2026-07-17T14:17:37.978Z,331,19,false,true,gpt-5.3-codex
+kweber249,Kofi Weber,Business,VS Code,python,2026-07-17T14:17:37.978Z,549,37,false,true,claude-sonnet-5
+ikaur,Ivy Kaur,Enterprise,JetBrains,typescript,2026-07-16T14:17:37.978Z,474,25,false,false,claude-sonnet-5
+onguyen251,Owen Nguyen,Enterprise,Visual Studio,python,2026-07-17T14:17:37.978Z,708,46,false,true,claude-sonnet-5
+kokafor252,Kofi Okafor,Business,VS Code,go,2026-07-17T14:17:37.978Z,498,37,false,true,gpt-5.3-codex
+nnovak,Nina Novak,Business,JetBrains,go,2026-07-17T14:17:37.978Z,458,38,true,true,claude-opus-4.6
+alarsen,Aoife Larsen,Business,Xcode,typescript,2026-07-14T14:17:37.978Z,627,23,true,true,claude-opus-4.6
+nfischer255,Nina Fischer,Business,VS Code,python,2026-07-17T14:17:37.978Z,851,38,false,true,claude-opus-4.6
+rlarsen256,Ruth Larsen,Enterprise,JetBrains,typescript,2026-07-17T14:17:37.978Z,401,36,true,true,claude-sonnet-5
+rhaas,Ruth Haas,Business,Xcode,python,2026-06-25T14:17:37.978Z,113,39,false,true,claude-sonnet-5
+thaugen258,Tariq Haugen,Enterprise,,,,0,,,,
+nbianchi,Noah Bianchi,Business,Neovim,typescript,2026-07-14T14:17:37.978Z,105,20,true,true,claude-4.5-haiku
+mkaur260,Marc Kaur,Business,,,,0,,,,
+nbianchi261,Nina Bianchi,Business,JetBrains,java,2026-07-20T14:17:37.978Z,783,30,true,false,gpt-5.3-codex
+dnovak,Dmitri Novak,Business,,,,0,,,,
+yfarrell,Yuki Farrell,Business,VS Code,go,2026-07-17T14:17:37.978Z,708,21,false,true,claude-sonnet-5
+iokafor,Ivy Okafor,Enterprise,VS Code,java,2026-07-16T14:17:37.978Z,705,32,false,false,gpt-5.6-sol
+smoreau265,Sara Moreau,Business,JetBrains,python,2026-07-15T14:17:37.978Z,542,28,true,true,claude-opus-4.6
+omeyer266,Owen Meyer,Enterprise,JetBrains,typescript,2026-07-15T14:17:37.978Z,317,18,false,true,gpt-5.3-codex
+yolsen,Yuki Olsen,Business,VS Code,java,2026-07-20T14:17:37.978Z,720,24,false,false,claude-opus-4.6
+rokafor268,Ruth Okafor,Business,JetBrains,python,2026-07-17T14:17:37.978Z,301,34,false,true,claude-opus-4.6
+otanaka,Owen Tanaka,Enterprise,JetBrains,go,2026-07-15T14:17:37.978Z,541,44,false,true,claude-4.5-haiku
+tolsen,Tariq Olsen,Business,JetBrains,python,2026-07-17T14:17:37.978Z,782,21,false,false,claude-sonnet-5
+pduarte,Priya Duarte,Business,Xcode,typescript,2026-07-18T14:17:37.978Z,178,27,false,true,gpt-5.3-codex
+mnakamura272,Marc Nakamura,Enterprise,VS Code,python,2026-07-19T14:17:37.978Z,423,36,false,false,gpt-5.6-sol
+ehaas,Eli Haas,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,683,29,true,true,claude-4.5-haiku
+polsen,Priya Olsen,Business,,,,0,,,,
+otanaka275,Omar Tanaka,Business,VS Code,python,2026-06-05T14:17:37.978Z,0,30,true,false,claude-opus-4.6
+ilarsen276,Ivy Larsen,Business,Visual Studio,typescript,2026-07-07T14:17:37.978Z,94,39,true,true,gpt-5.6-sol
+dkaur277,Dmitri Kaur,Enterprise,JetBrains,ruby,2026-07-16T14:17:37.978Z,770,23,true,true,gpt-5.3-codex
+mkim278,Maya Kim,Business,VS Code,python,2026-07-17T14:17:37.978Z,180,28,true,false,gpt-5.3-codex
+yokafor,Yuki Okafor,Business,VS Code,java,2026-07-17T14:17:37.978Z,538,33,true,true,claude-4.5-haiku
+rtanaka280,Ruth Tanaka,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,141,24,true,true,gpt-5.6-sol
+diqbal,Dmitri Iqbal,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,499,43,true,true,claude-sonnet-5
+msantos282,Maya Santos,Enterprise,,,,0,,,,
+rnakamura,Rosa Nakamura,Business,VS Code,python,2026-07-17T14:17:37.978Z,644,37,true,true,gpt-5.3-codex
+osilva284,Omar Silva,Business,JetBrains,typescript,2026-07-16T14:17:37.978Z,421,34,false,false,gpt-5.6-sol
+stanaka285,Sara Tanaka,Enterprise,JetBrains,typescript,2026-07-19T14:17:37.978Z,403,31,false,false,claude-sonnet-5
+jnakamura286,Jan Nakamura,Enterprise,JetBrains,typescript,2026-07-15T14:17:37.978Z,156,25,true,false,gpt-5.6-sol
+zhaas287,Zoe Haas,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,897,39,true,false,claude-sonnet-5
+ekovacs,Eli Kovacs,Business,,,,0,,,,
+smeyer,Sara Meyer,Business,VS Code,ruby,2026-07-18T14:17:37.978Z,225,45,false,false,claude-4.5-haiku
+lmoreau,Liam Moreau,Enterprise,JetBrains,ruby,2026-05-21T14:17:37.978Z,0,43,false,true,claude-sonnet-5
+dnovak291,Dmitri Novak,Business,JetBrains,python,2026-07-14T14:17:37.978Z,528,16,true,true,claude-sonnet-5
+abianchi,Aoife Bianchi,Business,VS Code,python,2026-07-18T14:17:37.978Z,897,30,false,true,claude-sonnet-5
+jokafor,Jan Okafor,Business,JetBrains,go,2026-07-17T14:17:37.978Z,517,31,true,true,gpt-5.3-codex
+knguyen,Kofi Nguyen,Business,JetBrains,csharp,2026-07-16T14:17:37.978Z,733,43,false,true,claude-4.5-haiku
+psantos,Priya Santos,Business,JetBrains,python,2026-07-15T14:17:37.978Z,553,34,true,false,claude-sonnet-5
+nkaur296,Noah Kaur,Enterprise,VS Code,typescript,2026-07-14T14:17:37.978Z,165,19,true,false,claude-sonnet-5
+aduarte,Aoife Duarte,Enterprise,,,,0,,,,
+nnguyen,Nina Nguyen,Enterprise,VS Code,python,2026-05-20T14:17:37.978Z,0,21,false,true,claude-opus-4.6
+ohaugen299,Owen Haugen,Business,Visual Studio,go,2026-07-17T14:17:37.978Z,130,22,false,true,claude-opus-4.6
+whaas,Wei Haas,Business,JetBrains,ruby,2026-07-19T14:17:37.978Z,160,33,false,false,gpt-5.3-codex
+mnguyen,Maya Nguyen,Business,JetBrains,typescript,2026-04-27T14:17:37.978Z,0,34,true,true,gpt-5.3-codex
+jfischer,Jan Fischer,Enterprise,VS Code,rust,2026-07-06T14:17:37.978Z,90,18,true,true,claude-opus-4.6
+pkovacs,Priya Kovacs,Enterprise,Visual Studio,typescript,2026-07-16T14:17:37.978Z,97,41,false,true,gpt-5.3-codex
+zhaugen304,Zoe Haugen,Business,JetBrains,python,2026-07-16T14:17:37.978Z,441,33,false,true,claude-sonnet-5
+dnakamura305,Dmitri Nakamura,Business,JetBrains,ruby,2026-07-14T14:17:37.978Z,391,40,false,true,claude-sonnet-5
+rnguyen306,Ruth Nguyen,Enterprise,Visual Studio,typescript,2026-07-14T14:17:37.978Z,93,30,false,true,gpt-5.3-codex
+nnakamura,Nina Nakamura,Business,VS Code,csharp,2026-07-20T14:17:37.978Z,568,28,false,true,claude-sonnet-5
+oweber,Owen Weber,Business,VS Code,csharp,2026-07-14T14:17:37.978Z,484,37,false,false,claude-sonnet-5
+ykim,Yuki Kim,Business,VS Code,typescript,2026-05-29T14:17:37.978Z,0,37,true,true,claude-sonnet-5
+jhaas310,Jan Haas,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,144,31,false,true,gpt-5.6-sol
+npetrov311,Noah Petrov,Business,VS Code,python,2026-07-14T14:17:37.978Z,136,25,false,true,claude-sonnet-5
+lkaur,Liam Kaur,Business,VS Code,ruby,2026-07-20T14:17:37.978Z,856,25,false,true,claude-sonnet-5
+rkim,Ruth Kim,Business,VS Code,rust,2026-07-20T14:17:37.978Z,285,46,true,true,gpt-5.3-codex
+lkovacs314,Lena Kovacs,Business,JetBrains,typescript,2026-06-25T14:17:37.978Z,59,34,false,true,claude-sonnet-5
+rolsen315,Ruth Olsen,Business,VS Code,rust,2026-07-15T14:17:37.978Z,520,34,true,true,claude-opus-4.6
+lkim,Lena Kim,Business,JetBrains,go,2026-07-18T14:17:37.978Z,865,23,true,true,gpt-5.6-sol
+jsantos317,Jan Santos,Business,Xcode,java,2026-07-18T14:17:37.978Z,556,46,true,true,gpt-5.3-codex
+psorensen318,Priya Sorensen,Business,VS Code,rust,2026-06-02T14:17:37.978Z,0,26,true,true,gpt-5.3-codex
+ntanaka319,Noah Tanaka,Business,,,,0,,,,
+dkaur320,Dmitri Kaur,Business,VS Code,csharp,2026-06-28T14:17:37.978Z,82,22,false,true,gpt-5.3-codex
+isilva,Ivy Silva,Business,VS Code,typescript,2026-06-15T14:17:37.978Z,0,22,false,true,claude-sonnet-5
+aweber322,Aoife Weber,Enterprise,JetBrains,python,2026-07-18T14:17:37.978Z,892,17,true,false,gpt-5.3-codex
+ykim323,Yuki Kim,Business,VS Code,python,2026-07-16T14:17:37.978Z,830,41,true,true,claude-sonnet-5
+nnovak324,Nina Novak,Business,JetBrains,typescript,2026-05-17T14:17:37.978Z,0,35,true,true,claude-sonnet-5
+opetrov,Owen Petrov,Business,JetBrains,ruby,2026-07-20T14:17:37.978Z,455,23,false,true,claude-sonnet-5
+ibianchi,Ivy Bianchi,Business,Visual Studio,java,2026-05-13T14:17:37.978Z,0,24,false,false,claude-4.5-haiku
+dkovacs,Dmitri Kovacs,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,550,41,false,true,gpt-5.6-sol
+tbianchi,Tariq Bianchi,Business,VS Code,python,2026-07-20T14:17:37.978Z,490,38,true,true,gpt-5.6-sol
+mkovacs,Marc Kovacs,Business,JetBrains,csharp,2026-07-08T14:17:37.978Z,147,25,false,true,gpt-5.3-codex
+asorensen330,Aoife Sorensen,Business,VS Code,java,2026-07-17T14:17:37.978Z,389,19,false,true,claude-sonnet-5
+esilva,Eli Silva,Business,VS Code,python,2026-07-20T14:17:37.978Z,886,32,false,true,gpt-5.3-codex
+thaugen332,Theo Haugen,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,830,21,false,true,claude-sonnet-5
+nnguyen333,Noah Nguyen,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,328,28,false,true,claude-sonnet-5
+onovak334,Owen Novak,Enterprise,JetBrains,java,2026-07-18T14:17:37.978Z,750,41,true,true,claude-sonnet-5
+ntanaka335,Nina Tanaka,Business,VS Code,rust,2026-07-14T14:17:37.978Z,435,42,true,true,claude-opus-4.6
+jbianchi,Jan Bianchi,Business,JetBrains,java,2026-07-10T14:17:37.978Z,87,20,true,false,claude-4.5-haiku
+tiqbal337,Tariq Iqbal,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,777,17,true,true,claude-4.5-haiku
+tmeyer338,Tariq Meyer,Business,Xcode,java,2026-07-17T14:17:37.978Z,521,22,true,false,claude-opus-4.6
+lfarrell339,Lena Farrell,Enterprise,JetBrains,typescript,2026-05-28T14:17:37.978Z,0,43,true,true,gpt-5.6-sol
+dkaur340,Dmitri Kaur,Business,Visual Studio,typescript,2026-06-27T14:17:37.978Z,38,45,true,true,claude-sonnet-5
+shaugen341,Sara Haugen,Business,JetBrains,go,2026-07-15T14:17:37.978Z,88,40,true,false,claude-sonnet-5
+rnguyen342,Rosa Nguyen,Business,VS Code,java,2026-07-16T14:17:37.978Z,820,18,true,true,claude-sonnet-5
+osorensen,Omar Sorensen,Enterprise,JetBrains,python,2026-07-19T14:17:37.978Z,748,33,false,true,claude-sonnet-5
+nkim,Noah Kim,Business,VS Code,java,2026-07-15T14:17:37.978Z,416,39,false,true,claude-4.5-haiku
+mnguyen345,Maya Nguyen,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,686,22,false,true,claude-sonnet-5
+ikim,Ivy Kim,Business,,,,0,,,,
+lsilva,Lena Silva,Enterprise,VS Code,ruby,2026-07-07T14:17:37.978Z,54,17,false,true,claude-opus-4.6
+mfischer348,Marc Fischer,Business,VS Code,java,2026-07-19T14:17:37.978Z,251,17,true,true,gpt-5.3-codex
+tokafor349,Theo Okafor,Business,Neovim,typescript,2026-07-16T14:17:37.978Z,117,33,false,true,claude-sonnet-5
+ekovacs350,Eli Kovacs,Enterprise,Visual Studio,java,2026-07-19T14:17:37.978Z,562,38,false,true,claude-sonnet-5
+nsilva,Nina Silva,Business,VS Code,python,2026-07-10T14:17:37.978Z,19,35,true,true,gpt-5.3-codex
+mkaur352,Maya Kaur,Business,VS Code,kotlin,2026-07-14T14:17:37.978Z,311,20,false,false,claude-opus-4.6
+ssilva,Sara Silva,Business,JetBrains,kotlin,2026-07-09T14:17:37.978Z,24,18,false,false,gpt-5.3-codex
+akaur,Aoife Kaur,Business,VS Code,csharp,2026-07-16T14:17:37.978Z,233,46,true,false,gpt-5.6-sol
+lkaur355,Liam Kaur,Business,VS Code,java,2026-07-17T14:17:37.978Z,808,33,true,true,gpt-5.6-sol
+jsantos356,Jan Santos,Business,Xcode,typescript,2026-07-03T14:17:37.978Z,57,46,false,false,claude-sonnet-5
+jpetrov,Jan Petrov,Business,VS Code,python,2026-06-07T14:17:37.978Z,0,32,false,false,claude-4.5-haiku
+asantos358,Aoife Santos,Enterprise,,,,0,,,,
+tkovacs359,Theo Kovacs,Enterprise,JetBrains,ruby,2026-07-16T14:17:37.978Z,866,41,false,true,claude-sonnet-5
+ltanaka,Liam Tanaka,Business,Visual Studio,python,2026-07-19T14:17:37.978Z,731,44,false,false,claude-sonnet-5
+jweber361,Jan Weber,Business,VS Code,python,2026-07-18T14:17:37.978Z,307,21,true,false,claude-opus-4.6
+pmoreau,Priya Moreau,Business,VS Code,typescript,2026-07-03T14:17:37.978Z,80,43,false,false,gpt-5.6-sol
+zhaugen363,Zoe Haugen,Enterprise,VS Code,csharp,2026-05-20T14:17:37.978Z,0,34,false,false,claude-4.5-haiku
+zsilva,Zoe Silva,Enterprise,Visual Studio,go,2026-07-09T14:17:37.978Z,27,45,true,true,claude-sonnet-5
+dsorensen365,Dmitri Sorensen,Business,JetBrains,python,2026-07-14T14:17:37.978Z,414,42,true,true,claude-sonnet-5
+onguyen366,Owen Nguyen,Business,JetBrains,java,2026-06-03T14:17:37.978Z,0,31,false,true,claude-4.5-haiku
+pkim367,Priya Kim,Enterprise,JetBrains,go,2026-07-20T14:17:37.978Z,221,37,false,true,claude-sonnet-5
+oweber368,Owen Weber,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,196,44,false,true,claude-sonnet-5
+ihaas,Ivy Haas,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,235,29,false,true,claude-sonnet-5
+dhaugen,Dmitri Haugen,Business,VS Code,go,2026-06-10T14:17:37.978Z,0,18,true,true,claude-sonnet-5
+afarrell371,Ana Farrell,Enterprise,VS Code,go,2026-04-29T14:17:37.978Z,0,37,true,true,gpt-5.6-sol
+knakamura,Kofi Nakamura,Business,VS Code,python,2026-07-17T14:17:37.978Z,187,34,true,true,claude-sonnet-5
+rlarsen373,Ruth Larsen,Enterprise,VS Code,java,2026-07-19T14:17:37.978Z,735,35,true,true,claude-sonnet-5
+lnovak374,Lena Novak,Business,Xcode,csharp,2026-07-17T14:17:37.978Z,166,43,false,true,claude-opus-4.6
+lmoreau375,Lena Moreau,Business,VS Code,go,2026-07-02T14:17:37.978Z,88,18,false,true,claude-sonnet-5
+wokafor,Wei Okafor,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,743,41,false,true,claude-opus-4.6
+yweber,Yuki Weber,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,655,27,false,true,claude-sonnet-5
+jbianchi378,Jan Bianchi,Enterprise,Visual Studio,typescript,2026-06-29T14:17:37.978Z,146,41,true,false,claude-opus-4.6
+rkaur,Rosa Kaur,Business,VS Code,python,2026-07-20T14:17:37.978Z,735,44,true,true,claude-sonnet-5
+onguyen380,Owen Nguyen,Business,Neovim,java,2026-07-15T14:17:37.978Z,216,28,false,true,gpt-5.6-sol
+nokafor381,Noah Okafor,Business,,,,0,,,,
+whaugen,Wei Haugen,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,240,32,false,true,claude-sonnet-5
+rmoreau383,Ruth Moreau,Enterprise,JetBrains,typescript,2026-05-13T14:17:37.978Z,0,41,false,true,claude-sonnet-5
+mnakamura384,Maya Nakamura,Business,VS Code,ruby,2026-07-15T14:17:37.978Z,693,25,true,true,claude-sonnet-5
+ysantos385,Yuki Santos,Enterprise,,,,0,,,,
+wfarrell,Wei Farrell,Business,Visual Studio,csharp,2026-07-16T14:17:37.978Z,593,29,true,true,gpt-5.3-codex
+mkaur387,Maya Kaur,Business,VS Code,java,2026-07-17T14:17:37.978Z,652,30,false,true,claude-opus-4.6
+ttanaka,Tariq Tanaka,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,208,29,true,true,claude-sonnet-5
+snovak,Sara Novak,Business,Neovim,java,2026-07-18T14:17:37.978Z,390,32,false,true,claude-4.5-haiku
+asantos390,Aoife Santos,Enterprise,JetBrains,rust,2026-05-09T14:17:37.978Z,0,19,false,true,claude-sonnet-5
+tnovak391,Theo Novak,Business,Visual Studio,go,2026-07-18T14:17:37.978Z,896,40,true,true,gpt-5.3-codex
+dduarte,Dmitri Duarte,Enterprise,VS Code,python,2026-07-16T14:17:37.978Z,120,21,false,true,claude-sonnet-5
+dkim,Dmitri Kim,Business,JetBrains,python,2026-05-24T14:17:37.978Z,0,35,false,false,gpt-5.3-codex
+tnakamura,Theo Nakamura,Business,VS Code,ruby,2026-07-19T14:17:37.978Z,843,29,true,true,claude-opus-4.6
+skim,Sara Kim,Business,VS Code,python,2026-07-19T14:17:37.978Z,201,22,true,false,gpt-5.3-codex
+ofarrell396,Omar Farrell,Business,VS Code,typescript,2026-06-07T14:17:37.978Z,0,33,false,true,claude-sonnet-5
+lnguyen397,Liam Nguyen,Business,VS Code,python,2026-07-15T14:17:37.978Z,719,45,true,true,claude-opus-4.6
+nokafor398,Nina Okafor,Business,,,,0,,,,
+rmoreau399,Ruth Moreau,Business,JetBrains,go,2026-07-16T14:17:37.978Z,274,42,true,true,claude-sonnet-5
+ykaur400,Yuki Kaur,Enterprise,VS Code,go,2026-07-15T14:17:37.978Z,530,40,false,true,claude-4.5-haiku
+ihaugen401,Ivy Haugen,Business,VS Code,python,2026-07-18T14:17:37.978Z,715,40,true,true,gpt-5.6-sol
+dpetrov402,Dmitri Petrov,Enterprise,VS Code,python,2026-07-14T14:17:37.978Z,478,43,false,false,claude-sonnet-5
+tweber403,Theo Weber,Business,VS Code,python,2026-07-14T14:17:37.978Z,143,18,true,false,gpt-5.3-codex
+nfarrell404,Nina Farrell,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,320,43,true,true,claude-sonnet-5
+nkaur405,Noah Kaur,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,736,43,false,true,claude-sonnet-5
+mfischer406,Marc Fischer,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,625,21,true,true,gpt-5.3-codex
+nsilva407,Noah Silva,Business,Visual Studio,typescript,2026-07-17T14:17:37.978Z,110,37,false,true,claude-sonnet-5
+jfarrell,Jan Farrell,Business,,,,0,,,,
+mmoreau409,Marc Moreau,Enterprise,Visual Studio,csharp,2026-07-19T14:17:37.978Z,140,36,true,true,claude-sonnet-5
+wmeyer,Wei Meyer,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,261,38,false,true,gpt-5.6-sol
+ppetrov,Priya Petrov,Business,JetBrains,typescript,2026-07-17T14:17:37.978Z,707,43,true,true,claude-sonnet-5
+ohaas412,Owen Haas,Business,JetBrains,typescript,2026-07-16T14:17:37.978Z,64,34,true,true,gpt-5.3-codex
+ynakamura,Yuki Nakamura,Business,VS Code,ruby,2026-07-15T14:17:37.978Z,577,24,true,true,claude-sonnet-5
+osorensen414,Omar Sorensen,Business,Visual Studio,java,2026-06-07T14:17:37.978Z,0,23,false,false,gpt-5.6-sol
+zmeyer,Zoe Meyer,Business,VS Code,kotlin,2026-07-17T14:17:37.978Z,361,18,true,true,gpt-5.3-codex
+amoreau416,Aoife Moreau,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,268,22,false,true,gpt-5.6-sol
+nkaur417,Noah Kaur,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,432,34,false,true,claude-sonnet-5
+nduarte,Noah Duarte,Business,JetBrains,typescript,2026-07-08T14:17:37.978Z,140,35,false,true,gpt-5.6-sol
+llarsen419,Liam Larsen,Business,VS Code,java,2026-07-18T14:17:37.978Z,145,32,false,true,gpt-5.3-codex
+nsilva420,Nina Silva,Business,VS Code,python,2026-07-19T14:17:37.978Z,676,40,false,true,gpt-5.3-codex
+shaas,Sara Haas,Enterprise,VS Code,csharp,2026-05-20T14:17:37.978Z,0,23,false,false,claude-sonnet-5
+afischer,Aoife Fischer,Business,VS Code,go,2026-07-19T14:17:37.978Z,526,35,false,true,claude-sonnet-5
+mokafor423,Maya Okafor,Business,VS Code,rust,2026-07-20T14:17:37.978Z,284,22,false,false,claude-sonnet-5
+ksilva,Kofi Silva,Business,JetBrains,java,2026-07-17T14:17:37.978Z,588,44,false,true,claude-opus-4.6
+thaas,Tariq Haas,Business,VS Code,python,2026-07-14T14:17:37.978Z,138,21,true,true,claude-opus-4.6
+okovacs,Omar Kovacs,Business,VS Code,java,2026-07-14T14:17:37.978Z,140,44,false,true,gpt-5.3-codex
+rnovak427,Ruth Novak,Business,VS Code,ruby,2026-07-19T14:17:37.978Z,424,33,true,true,claude-4.5-haiku
+rmeyer428,Ruth Meyer,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,577,20,false,false,claude-sonnet-5
+mhaugen,Marc Haugen,Business,JetBrains,python,2026-05-18T14:17:37.978Z,0,26,false,false,claude-opus-4.6
+ibianchi430,Ivy Bianchi,Enterprise,VS Code,typescript,2026-07-02T14:17:37.978Z,34,31,true,true,claude-4.5-haiku
+liqbal,Lena Iqbal,Business,Visual Studio,python,2026-07-18T14:17:37.978Z,706,37,false,true,claude-opus-4.6
+rlarsen432,Ruth Larsen,Business,VS Code,python,2026-07-17T14:17:37.978Z,422,32,false,true,claude-4.5-haiku
+tduarte,Theo Duarte,Business,VS Code,typescript,2026-05-26T14:17:37.978Z,0,41,true,true,claude-sonnet-5
+snakamura,Sara Nakamura,Enterprise,VS Code,python,2026-07-06T14:17:37.978Z,53,42,true,true,gpt-5.3-codex
+smeyer435,Sara Meyer,Enterprise,,,,0,,,,
+emoreau436,Eli Moreau,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,426,20,false,true,claude-sonnet-5
+ymeyer,Yuki Meyer,Business,JetBrains,go,2026-07-17T14:17:37.978Z,694,39,false,false,claude-4.5-haiku
+lnakamura438,Lena Nakamura,Business,VS Code,python,2026-07-19T14:17:37.978Z,139,19,false,true,gpt-5.6-sol
+dnguyen,Dmitri Nguyen,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,858,25,true,false,claude-opus-4.6
+oweber440,Omar Weber,Business,VS Code,rust,2026-07-11T14:17:37.978Z,18,31,true,false,gpt-5.6-sol
+nnakamura441,Nina Nakamura,Business,JetBrains,java,2026-07-20T14:17:37.978Z,341,26,true,true,claude-sonnet-5
+smeyer442,Sara Meyer,Business,JetBrains,python,2026-07-19T14:17:37.978Z,441,30,false,true,claude-sonnet-5
+iokafor443,Ivy Okafor,Business,VS Code,csharp,2026-05-13T14:17:37.978Z,0,34,true,true,claude-sonnet-5
+nokafor444,Nina Okafor,Business,VS Code,python,2026-07-17T14:17:37.978Z,220,42,true,false,claude-opus-4.6
+ohaas445,Owen Haas,Enterprise,Xcode,typescript,2026-07-17T14:17:37.978Z,563,35,false,false,claude-sonnet-5
+dnovak446,Dmitri Novak,Business,VS Code,typescript,2026-06-29T14:17:37.978Z,92,20,true,true,claude-sonnet-5
+rhaas447,Rosa Haas,Business,VS Code,python,2026-07-07T14:17:37.978Z,66,45,false,true,claude-sonnet-5
+kokafor448,Kofi Okafor,Business,VS Code,typescript,2026-07-10T14:17:37.978Z,76,36,false,true,gpt-5.3-codex
+rfischer449,Rosa Fischer,Business,Xcode,csharp,2026-07-04T14:17:37.978Z,14,19,true,true,claude-sonnet-5
+zsilva450,Zoe Silva,Enterprise,,,,0,,,,
+tmoreau,Theo Moreau,Business,Xcode,java,2026-07-05T14:17:37.978Z,137,45,true,false,claude-sonnet-5
+iolsen,Ivy Olsen,Business,Visual Studio,python,2026-07-18T14:17:37.978Z,227,39,true,false,claude-opus-4.6
+tmeyer453,Theo Meyer,Business,VS Code,go,2026-05-07T14:17:37.978Z,0,35,false,true,claude-opus-4.6
+emoreau454,Eli Moreau,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,661,24,true,true,claude-sonnet-5
+yiqbal,Yuki Iqbal,Business,,,,0,,,,
+nbianchi456,Noah Bianchi,Business,VS Code,python,2026-07-16T14:17:37.978Z,737,35,false,true,claude-opus-4.6
+rmeyer457,Rosa Meyer,Business,Neovim,typescript,2026-07-20T14:17:37.978Z,563,21,false,true,claude-sonnet-5
+rnakamura458,Rosa Nakamura,Business,JetBrains,java,2026-07-20T14:17:37.978Z,512,32,false,true,claude-opus-4.6
+mbianchi,Marc Bianchi,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,620,35,false,true,claude-sonnet-5
+msantos460,Maya Santos,Business,VS Code,kotlin,2026-07-15T14:17:37.978Z,621,37,false,false,gpt-5.3-codex
+oduarte461,Owen Duarte,Business,Visual Studio,typescript,2026-07-18T14:17:37.978Z,343,38,false,true,gpt-5.6-sol
+mmoreau462,Marc Moreau,Business,Visual Studio,python,2026-06-17T14:17:37.978Z,0,45,false,true,claude-sonnet-5
+ksorensen,Kofi Sorensen,Enterprise,Neovim,java,2026-07-05T14:17:37.978Z,65,22,true,true,gpt-5.3-codex
+etanaka,Eli Tanaka,Business,JetBrains,typescript,2026-06-10T14:17:37.978Z,0,21,true,true,claude-4.5-haiku
+kbianchi,Kofi Bianchi,Enterprise,VS Code,typescript,2026-06-02T14:17:37.978Z,0,26,false,false,claude-opus-4.6
+ahaas466,Aoife Haas,Business,JetBrains,java,2026-07-18T14:17:37.978Z,870,29,true,true,claude-opus-4.6
+opetrov467,Omar Petrov,Enterprise,JetBrains,ruby,2026-07-14T14:17:37.978Z,279,18,false,true,claude-sonnet-5
+tkovacs468,Tariq Kovacs,Business,VS Code,typescript,2026-05-30T14:17:37.978Z,0,31,true,true,gpt-5.3-codex
+wsantos,Wei Santos,Business,VS Code,typescript,2026-06-28T14:17:37.978Z,42,40,true,false,gpt-5.3-codex
+yiqbal470,Yuki Iqbal,Business,,,,0,,,,
+rfarrell471,Ruth Farrell,Business,Visual Studio,typescript,2026-07-16T14:17:37.978Z,898,39,true,true,gpt-5.6-sol
+wnovak472,Wei Novak,Business,,,,0,,,,
+kolsen,Kofi Olsen,Business,Xcode,rust,2026-07-19T14:17:37.978Z,314,23,false,true,claude-sonnet-5
+omeyer474,Omar Meyer,Business,VS Code,csharp,2026-06-03T14:17:37.978Z,0,44,false,true,claude-sonnet-5
+mtanaka475,Maya Tanaka,Business,JetBrains,python,2026-07-15T14:17:37.978Z,436,20,true,true,claude-opus-4.6
+kkim,Kofi Kim,Business,JetBrains,python,2026-07-20T14:17:37.978Z,376,24,false,true,claude-sonnet-5
+lduarte477,Liam Duarte,Business,VS Code,java,2026-07-20T14:17:37.978Z,627,23,false,true,claude-sonnet-5
+lpetrov478,Liam Petrov,Enterprise,Neovim,go,2026-05-30T14:17:37.978Z,0,29,true,false,gpt-5.3-codex
+lduarte479,Liam Duarte,Enterprise,JetBrains,python,2026-07-14T14:17:37.978Z,647,25,false,false,claude-sonnet-5
+wnovak480,Wei Novak,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,452,40,false,true,claude-sonnet-5
+rsantos,Rosa Santos,Business,Visual Studio,go,2026-07-16T14:17:37.978Z,236,17,true,true,claude-opus-4.6
+jpetrov482,Jan Petrov,Business,VS Code,kotlin,2026-07-17T14:17:37.978Z,847,20,false,true,claude-sonnet-5
+nolsen483,Noah Olsen,Enterprise,VS Code,go,2026-07-19T14:17:37.978Z,297,37,true,false,claude-4.5-haiku
+msorensen,Marc Sorensen,Business,JetBrains,java,2026-05-22T14:17:37.978Z,0,27,true,false,gpt-5.6-sol
+lsantos485,Liam Santos,Business,JetBrains,java,2026-07-15T14:17:37.978Z,598,16,true,true,claude-sonnet-5
+jlarsen,Jan Larsen,Business,Neovim,python,2026-07-14T14:17:37.978Z,294,39,true,true,gpt-5.6-sol
+aolsen487,Aoife Olsen,Business,JetBrains,csharp,2026-07-17T14:17:37.978Z,574,31,false,true,claude-sonnet-5
+zolsen,Zoe Olsen,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,207,17,false,true,claude-sonnet-5
+dlarsen489,Dmitri Larsen,Enterprise,JetBrains,kotlin,2026-07-19T14:17:37.978Z,894,31,true,true,claude-sonnet-5
+ynguyen490,Yuki Nguyen,Business,VS Code,rust,2026-07-19T14:17:37.978Z,637,45,false,true,gpt-5.3-codex
+aduarte491,Aoife Duarte,Enterprise,VS Code,typescript,2026-05-18T14:17:37.978Z,0,26,false,true,claude-sonnet-5
+rnguyen492,Rosa Nguyen,Business,VS Code,python,2026-07-20T14:17:37.978Z,742,28,true,false,gpt-5.3-codex
+dokafor493,Dmitri Okafor,Business,JetBrains,typescript,2026-07-08T14:17:37.978Z,19,21,false,true,claude-sonnet-5
+ykovacs,Yuki Kovacs,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,43,17,true,false,gpt-5.3-codex
+riqbal495,Rosa Iqbal,Business,VS Code,python,2026-07-19T14:17:37.978Z,775,23,true,true,claude-4.5-haiku
+mfarrell496,Maya Farrell,Business,JetBrains,rust,2026-06-27T14:17:37.978Z,14,24,false,false,claude-opus-4.6
+mnovak497,Maya Novak,Business,JetBrains,go,2026-07-15T14:17:37.978Z,167,28,false,false,gpt-5.3-codex
+yfarrell498,Yuki Farrell,Business,Neovim,typescript,2026-07-15T14:17:37.978Z,758,19,false,true,gpt-5.6-sol
+rsantos499,Ruth Santos,Business,JetBrains,python,2026-07-18T14:17:37.978Z,353,35,false,true,claude-sonnet-5
+anakamura,Ana Nakamura,Business,VS Code,go,2026-07-14T14:17:37.978Z,210,31,false,true,claude-opus-4.6
+zweber501,Zoe Weber,Business,VS Code,csharp,2026-04-27T14:17:37.978Z,0,16,false,true,claude-sonnet-5
+inguyen,Ivy Nguyen,Business,JetBrains,typescript,2026-07-04T14:17:37.978Z,34,25,false,true,claude-sonnet-5
+solsen,Sara Olsen,Business,JetBrains,python,2026-07-13T14:17:37.978Z,36,31,false,true,claude-opus-4.6
+miqbal504,Marc Iqbal,Business,VS Code,go,2026-07-18T14:17:37.978Z,767,35,false,false,claude-sonnet-5
+onakamura505,Owen Nakamura,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,154,45,true,true,claude-sonnet-5
+efischer506,Eli Fischer,Business,Visual Studio,python,2026-07-02T14:17:37.978Z,51,24,false,true,gpt-5.3-codex
+ahaugen507,Ana Haugen,Business,VS Code,rust,2026-07-16T14:17:37.978Z,145,31,false,true,gpt-5.6-sol
+enguyen508,Eli Nguyen,Enterprise,VS Code,ruby,2026-07-04T14:17:37.978Z,44,22,true,true,claude-opus-4.6
+elarsen509,Eli Larsen,Business,,,,0,,,,
+ykim510,Yuki Kim,Enterprise,VS Code,typescript,2026-07-14T14:17:37.978Z,663,37,false,true,claude-sonnet-5
+mfarrell511,Marc Farrell,Business,VS Code,python,2026-07-17T14:17:37.978Z,833,24,false,false,gpt-5.3-codex
+rmeyer512,Ruth Meyer,Business,VS Code,csharp,2026-07-17T14:17:37.978Z,866,32,false,true,gpt-5.6-sol
+ttanaka513,Theo Tanaka,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,640,46,true,false,gpt-5.6-sol
+mhaugen514,Marc Haugen,Business,Visual Studio,java,2026-07-14T14:17:37.978Z,425,42,true,false,gpt-5.6-sol
+jkim,Jan Kim,Enterprise,VS Code,java,2026-07-14T14:17:37.978Z,499,28,true,true,claude-opus-4.6
+akim,Aoife Kim,Business,JetBrains,python,2026-07-19T14:17:37.978Z,756,33,false,false,gpt-5.3-codex
+mmeyer517,Marc Meyer,Business,,,,0,,,,
+jolsen,Jan Olsen,Business,JetBrains,typescript,2026-07-19T14:17:37.978Z,443,21,true,true,gpt-5.3-codex
+wbianchi,Wei Bianchi,Business,JetBrains,rust,2026-06-10T14:17:37.978Z,0,46,true,true,claude-sonnet-5
+mhaas520,Marc Haas,Business,VS Code,csharp,2026-06-25T14:17:37.978Z,48,20,true,false,gpt-5.6-sol
+jfischer521,Jan Fischer,Business,VS Code,csharp,2026-07-05T14:17:37.978Z,66,33,false,true,gpt-5.3-codex
+dkim522,Dmitri Kim,Business,VS Code,go,2026-07-20T14:17:37.978Z,278,32,false,true,claude-sonnet-5
+rbianchi,Rosa Bianchi,Enterprise,Xcode,typescript,2026-07-17T14:17:37.978Z,408,24,false,false,gpt-5.3-codex
+nduarte524,Noah Duarte,Business,JetBrains,python,2026-07-17T14:17:37.978Z,871,32,true,true,gpt-5.3-codex
+lpetrov525,Lena Petrov,Business,,,,0,,,,
+nweber526,Noah Weber,Enterprise,VS Code,java,2026-07-14T14:17:37.978Z,584,46,true,true,claude-4.5-haiku
+jsantos527,Jan Santos,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,463,36,true,true,gpt-5.3-codex
+nhaugen,Noah Haugen,Business,VS Code,python,2026-04-25T14:17:37.978Z,0,37,true,false,gpt-5.3-codex
+abianchi529,Aoife Bianchi,Business,JetBrains,java,2026-07-16T14:17:37.978Z,436,36,true,false,gpt-5.3-codex
+iolsen530,Ivy Olsen,Business,Visual Studio,java,2026-07-03T14:17:37.978Z,79,18,false,false,claude-sonnet-5
+wduarte531,Wei Duarte,Business,JetBrains,go,2026-07-15T14:17:37.978Z,136,28,false,true,claude-opus-4.6
+alarsen532,Ana Larsen,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,242,36,true,true,gpt-5.6-sol
+nnovak533,Noah Novak,Business,Neovim,typescript,2026-07-05T14:17:37.978Z,55,34,true,true,claude-sonnet-5
+ntanaka534,Nina Tanaka,Business,VS Code,java,2026-07-20T14:17:37.978Z,667,28,false,false,claude-opus-4.6
+rnovak535,Rosa Novak,Enterprise,VS Code,java,2026-07-17T14:17:37.978Z,688,17,false,false,claude-opus-4.6
+shaas536,Sara Haas,Enterprise,VS Code,rust,2026-07-20T14:17:37.978Z,587,44,true,false,gpt-5.3-codex
+afarrell537,Aoife Farrell,Business,Xcode,python,2026-07-16T14:17:37.978Z,719,27,false,false,gpt-5.6-sol
+nfarrell538,Nina Farrell,Enterprise,Visual Studio,csharp,2026-07-19T14:17:37.978Z,469,44,false,true,claude-opus-4.6
+tkim539,Theo Kim,Business,VS Code,python,2026-07-15T14:17:37.978Z,202,20,false,false,claude-opus-4.6
+dfarrell540,Dmitri Farrell,Business,VS Code,ruby,2026-07-07T14:17:37.978Z,146,42,true,false,claude-sonnet-5
+ikim541,Ivy Kim,Enterprise,VS Code,python,2026-06-13T14:17:37.978Z,0,32,false,true,claude-opus-4.6
+rsantos542,Rosa Santos,Business,VS Code,python,2026-07-16T14:17:37.978Z,127,17,true,true,claude-sonnet-5
+oduarte543,Omar Duarte,Business,VS Code,java,2026-07-15T14:17:37.978Z,748,44,false,true,claude-sonnet-5
+khaugen,Kofi Haugen,Business,VS Code,typescript,2026-04-24T14:17:37.978Z,0,37,false,false,claude-opus-4.6
+knovak545,Kofi Novak,Business,VS Code,java,2026-07-13T14:17:37.978Z,17,27,true,true,claude-opus-4.6
+olarsen546,Omar Larsen,Enterprise,Xcode,typescript,2026-07-20T14:17:37.978Z,198,29,false,true,claude-sonnet-5
+okim,Owen Kim,Business,Xcode,java,2026-07-16T14:17:37.978Z,707,27,true,true,claude-sonnet-5
+atanaka,Ana Tanaka,Business,VS Code,typescript,2026-07-08T14:17:37.978Z,73,32,false,false,claude-opus-4.6
+ymoreau549,Yuki Moreau,Enterprise,VS Code,rust,2026-07-20T14:17:37.978Z,217,18,true,false,claude-sonnet-5
+yhaas,Yuki Haas,Enterprise,VS Code,java,2026-07-14T14:17:37.978Z,692,21,false,true,claude-sonnet-5
+ekim551,Eli Kim,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,693,35,true,false,claude-sonnet-5
+tfarrell,Tariq Farrell,Business,,,,0,,,,
+solsen553,Sara Olsen,Business,JetBrains,go,2026-07-16T14:17:37.978Z,757,35,true,false,claude-sonnet-5
+msorensen554,Maya Sorensen,Enterprise,JetBrains,python,2026-07-19T14:17:37.978Z,352,26,false,true,gpt-5.6-sol
+mokafor555,Maya Okafor,Business,JetBrains,typescript,2026-06-30T14:17:37.978Z,123,41,false,true,claude-sonnet-5
+rnakamura556,Rosa Nakamura,Business,VS Code,typescript,2026-07-17T14:17:37.978Z,642,45,true,true,claude-opus-4.6
+mpetrov,Maya Petrov,Business,VS Code,java,2026-07-19T14:17:37.978Z,680,20,true,true,claude-sonnet-5
+abianchi558,Aoife Bianchi,Business,VS Code,go,2026-07-17T14:17:37.978Z,737,43,true,true,claude-sonnet-5
+asorensen559,Aoife Sorensen,Business,VS Code,go,2026-07-15T14:17:37.978Z,306,30,false,true,claude-sonnet-5
+jolsen560,Jan Olsen,Business,,,,0,,,,
+pkaur561,Priya Kaur,Enterprise,VS Code,csharp,2026-07-18T14:17:37.978Z,485,42,false,true,gpt-5.3-codex
+pkim562,Priya Kim,Business,JetBrains,typescript,2026-07-13T14:17:37.978Z,78,33,false,false,claude-4.5-haiku
+okaur,Owen Kaur,Business,,,,0,,,,
+mokafor564,Marc Okafor,Enterprise,VS Code,typescript,2026-05-23T14:17:37.978Z,0,22,false,true,claude-opus-4.6
+lduarte565,Lena Duarte,Business,VS Code,typescript,2026-07-10T14:17:37.978Z,14,44,false,true,gpt-5.6-sol
+rpetrov566,Rosa Petrov,Business,VS Code,csharp,2026-07-20T14:17:37.978Z,395,37,true,false,claude-opus-4.6
+zkovacs,Zoe Kovacs,Business,VS Code,java,2026-07-17T14:17:37.978Z,710,34,false,false,gpt-5.6-sol
+pkim568,Priya Kim,Business,VS Code,python,2026-07-17T14:17:37.978Z,787,37,false,false,claude-sonnet-5
+ymeyer569,Yuki Meyer,Enterprise,JetBrains,ruby,2026-05-07T14:17:37.978Z,0,35,false,false,gpt-5.3-codex
+jlarsen570,Jan Larsen,Business,JetBrains,python,2026-07-14T14:17:37.978Z,844,44,false,true,gpt-5.6-sol
+ihaas571,Ivy Haas,Enterprise,VS Code,go,2026-07-11T14:17:37.978Z,130,16,true,true,gpt-5.6-sol
+znovak572,Zoe Novak,Business,VS Code,python,2026-07-14T14:17:37.978Z,122,43,false,false,claude-sonnet-5
+nduarte573,Nina Duarte,Business,JetBrains,csharp,2026-07-14T14:17:37.978Z,514,20,true,true,claude-4.5-haiku
+wfarrell574,Wei Farrell,Business,VS Code,java,2026-07-14T14:17:37.978Z,709,44,true,false,claude-sonnet-5
+zmoreau,Zoe Moreau,Business,VS Code,python,2026-07-20T14:17:37.978Z,822,18,false,false,claude-opus-4.6
+aweber576,Ana Weber,Business,JetBrains,typescript,2026-07-19T14:17:37.978Z,392,17,false,true,claude-4.5-haiku
+aduarte577,Ana Duarte,Business,VS Code,ruby,2026-07-18T14:17:37.978Z,325,40,false,true,gpt-5.6-sol
+tmoreau578,Tariq Moreau,Business,VS Code,typescript,2026-05-26T14:17:37.978Z,0,18,true,true,claude-sonnet-5
+dhaas,Dmitri Haas,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,351,44,true,true,gpt-5.3-codex
+ohaas580,Omar Haas,Business,VS Code,java,2026-07-17T14:17:37.978Z,249,26,true,true,claude-sonnet-5
+atanaka581,Aoife Tanaka,Business,VS Code,java,2026-06-26T14:17:37.978Z,128,28,true,true,claude-opus-4.6
+enguyen582,Eli Nguyen,Business,JetBrains,typescript,2026-04-25T14:17:37.978Z,0,46,false,true,claude-opus-4.6
+jmoreau,Jan Moreau,Business,VS Code,typescript,2026-07-07T14:17:37.978Z,21,29,true,false,gpt-5.6-sol
+lhaas,Liam Haas,Business,Visual Studio,java,2026-05-17T14:17:37.978Z,0,41,false,false,gpt-5.6-sol
+sokafor585,Sara Okafor,Business,VS Code,typescript,2026-07-10T14:17:37.978Z,58,37,false,true,claude-sonnet-5
+tolsen586,Theo Olsen,Business,JetBrains,python,2026-07-16T14:17:37.978Z,382,35,false,true,claude-opus-4.6
+ofischer,Owen Fischer,Enterprise,VS Code,go,2026-07-15T14:17:37.978Z,443,30,false,true,claude-sonnet-5
+miqbal588,Maya Iqbal,Business,Visual Studio,ruby,2026-07-16T14:17:37.978Z,705,34,false,true,claude-sonnet-5
+ztanaka,Zoe Tanaka,Business,JetBrains,typescript,2026-07-16T14:17:37.978Z,420,29,true,true,claude-opus-4.6
+lhaas590,Lena Haas,Business,VS Code,python,2026-07-15T14:17:37.978Z,684,43,false,false,claude-opus-4.6
+solsen591,Sara Olsen,Business,VS Code,rust,2026-07-17T14:17:37.978Z,153,43,false,false,gpt-5.6-sol
+ptanaka,Priya Tanaka,Enterprise,VS Code,go,2026-07-19T14:17:37.978Z,888,42,true,false,gpt-5.6-sol
+ilarsen593,Ivy Larsen,Enterprise,Visual Studio,go,2026-07-16T14:17:37.978Z,165,23,false,true,claude-opus-4.6
+jbianchi594,Jan Bianchi,Business,,,,0,,,,
+tduarte595,Theo Duarte,Business,VS Code,rust,2026-07-20T14:17:37.978Z,197,22,true,false,claude-sonnet-5
+nkaur596,Noah Kaur,Business,VS Code,ruby,2026-07-14T14:17:37.978Z,868,41,true,true,claude-sonnet-5
+zmoreau597,Zoe Moreau,Business,Xcode,python,2026-07-02T14:17:37.978Z,138,43,false,false,claude-opus-4.6
+kiqbal,Kofi Iqbal,Business,VS Code,go,2026-06-09T14:17:37.978Z,0,23,true,false,claude-opus-4.6
+tweber599,Tariq Weber,Business,Visual Studio,ruby,2026-07-14T14:17:37.978Z,541,17,false,true,claude-opus-4.6
+opetrov600,Owen Petrov,Enterprise,VS Code,python,2026-07-14T14:17:37.978Z,281,41,true,false,claude-sonnet-5
+klarsen,Kofi Larsen,Enterprise,VS Code,typescript,2026-07-14T14:17:37.978Z,341,46,false,true,claude-sonnet-5
+lhaugen,Lena Haugen,Business,VS Code,python,2026-06-04T14:17:37.978Z,0,20,true,true,gpt-5.3-codex
+oolsen,Omar Olsen,Business,VS Code,java,2026-07-18T14:17:37.978Z,452,26,true,true,gpt-5.3-codex
+yhaas604,Yuki Haas,Enterprise,VS Code,typescript,2026-05-27T14:17:37.978Z,0,21,true,false,claude-opus-4.6
+ameyer605,Ana Meyer,Business,Xcode,go,2026-07-20T14:17:37.978Z,305,29,false,false,gpt-5.6-sol
+jkovacs,Jan Kovacs,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,606,19,false,false,claude-sonnet-5
+dhaugen607,Dmitri Haugen,Business,VS Code,kotlin,2026-07-15T14:17:37.978Z,327,36,true,true,claude-sonnet-5
+mmeyer608,Marc Meyer,Business,JetBrains,kotlin,2026-07-15T14:17:37.978Z,39,38,true,true,claude-sonnet-5
+tnovak609,Tariq Novak,Business,VS Code,go,2026-06-27T14:17:37.978Z,150,31,true,false,claude-sonnet-5
+rsilva610,Ruth Silva,Business,VS Code,csharp,2026-04-24T14:17:37.978Z,0,22,true,true,claude-sonnet-5
+lhaas611,Lena Haas,Enterprise,VS Code,typescript,2026-07-16T14:17:37.978Z,744,42,true,false,claude-opus-4.6
+onovak612,Owen Novak,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,430,19,true,false,claude-opus-4.6
+jmoreau613,Jan Moreau,Business,JetBrains,python,2026-07-20T14:17:37.978Z,561,30,false,true,claude-sonnet-5
+tweber614,Theo Weber,Business,VS Code,typescript,2026-05-11T14:17:37.978Z,0,21,false,true,claude-sonnet-5
+aiqbal,Ana Iqbal,Business,VS Code,typescript,2026-06-26T14:17:37.978Z,110,28,true,true,claude-4.5-haiku
+kfischer,Kofi Fischer,Business,Visual Studio,go,2026-07-20T14:17:37.978Z,388,27,true,true,gpt-5.6-sol
+mbianchi617,Maya Bianchi,Business,Visual Studio,typescript,2026-05-26T14:17:37.978Z,0,22,false,false,claude-sonnet-5
+obianchi618,Omar Bianchi,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,481,35,true,true,gpt-5.6-sol
+afischer619,Ana Fischer,Business,JetBrains,java,2026-07-09T14:17:37.978Z,55,41,true,true,claude-opus-4.6
+lhaugen620,Lena Haugen,Business,,,,0,,,,
+lfischer621,Liam Fischer,Business,JetBrains,python,2026-07-19T14:17:37.978Z,876,38,true,true,claude-sonnet-5
+mhaas622,Maya Haas,Business,Neovim,go,2026-07-15T14:17:37.978Z,135,27,false,true,claude-4.5-haiku
+dnakamura623,Dmitri Nakamura,Business,JetBrains,csharp,2026-07-18T14:17:37.978Z,406,45,false,true,gpt-5.3-codex
+nhaas,Nina Haas,Business,VS Code,csharp,2026-04-27T14:17:37.978Z,0,27,true,true,claude-opus-4.6
+nduarte625,Nina Duarte,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,776,32,false,false,claude-sonnet-5
+nsorensen626,Nina Sorensen,Business,JetBrains,typescript,2026-07-17T14:17:37.978Z,598,44,true,false,claude-opus-4.6
+rnakamura627,Ruth Nakamura,Business,VS Code,python,2026-07-15T14:17:37.978Z,746,39,true,false,gpt-5.3-codex
+lmeyer628,Lena Meyer,Enterprise,JetBrains,csharp,2026-07-15T14:17:37.978Z,592,43,false,true,gpt-5.3-codex
+zmoreau629,Zoe Moreau,Business,Visual Studio,python,2026-07-14T14:17:37.978Z,291,25,true,false,claude-sonnet-5
+ypetrov,Yuki Petrov,Business,VS Code,python,2026-07-16T14:17:37.978Z,395,31,true,false,gpt-5.6-sol
+ynovak631,Yuki Novak,Business,JetBrains,python,2026-07-15T14:17:37.978Z,682,21,false,false,claude-opus-4.6
+mkim632,Maya Kim,Business,Visual Studio,java,2026-07-15T14:17:37.978Z,87,36,true,true,claude-sonnet-5
+riqbal633,Rosa Iqbal,Business,VS Code,go,2026-07-20T14:17:37.978Z,168,27,false,true,claude-opus-4.6
+zfarrell634,Zoe Farrell,Business,VS Code,python,2026-07-13T14:17:37.978Z,11,26,true,false,claude-sonnet-5
+thaugen635,Tariq Haugen,Business,JetBrains,python,2026-06-05T14:17:37.978Z,0,20,false,true,gpt-5.6-sol
+wmeyer636,Wei Meyer,Business,VS Code,go,2026-07-15T14:17:37.978Z,699,36,true,true,gpt-5.6-sol
+nokafor637,Noah Okafor,Business,VS Code,python,2026-06-03T14:17:37.978Z,0,35,false,false,claude-4.5-haiku
+nlarsen638,Nina Larsen,Business,JetBrains,java,2026-05-20T14:17:37.978Z,0,18,false,true,claude-sonnet-5
+mmeyer639,Maya Meyer,Business,VS Code,python,2026-07-18T14:17:37.978Z,753,25,true,true,claude-sonnet-5
+rsilva640,Ruth Silva,Business,,,,0,,,,
+yiqbal641,Yuki Iqbal,Business,JetBrains,typescript,2026-07-07T14:17:37.978Z,34,36,false,true,claude-sonnet-5
+zmeyer642,Zoe Meyer,Enterprise,VS Code,python,2026-07-19T14:17:37.978Z,711,35,false,true,claude-sonnet-5
+kfarrell643,Kofi Farrell,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,206,22,true,true,gpt-5.6-sol
+nmoreau644,Nina Moreau,Business,,,,0,,,,
+aolsen645,Ana Olsen,Enterprise,Visual Studio,go,2026-07-18T14:17:37.978Z,879,22,true,true,claude-opus-4.6
+mnakamura646,Marc Nakamura,Enterprise,VS Code,python,2026-07-15T14:17:37.978Z,85,41,true,true,claude-4.5-haiku
+afarrell647,Ana Farrell,Business,Visual Studio,typescript,2026-07-12T14:17:37.978Z,73,35,true,false,claude-opus-4.6
+okim648,Owen Kim,Business,VS Code,java,2026-06-07T14:17:37.978Z,0,37,false,true,claude-sonnet-5
+wduarte649,Wei Duarte,Business,JetBrains,java,2026-07-03T14:17:37.978Z,19,43,false,true,claude-4.5-haiku
+kbianchi650,Kofi Bianchi,Business,,,,0,,,,
+kiqbal651,Kofi Iqbal,Business,Visual Studio,python,2026-07-04T14:17:37.978Z,111,19,true,true,gpt-5.6-sol
+mhaugen652,Marc Haugen,Business,VS Code,typescript,2026-06-26T14:17:37.978Z,23,30,true,false,claude-opus-4.6
+tkovacs653,Tariq Kovacs,Business,VS Code,csharp,2026-07-15T14:17:37.978Z,185,18,true,false,claude-sonnet-5
+rfarrell654,Ruth Farrell,Business,JetBrains,csharp,2026-07-19T14:17:37.978Z,692,34,false,true,gpt-5.3-codex
+iiqbal,Ivy Iqbal,Business,,,,0,,,,
+mweber,Maya Weber,Business,VS Code,java,2026-07-16T14:17:37.978Z,221,23,false,true,gpt-5.3-codex
+lkovacs657,Liam Kovacs,Business,Neovim,typescript,2026-07-19T14:17:37.978Z,379,43,true,true,claude-sonnet-5
+nhaugen658,Nina Haugen,Business,VS Code,python,2026-05-12T14:17:37.978Z,0,24,false,true,claude-sonnet-5
+iduarte659,Ivy Duarte,Enterprise,JetBrains,typescript,2026-07-14T14:17:37.978Z,255,28,false,false,claude-opus-4.6
+mkaur660,Maya Kaur,Business,Neovim,csharp,2026-07-17T14:17:37.978Z,333,19,false,true,claude-sonnet-5
+slarsen,Sara Larsen,Business,,,,0,,,,
+wsilva,Wei Silva,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,589,30,false,true,gpt-5.3-codex
+akaur663,Ana Kaur,Business,VS Code,ruby,2026-07-15T14:17:37.978Z,516,46,false,true,gpt-5.3-codex
+nokafor664,Nina Okafor,Business,VS Code,java,2026-05-09T14:17:37.978Z,0,43,true,true,claude-sonnet-5
+wfarrell665,Wei Farrell,Business,VS Code,java,2026-04-25T14:17:37.978Z,0,18,true,true,claude-sonnet-5
+lmoreau666,Liam Moreau,Business,VS Code,python,2026-06-28T14:17:37.978Z,99,29,true,true,claude-sonnet-5
+ehaas667,Eli Haas,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,160,31,true,true,claude-opus-4.6
+stanaka668,Sara Tanaka,Enterprise,VS Code,kotlin,2026-07-15T14:17:37.978Z,751,27,true,true,gpt-5.3-codex
+lkovacs669,Liam Kovacs,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,178,40,false,true,claude-sonnet-5
+nokafor670,Noah Okafor,Business,Xcode,csharp,2026-07-16T14:17:37.978Z,616,44,true,false,claude-opus-4.6
+asorensen671,Ana Sorensen,Business,VS Code,java,2026-07-20T14:17:37.978Z,430,35,false,true,claude-sonnet-5
+msilva672,Maya Silva,Business,VS Code,kotlin,2026-07-14T14:17:37.978Z,805,46,false,false,claude-opus-4.6
+ymeyer673,Yuki Meyer,Business,Visual Studio,java,2026-07-18T14:17:37.978Z,680,42,false,false,claude-sonnet-5
+asantos674,Ana Santos,Enterprise,VS Code,python,2026-07-15T14:17:37.978Z,253,29,false,true,gpt-5.3-codex
+lkaur675,Lena Kaur,Business,JetBrains,java,2026-05-08T14:17:37.978Z,0,34,false,false,gpt-5.3-codex
+jweber676,Jan Weber,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,465,17,true,true,claude-sonnet-5
+riqbal677,Rosa Iqbal,Business,VS Code,python,2026-06-30T14:17:37.978Z,107,32,false,false,claude-opus-4.6
+lpetrov678,Liam Petrov,Enterprise,VS Code,typescript,2026-07-15T14:17:37.978Z,384,41,false,true,claude-sonnet-5
+osilva679,Omar Silva,Business,VS Code,java,2026-05-20T14:17:37.978Z,0,29,false,true,claude-opus-4.6
+iweber680,Ivy Weber,Business,VS Code,python,2026-07-12T14:17:37.978Z,105,32,false,false,gpt-5.6-sol
+lfarrell681,Lena Farrell,Enterprise,JetBrains,python,2026-07-20T14:17:37.978Z,726,23,false,true,gpt-5.3-codex
+nsorensen682,Noah Sorensen,Enterprise,JetBrains,typescript,2026-07-19T14:17:37.978Z,339,34,true,true,claude-opus-4.6
+lnakamura683,Liam Nakamura,Business,,,,0,,,,
+nmeyer684,Noah Meyer,Business,Xcode,go,2026-05-20T14:17:37.978Z,0,34,false,true,claude-sonnet-5
+eokafor685,Eli Okafor,Business,VS Code,ruby,2026-07-20T14:17:37.978Z,803,34,true,true,claude-opus-4.6
+rhaas686,Ruth Haas,Enterprise,JetBrains,rust,2026-07-15T14:17:37.978Z,240,28,true,true,claude-sonnet-5
+elarsen687,Eli Larsen,Business,VS Code,csharp,2026-07-10T14:17:37.978Z,109,38,false,true,claude-opus-4.6
+zduarte688,Zoe Duarte,Business,VS Code,python,2026-07-15T14:17:37.978Z,513,37,true,true,claude-sonnet-5
+mtanaka689,Maya Tanaka,Business,JetBrains,csharp,2026-06-27T14:17:37.978Z,120,25,true,false,claude-opus-4.6
+lolsen690,Liam Olsen,Enterprise,JetBrains,csharp,2026-07-18T14:17:37.978Z,548,42,false,true,claude-sonnet-5
+ehaas691,Eli Haas,Business,VS Code,python,2026-07-14T14:17:37.978Z,150,34,false,true,claude-sonnet-5
+efischer692,Eli Fischer,Business,JetBrains,ruby,2026-07-16T14:17:37.978Z,325,19,false,false,claude-sonnet-5
+tokafor693,Theo Okafor,Enterprise,JetBrains,typescript,2026-04-24T14:17:37.978Z,0,31,false,true,claude-sonnet-5
+wsantos694,Wei Santos,Enterprise,JetBrains,java,2026-07-15T14:17:37.978Z,161,38,false,true,claude-sonnet-5
+ysilva695,Yuki Silva,Business,VS Code,ruby,2026-07-17T14:17:37.978Z,391,25,false,true,gpt-5.6-sol
+dkovacs696,Dmitri Kovacs,Enterprise,,,,0,,,,
+lokafor,Liam Okafor,Business,VS Code,go,2026-07-16T14:17:37.978Z,692,20,true,true,claude-4.5-haiku
+jhaas698,Jan Haas,Business,Neovim,typescript,2026-07-18T14:17:37.978Z,714,42,true,true,claude-sonnet-5
+tsantos,Theo Santos,Enterprise,JetBrains,python,2026-07-14T14:17:37.978Z,479,38,true,true,claude-sonnet-5
+dtanaka,Dmitri Tanaka,Business,JetBrains,csharp,2026-05-29T14:17:37.978Z,0,29,true,true,gpt-5.3-codex
+mhaas701,Marc Haas,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,680,43,false,true,claude-opus-4.6
+lsantos702,Liam Santos,Business,VS Code,java,2026-07-14T14:17:37.978Z,723,23,false,false,gpt-5.3-codex
+jpetrov703,Jan Petrov,Business,JetBrains,csharp,2026-06-30T14:17:37.978Z,13,27,true,true,gpt-5.6-sol
+aolsen704,Aoife Olsen,Enterprise,JetBrains,python,2026-07-17T14:17:37.978Z,546,27,true,true,claude-opus-4.6
+osilva705,Omar Silva,Business,Visual Studio,python,2026-05-27T14:17:37.978Z,0,44,false,true,claude-opus-4.6
+onovak706,Owen Novak,Business,VS Code,typescript,2026-07-18T14:17:37.978Z,502,38,false,false,claude-opus-4.6
+psantos707,Priya Santos,Business,Visual Studio,typescript,2026-05-07T14:17:37.978Z,0,18,true,true,claude-opus-4.6
+mkovacs708,Maya Kovacs,Business,JetBrains,kotlin,2026-07-20T14:17:37.978Z,603,21,true,false,claude-sonnet-5
+enakamura709,Eli Nakamura,Business,JetBrains,csharp,2026-07-19T14:17:37.978Z,232,23,true,true,gpt-5.3-codex
+lbianchi,Lena Bianchi,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,895,33,false,false,claude-opus-4.6
+eduarte,Eli Duarte,Business,VS Code,typescript,2026-05-26T14:17:37.978Z,0,25,false,false,gpt-5.6-sol
+tmeyer712,Tariq Meyer,Business,VS Code,python,2026-07-15T14:17:37.978Z,624,32,false,true,gpt-5.3-codex
+anguyen713,Aoife Nguyen,Enterprise,VS Code,ruby,2026-05-19T14:17:37.978Z,0,37,false,true,claude-sonnet-5
+jkovacs714,Jan Kovacs,Enterprise,VS Code,typescript,2026-07-14T14:17:37.978Z,611,29,true,true,gpt-5.3-codex
+tbianchi715,Tariq Bianchi,Business,Xcode,python,2026-07-16T14:17:37.978Z,510,20,false,true,gpt-5.6-sol
+ykovacs716,Yuki Kovacs,Business,VS Code,go,2026-07-14T14:17:37.978Z,755,38,true,false,gpt-5.6-sol
+ookafor717,Owen Okafor,Business,JetBrains,ruby,2026-06-03T14:17:37.978Z,0,43,true,true,claude-sonnet-5
+obianchi718,Owen Bianchi,Enterprise,VS Code,go,2026-07-15T14:17:37.978Z,452,35,false,true,claude-opus-4.6
+jkaur,Jan Kaur,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,681,42,true,false,claude-opus-4.6
+yweber720,Yuki Weber,Business,Neovim,typescript,2026-07-14T14:17:37.978Z,473,44,false,false,gpt-5.3-codex
+lpetrov721,Liam Petrov,Enterprise,VS Code,java,2026-07-17T14:17:37.978Z,274,23,false,true,claude-4.5-haiku
+okovacs722,Omar Kovacs,Enterprise,VS Code,python,2026-07-03T14:17:37.978Z,135,34,true,false,claude-sonnet-5
+zbianchi,Zoe Bianchi,Business,VS Code,rust,2026-07-19T14:17:37.978Z,388,16,true,false,claude-4.5-haiku
+lmeyer724,Liam Meyer,Business,JetBrains,rust,2026-07-18T14:17:37.978Z,685,39,true,true,gpt-5.3-codex
+oweber725,Owen Weber,Enterprise,VS Code,go,2026-06-12T14:17:37.978Z,0,18,true,true,claude-opus-4.6
+pweber726,Priya Weber,Business,,,,0,,,,
+phaas,Priya Haas,Business,JetBrains,rust,2026-07-14T14:17:37.978Z,333,18,false,true,claude-opus-4.6
+ysorensen,Yuki Sorensen,Enterprise,VS Code,kotlin,2026-07-20T14:17:37.978Z,761,26,true,true,claude-4.5-haiku
+isorensen,Ivy Sorensen,Business,VS Code,typescript,2026-06-26T14:17:37.978Z,125,45,false,true,gpt-5.3-codex
+mnakamura730,Maya Nakamura,Business,JetBrains,python,2026-05-09T14:17:37.978Z,0,33,false,false,claude-sonnet-5
+whaas731,Wei Haas,Business,VS Code,java,2026-07-06T14:17:37.978Z,70,34,true,false,claude-4.5-haiku
+dduarte732,Dmitri Duarte,Business,VS Code,csharp,2026-07-18T14:17:37.978Z,602,23,false,false,gpt-5.6-sol
+lnovak733,Lena Novak,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,699,17,true,true,claude-opus-4.6
+yolsen734,Yuki Olsen,Business,JetBrains,typescript,2026-07-17T14:17:37.978Z,698,25,true,false,claude-opus-4.6
+lokafor735,Liam Okafor,Enterprise,VS Code,go,2026-07-17T14:17:37.978Z,248,34,false,false,claude-sonnet-5
+nnguyen736,Nina Nguyen,Business,Visual Studio,java,2026-07-16T14:17:37.978Z,653,26,true,true,claude-sonnet-5
+ppetrov737,Priya Petrov,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,92,17,true,true,claude-sonnet-5
+sfischer,Sara Fischer,Business,VS Code,kotlin,2026-07-02T14:17:37.978Z,48,19,true,true,claude-sonnet-5
+tsilva,Tariq Silva,Business,VS Code,kotlin,2026-07-18T14:17:37.978Z,714,19,true,true,claude-sonnet-5
+kweber740,Kofi Weber,Enterprise,VS Code,typescript,2026-07-15T14:17:37.978Z,274,28,true,false,claude-opus-4.6
+enakamura741,Eli Nakamura,Enterprise,JetBrains,typescript,2026-07-16T14:17:37.978Z,380,36,false,true,claude-opus-4.6
+anovak,Aoife Novak,Business,JetBrains,java,2026-07-19T14:17:37.978Z,151,24,true,false,claude-sonnet-5
+nnakamura743,Nina Nakamura,Business,JetBrains,python,2026-07-20T14:17:37.978Z,751,41,false,true,claude-sonnet-5
+tnguyen744,Theo Nguyen,Business,VS Code,python,2026-07-20T14:17:37.978Z,312,39,true,true,claude-opus-4.6
+msantos745,Maya Santos,Business,JetBrains,python,2026-07-02T14:17:37.978Z,91,38,true,true,gpt-5.6-sol
+anguyen746,Ana Nguyen,Business,Neovim,ruby,2026-07-05T14:17:37.978Z,29,19,false,true,claude-opus-4.6
+onakamura747,Owen Nakamura,Business,JetBrains,ruby,2026-05-18T14:17:37.978Z,0,43,false,false,claude-4.5-haiku
+isantos,Ivy Santos,Business,Xcode,csharp,2026-07-18T14:17:37.978Z,557,43,false,true,claude-sonnet-5
+jsorensen,Jan Sorensen,Business,Neovim,typescript,2026-07-18T14:17:37.978Z,463,43,false,true,gpt-5.6-sol
+ksilva750,Kofi Silva,Business,VS Code,java,2026-07-16T14:17:37.978Z,216,36,false,true,gpt-5.3-codex
+nokafor751,Nina Okafor,Enterprise,VS Code,python,2026-06-19T14:17:37.978Z,0,37,false,true,claude-sonnet-5
+ofischer752,Omar Fischer,Business,VS Code,java,2026-06-01T14:17:37.978Z,0,31,true,true,claude-opus-4.6
+wnovak753,Wei Novak,Enterprise,VS Code,typescript,2026-05-29T14:17:37.978Z,0,29,false,true,gpt-5.6-sol
+niqbal754,Noah Iqbal,Business,JetBrains,typescript,2026-05-14T14:17:37.978Z,0,18,true,false,claude-4.5-haiku
+ynguyen755,Yuki Nguyen,Enterprise,Xcode,python,2026-07-17T14:17:37.978Z,206,41,false,false,gpt-5.3-codex
+lpetrov756,Lena Petrov,Business,Xcode,typescript,2026-07-19T14:17:37.978Z,653,40,false,true,claude-sonnet-5
+tfischer,Theo Fischer,Business,VS Code,python,2026-06-06T14:17:37.978Z,0,19,false,true,claude-sonnet-5
+yokafor758,Yuki Okafor,Business,VS Code,typescript,2026-07-20T14:17:37.978Z,319,20,true,true,claude-sonnet-5
+anovak759,Aoife Novak,Enterprise,VS Code,java,2026-07-14T14:17:37.978Z,637,35,false,true,claude-sonnet-5
+itanaka,Ivy Tanaka,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,733,45,true,true,gpt-5.6-sol
+ssantos761,Sara Santos,Business,JetBrains,ruby,2026-07-08T14:17:37.978Z,112,29,true,false,claude-sonnet-5
+dmeyer,Dmitri Meyer,Business,VS Code,typescript,2026-07-03T14:17:37.978Z,144,42,true,true,claude-opus-4.6
+ksantos763,Kofi Santos,Business,VS Code,java,2026-05-25T14:17:37.978Z,0,40,true,false,gpt-5.6-sol
+ehaas764,Eli Haas,Business,JetBrains,typescript,2026-07-20T14:17:37.978Z,346,46,false,false,claude-opus-4.6
+znovak765,Zoe Novak,Business,VS Code,go,2026-07-16T14:17:37.978Z,472,19,false,true,claude-opus-4.6
+iokafor766,Ivy Okafor,Business,Visual Studio,typescript,2026-07-04T14:17:37.978Z,138,16,true,true,gpt-5.3-codex
+jiqbal767,Jan Iqbal,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,764,34,true,true,claude-sonnet-5
+mhaugen768,Maya Haugen,Enterprise,JetBrains,java,2026-07-14T14:17:37.978Z,206,46,false,true,claude-sonnet-5
+okaur769,Owen Kaur,Business,VS Code,ruby,2026-07-16T14:17:37.978Z,851,23,false,true,claude-sonnet-5
+mkaur770,Marc Kaur,Business,VS Code,go,2026-07-16T14:17:37.978Z,303,39,false,true,gpt-5.6-sol
+rnguyen771,Rosa Nguyen,Business,JetBrains,typescript,2026-07-18T14:17:37.978Z,271,41,true,true,claude-sonnet-5
+lolsen772,Liam Olsen,Business,,,,0,,,,
+jsantos773,Jan Santos,Enterprise,JetBrains,typescript,2026-07-15T14:17:37.978Z,784,33,true,false,claude-sonnet-5
+dpetrov774,Dmitri Petrov,Enterprise,JetBrains,typescript,2026-06-13T14:17:37.978Z,0,20,true,true,claude-sonnet-5
+sbianchi775,Sara Bianchi,Business,VS Code,java,2026-07-20T14:17:37.978Z,663,32,true,false,claude-sonnet-5
+wsantos776,Wei Santos,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,630,29,true,false,gpt-5.3-codex
+jkim777,Jan Kim,Business,JetBrains,kotlin,2026-06-15T14:17:37.978Z,0,44,true,true,gpt-5.3-codex
+inguyen778,Ivy Nguyen,Enterprise,Visual Studio,python,2026-07-15T14:17:37.978Z,394,31,false,false,claude-sonnet-5
+snovak779,Sara Novak,Business,VS Code,go,2026-07-14T14:17:37.978Z,434,42,false,true,claude-sonnet-5
+llarsen780,Liam Larsen,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,169,37,true,false,claude-sonnet-5
+oiqbal781,Owen Iqbal,Business,JetBrains,rust,2026-07-19T14:17:37.978Z,758,26,true,false,claude-sonnet-5
+aduarte782,Aoife Duarte,Business,Visual Studio,ruby,2026-07-18T14:17:37.978Z,249,20,false,true,claude-opus-4.6
+opetrov783,Omar Petrov,Business,JetBrains,java,2026-07-19T14:17:37.978Z,206,20,true,false,claude-sonnet-5
+tnovak784,Tariq Novak,Enterprise,JetBrains,go,2026-07-20T14:17:37.978Z,639,30,false,true,claude-opus-4.6
+thaugen785,Tariq Haugen,Business,JetBrains,python,2026-07-19T14:17:37.978Z,393,43,false,true,claude-sonnet-5
+lkaur786,Liam Kaur,Business,Neovim,java,2026-07-20T14:17:37.978Z,660,25,true,true,claude-sonnet-5
+lnguyen787,Liam Nguyen,Enterprise,JetBrains,python,2026-07-04T14:17:37.978Z,112,20,true,true,claude-sonnet-5
+lkaur788,Liam Kaur,Business,VS Code,typescript,2026-06-28T14:17:37.978Z,80,17,false,false,claude-sonnet-5
+ofarrell789,Omar Farrell,Business,VS Code,python,2026-07-15T14:17:37.978Z,89,22,true,false,claude-sonnet-5
+osilva790,Omar Silva,Business,Visual Studio,typescript,2026-07-20T14:17:37.978Z,486,16,false,true,gpt-5.6-sol
+nsantos,Nina Santos,Business,VS Code,go,2026-07-17T14:17:37.978Z,348,28,false,true,claude-opus-4.6
+nsorensen792,Nina Sorensen,Business,JetBrains,typescript,2026-07-16T14:17:37.978Z,202,29,false,true,claude-opus-4.6
+dmeyer793,Dmitri Meyer,Business,VS Code,rust,2026-07-16T14:17:37.978Z,502,41,false,false,claude-sonnet-5
+dmeyer794,Dmitri Meyer,Enterprise,VS Code,go,2026-05-27T14:17:37.978Z,0,17,true,true,claude-sonnet-5
+ifischer,Ivy Fischer,Enterprise,,,,0,,,,
+slarsen796,Sara Larsen,Business,VS Code,python,2026-07-16T14:17:37.978Z,503,42,true,true,claude-sonnet-5
+lhaugen797,Lena Haugen,Enterprise,Visual Studio,typescript,2026-07-15T14:17:37.978Z,460,31,true,true,claude-opus-4.6
+miqbal798,Marc Iqbal,Enterprise,VS Code,typescript,2026-07-15T14:17:37.978Z,229,32,false,true,claude-opus-4.6
+mkim799,Maya Kim,Business,VS Code,rust,2026-07-15T14:17:37.978Z,287,44,true,true,gpt-5.3-codex
+rnakamura800,Ruth Nakamura,Business,VS Code,java,2026-05-16T14:17:37.978Z,0,20,false,true,claude-sonnet-5
+dsantos801,Dmitri Santos,Business,JetBrains,typescript,2026-04-26T14:17:37.978Z,0,23,false,true,claude-4.5-haiku
+emoreau802,Eli Moreau,Business,VS Code,go,2026-05-24T14:17:37.978Z,0,29,false,false,claude-sonnet-5
+obianchi803,Owen Bianchi,Business,JetBrains,python,2026-07-19T14:17:37.978Z,664,31,false,true,claude-sonnet-5
+tnakamura804,Tariq Nakamura,Enterprise,VS Code,typescript,2026-06-02T14:17:37.978Z,0,18,false,false,claude-sonnet-5
+tsilva805,Theo Silva,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,720,44,false,true,gpt-5.6-sol
+ysilva806,Yuki Silva,Business,Visual Studio,python,2026-07-05T14:17:37.978Z,30,45,false,false,claude-opus-4.6
+mnakamura807,Maya Nakamura,Business,VS Code,typescript,2026-05-25T14:17:37.978Z,0,27,false,true,claude-sonnet-5
+ksorensen808,Kofi Sorensen,Business,,,,0,,,,
+wkovacs,Wei Kovacs,Enterprise,Visual Studio,typescript,2026-07-18T14:17:37.978Z,223,32,false,true,claude-4.5-haiku
+lhaas810,Lena Haas,Business,VS Code,java,2026-05-07T14:17:37.978Z,0,31,true,false,claude-sonnet-5
+dnguyen811,Dmitri Nguyen,Business,VS Code,typescript,2026-05-23T14:17:37.978Z,0,28,true,true,claude-sonnet-5
+wsorensen812,Wei Sorensen,Business,VS Code,python,2026-07-16T14:17:37.978Z,888,25,true,true,claude-sonnet-5
+jmeyer813,Jan Meyer,Enterprise,Neovim,typescript,2026-06-19T14:17:37.978Z,0,37,false,true,claude-4.5-haiku
+tlarsen,Theo Larsen,Business,VS Code,typescript,2026-07-12T14:17:37.978Z,102,33,false,true,claude-4.5-haiku
+amoreau815,Aoife Moreau,Business,JetBrains,python,2026-07-09T14:17:37.978Z,13,24,true,true,claude-opus-4.6
+lmeyer816,Liam Meyer,Enterprise,VS Code,kotlin,2026-07-16T14:17:37.978Z,543,34,true,true,claude-sonnet-5
+tsilva817,Tariq Silva,Business,VS Code,typescript,2026-05-25T14:17:37.978Z,0,39,false,false,gpt-5.3-codex
+rolsen818,Ruth Olsen,Business,VS Code,rust,2026-07-20T14:17:37.978Z,439,21,true,true,gpt-5.3-codex
+ssorensen,Sara Sorensen,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,39,31,true,true,gpt-5.6-sol
+ssilva820,Sara Silva,Business,VS Code,kotlin,2026-07-16T14:17:37.978Z,135,29,true,true,claude-opus-4.6
+elarsen821,Eli Larsen,Business,VS Code,go,2026-07-20T14:17:37.978Z,231,17,true,true,claude-opus-4.6
+thaugen822,Theo Haugen,Business,,,,0,,,,
+aweber823,Ana Weber,Enterprise,VS Code,rust,2026-07-20T14:17:37.978Z,724,28,false,true,claude-opus-4.6
+phaugen,Priya Haugen,Enterprise,VS Code,go,2026-07-18T14:17:37.978Z,139,18,false,true,claude-sonnet-5
+lnakamura825,Liam Nakamura,Enterprise,VS Code,ruby,2026-07-18T14:17:37.978Z,876,44,false,true,gpt-5.3-codex
+ohaugen826,Owen Haugen,Business,JetBrains,typescript,2026-07-08T14:17:37.978Z,84,24,true,true,gpt-5.3-codex
+rsilva827,Rosa Silva,Business,VS Code,python,2026-07-19T14:17:37.978Z,421,37,true,false,claude-sonnet-5
+ehaas828,Eli Haas,Enterprise,,,,0,,,,
+olarsen829,Owen Larsen,Business,JetBrains,ruby,2026-07-17T14:17:37.978Z,487,31,false,true,claude-opus-4.6
+molsen,Maya Olsen,Business,VS Code,python,2026-07-06T14:17:37.978Z,85,17,false,false,claude-sonnet-5
+lpetrov831,Liam Petrov,Business,JetBrains,python,2026-07-18T14:17:37.978Z,536,46,false,true,claude-sonnet-5
+aokafor832,Ana Okafor,Business,VS Code,go,2026-07-14T14:17:37.978Z,706,25,true,true,claude-opus-4.6
+nweber833,Noah Weber,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,314,22,false,true,claude-opus-4.6
+tkaur,Theo Kaur,Business,VS Code,python,2026-06-01T14:17:37.978Z,0,26,false,true,gpt-5.3-codex
+ysantos835,Yuki Santos,Business,Neovim,rust,2026-06-30T14:17:37.978Z,30,19,false,true,gpt-5.3-codex
+nsantos836,Nina Santos,Business,VS Code,kotlin,2026-07-18T14:17:37.978Z,805,41,true,true,gpt-5.6-sol
+mmeyer837,Marc Meyer,Business,VS Code,go,2026-06-08T14:17:37.978Z,0,34,false,true,claude-sonnet-5
+dmeyer838,Dmitri Meyer,Business,JetBrains,go,2026-07-15T14:17:37.978Z,524,40,false,true,claude-sonnet-5
+atanaka839,Aoife Tanaka,Business,VS Code,java,2026-07-19T14:17:37.978Z,602,22,false,false,claude-sonnet-5
+ptanaka840,Priya Tanaka,Enterprise,Visual Studio,typescript,2026-05-07T14:17:37.978Z,0,39,true,true,gpt-5.3-codex
+thaugen841,Theo Haugen,Business,VS Code,typescript,2026-06-30T14:17:37.978Z,21,38,false,false,gpt-5.6-sol
+llarsen842,Lena Larsen,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,153,39,true,true,claude-sonnet-5
+zfischer,Zoe Fischer,Business,VS Code,python,2026-07-14T14:17:37.978Z,171,20,false,true,claude-sonnet-5
+rsorensen,Ruth Sorensen,Business,JetBrains,csharp,2026-07-14T14:17:37.978Z,651,36,false,true,gpt-5.6-sol
+niqbal845,Nina Iqbal,Business,VS Code,java,2026-07-20T14:17:37.978Z,342,20,true,true,claude-opus-4.6
+kduarte846,Kofi Duarte,Business,VS Code,java,2026-07-20T14:17:37.978Z,624,42,true,true,claude-sonnet-5
+ahaas847,Aoife Haas,Business,JetBrains,go,2026-07-04T14:17:37.978Z,66,19,true,true,claude-sonnet-5
+oduarte848,Owen Duarte,Business,,,,0,,,,
+rmeyer849,Ruth Meyer,Business,VS Code,go,2026-05-20T14:17:37.978Z,0,40,false,false,claude-opus-4.6
+ykaur850,Yuki Kaur,Business,VS Code,go,2026-07-13T14:17:37.978Z,86,36,true,true,claude-sonnet-5
+nweber851,Noah Weber,Business,Visual Studio,typescript,2026-05-22T14:17:37.978Z,0,18,false,false,claude-sonnet-5
+ifischer852,Ivy Fischer,Business,VS Code,typescript,2026-07-08T14:17:37.978Z,84,29,true,true,gpt-5.6-sol
+sfischer853,Sara Fischer,Business,Neovim,rust,2026-07-15T14:17:37.978Z,785,20,true,false,claude-sonnet-5
+dkaur854,Dmitri Kaur,Business,Neovim,python,2026-07-07T14:17:37.978Z,122,27,false,true,gpt-5.3-codex
+jfarrell855,Jan Farrell,Enterprise,Xcode,csharp,2026-05-17T14:17:37.978Z,0,39,false,true,claude-sonnet-5
+lkim856,Lena Kim,Business,JetBrains,csharp,2026-07-20T14:17:37.978Z,517,25,true,true,gpt-5.3-codex
+akovacs857,Ana Kovacs,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,423,33,true,true,claude-sonnet-5
+tfarrell858,Tariq Farrell,Business,VS Code,rust,2026-07-20T14:17:37.978Z,381,39,true,true,gpt-5.6-sol
+okim859,Omar Kim,Business,Neovim,python,2026-06-27T14:17:37.978Z,114,41,false,true,claude-sonnet-5
+ksilva860,Kofi Silva,Business,VS Code,python,2026-07-20T14:17:37.978Z,138,38,true,true,claude-sonnet-5
+yhaugen,Yuki Haugen,Business,VS Code,java,2026-07-18T14:17:37.978Z,181,20,false,true,gpt-5.3-codex
+mweber862,Maya Weber,Business,Xcode,typescript,2026-07-15T14:17:37.978Z,767,37,true,true,claude-sonnet-5
+oiqbal863,Omar Iqbal,Business,Xcode,python,2026-05-28T14:17:37.978Z,0,37,false,true,gpt-5.3-codex
+tnovak864,Theo Novak,Business,JetBrains,java,2026-07-18T14:17:37.978Z,376,20,false,false,gpt-5.6-sol
+rmoreau865,Rosa Moreau,Business,VS Code,java,2026-07-18T14:17:37.978Z,558,18,true,true,claude-opus-4.6
+ikaur866,Ivy Kaur,Business,Visual Studio,typescript,2026-07-20T14:17:37.978Z,813,29,false,true,claude-opus-4.6
+wfischer,Wei Fischer,Business,JetBrains,go,2026-06-17T14:17:37.978Z,0,29,false,true,claude-opus-4.6
+ntanaka868,Noah Tanaka,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,11,20,true,false,gpt-5.3-codex
+mhaas869,Marc Haas,Enterprise,VS Code,csharp,2026-06-03T14:17:37.978Z,0,24,true,true,claude-sonnet-5
+tsantos870,Theo Santos,Business,,,,0,,,,
+aiqbal871,Ana Iqbal,Business,VS Code,go,2026-07-16T14:17:37.978Z,658,23,false,true,claude-sonnet-5
+ohaugen872,Owen Haugen,Business,JetBrains,csharp,2026-05-05T14:17:37.978Z,0,39,false,true,gpt-5.6-sol
+wweber873,Wei Weber,Business,VS Code,csharp,2026-06-14T14:17:37.978Z,0,25,false,false,gpt-5.3-codex
+apetrov874,Aoife Petrov,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,440,18,false,true,claude-sonnet-5
+liqbal875,Lena Iqbal,Business,Visual Studio,typescript,2026-07-14T14:17:37.978Z,375,21,false,true,claude-sonnet-5
+lfarrell876,Liam Farrell,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,553,19,false,true,claude-opus-4.6
+rkovacs877,Rosa Kovacs,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,11,28,false,true,claude-sonnet-5
+ohaas878,Omar Haas,Enterprise,Xcode,python,2026-07-16T14:17:37.978Z,876,20,false,true,gpt-5.3-codex
+lduarte879,Lena Duarte,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,580,26,true,false,claude-sonnet-5
+psorensen880,Priya Sorensen,Business,Visual Studio,python,2026-07-16T14:17:37.978Z,64,32,true,true,claude-sonnet-5
+ookafor881,Omar Okafor,Business,VS Code,python,2026-06-30T14:17:37.978Z,113,25,false,true,gpt-5.6-sol
+zhaas882,Zoe Haas,Business,JetBrains,python,2026-07-09T14:17:37.978Z,66,37,true,true,claude-opus-4.6
+nsorensen883,Nina Sorensen,Business,Xcode,go,2026-07-15T14:17:37.978Z,896,40,true,true,claude-sonnet-5
+lsorensen,Lena Sorensen,Enterprise,VS Code,python,2026-07-16T14:17:37.978Z,512,21,false,true,claude-4.5-haiku
+anovak885,Ana Novak,Business,Visual Studio,csharp,2026-07-19T14:17:37.978Z,727,30,false,true,claude-sonnet-5
+rnguyen886,Rosa Nguyen,Business,Visual Studio,typescript,2026-07-20T14:17:37.978Z,152,37,true,true,gpt-5.3-codex
+rbianchi887,Rosa Bianchi,Business,VS Code,java,2026-07-15T14:17:37.978Z,416,18,false,false,claude-opus-4.6
+lpetrov888,Lena Petrov,Business,JetBrains,python,2026-07-17T14:17:37.978Z,313,19,true,true,claude-opus-4.6
+rnakamura889,Ruth Nakamura,Business,VS Code,typescript,2026-05-12T14:17:37.978Z,0,45,true,true,gpt-5.3-codex
+tnovak890,Tariq Novak,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,621,23,true,true,claude-sonnet-5
+ttanaka891,Tariq Tanaka,Business,JetBrains,typescript,2026-07-03T14:17:37.978Z,83,33,false,true,gpt-5.3-codex
+molsen892,Marc Olsen,Business,Neovim,typescript,2026-07-16T14:17:37.978Z,808,45,true,false,gpt-5.3-codex
+lmeyer893,Liam Meyer,Business,Visual Studio,python,2026-07-17T14:17:37.978Z,236,20,false,false,gpt-5.6-sol
+tolsen894,Tariq Olsen,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,511,25,true,false,gpt-5.6-sol
+mokafor895,Maya Okafor,Business,JetBrains,python,2026-07-16T14:17:37.978Z,63,29,true,true,claude-sonnet-5
+phaugen896,Priya Haugen,Enterprise,VS Code,typescript,2026-07-01T14:17:37.978Z,146,45,false,true,gpt-5.6-sol
+mhaugen897,Maya Haugen,Business,JetBrains,typescript,2026-07-19T14:17:37.978Z,698,20,true,true,claude-sonnet-5
+ohaugen898,Omar Haugen,Business,,,,0,,,,
+wfischer899,Wei Fischer,Business,VS Code,python,2026-07-14T14:17:37.978Z,828,45,true,false,claude-4.5-haiku
+nmeyer900,Nina Meyer,Business,VS Code,python,2026-06-27T14:17:37.978Z,119,37,false,true,claude-sonnet-5
+kolsen901,Kofi Olsen,Business,JetBrains,go,2026-07-14T14:17:37.978Z,529,33,false,true,claude-sonnet-5
+iolsen902,Ivy Olsen,Business,JetBrains,go,2026-07-03T14:17:37.978Z,111,31,false,false,claude-opus-4.6
+nmeyer903,Noah Meyer,Business,VS Code,csharp,2026-07-20T14:17:37.978Z,281,30,false,true,claude-opus-4.6
+spetrov904,Sara Petrov,Business,Xcode,java,2026-07-14T14:17:37.978Z,553,37,false,true,gpt-5.6-sol
+khaas905,Kofi Haas,Business,VS Code,csharp,2026-06-07T14:17:37.978Z,0,34,true,true,claude-sonnet-5
+ipetrov,Ivy Petrov,Business,Neovim,java,2026-07-15T14:17:37.978Z,135,46,false,true,gpt-5.3-codex
+onakamura907,Omar Nakamura,Business,VS Code,java,2026-07-14T14:17:37.978Z,489,32,true,true,claude-opus-4.6
+mweber908,Marc Weber,Enterprise,VS Code,python,2026-07-16T14:17:37.978Z,481,42,true,true,claude-opus-4.6
+lnguyen909,Lena Nguyen,Business,VS Code,ruby,2026-07-01T14:17:37.978Z,61,43,true,true,claude-opus-4.6
+asantos910,Aoife Santos,Business,VS Code,go,2026-07-11T14:17:37.978Z,123,22,false,false,claude-sonnet-5
+thaugen911,Tariq Haugen,Enterprise,VS Code,python,2026-07-16T14:17:37.978Z,140,37,false,true,claude-opus-4.6
+lfarrell912,Lena Farrell,Business,VS Code,csharp,2026-07-18T14:17:37.978Z,413,17,false,true,gpt-5.3-codex
+wsantos913,Wei Santos,Business,JetBrains,typescript,2026-07-17T14:17:37.978Z,770,20,false,true,claude-opus-4.6
+aolsen914,Ana Olsen,Enterprise,Xcode,typescript,2026-06-30T14:17:37.978Z,79,35,false,false,gpt-5.3-codex
+npetrov915,Noah Petrov,Business,JetBrains,csharp,2026-05-15T14:17:37.978Z,0,18,true,false,claude-4.5-haiku
+afischer916,Aoife Fischer,Business,VS Code,go,2026-07-19T14:17:37.978Z,778,26,true,false,claude-sonnet-5
+jbianchi917,Jan Bianchi,Business,VS Code,typescript,2026-07-19T14:17:37.978Z,844,41,true,true,claude-opus-4.6
+enakamura918,Eli Nakamura,Enterprise,VS Code,java,2026-07-15T14:17:37.978Z,833,17,false,true,gpt-5.6-sol
+mkovacs919,Maya Kovacs,Enterprise,VS Code,kotlin,2026-07-19T14:17:37.978Z,236,20,false,true,claude-opus-4.6
+wsilva920,Wei Silva,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,891,30,false,true,claude-sonnet-5
+asilva921,Ana Silva,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,52,43,false,true,claude-sonnet-5
+asilva922,Aoife Silva,Business,VS Code,typescript,2026-07-14T14:17:37.978Z,143,31,true,true,claude-sonnet-5
+oiqbal923,Omar Iqbal,Enterprise,JetBrains,java,2026-07-20T14:17:37.978Z,367,42,false,true,claude-sonnet-5
+tkovacs924,Theo Kovacs,Business,VS Code,csharp,2026-06-02T14:17:37.978Z,0,40,false,true,claude-sonnet-5
+ohaugen925,Owen Haugen,Business,VS Code,csharp,2026-07-14T14:17:37.978Z,536,24,false,true,claude-sonnet-5
+opetrov926,Omar Petrov,Business,JetBrains,ruby,2026-07-12T14:17:37.978Z,39,36,false,true,gpt-5.6-sol
+dokafor927,Dmitri Okafor,Business,,,,0,,,,
+abianchi928,Aoife Bianchi,Business,Visual Studio,python,2026-05-07T14:17:37.978Z,0,42,true,false,claude-opus-4.6
+obianchi929,Owen Bianchi,Business,JetBrains,python,2026-07-16T14:17:37.978Z,701,25,true,true,gpt-5.3-codex
+jhaas930,Jan Haas,Enterprise,Neovim,go,2026-07-17T14:17:37.978Z,514,20,false,true,claude-opus-4.6
+ilarsen931,Ivy Larsen,Business,JetBrains,java,2026-07-20T14:17:37.978Z,413,35,false,true,claude-opus-4.6
+siqbal,Sara Iqbal,Business,VS Code,java,2026-07-14T14:17:37.978Z,435,45,true,false,gpt-5.6-sol
+niqbal933,Nina Iqbal,Business,VS Code,java,2026-06-27T14:17:37.978Z,65,36,true,true,gpt-5.3-codex
+tkovacs934,Tariq Kovacs,Business,,,,0,,,,
+rtanaka935,Rosa Tanaka,Enterprise,VS Code,go,2026-07-08T14:17:37.978Z,52,45,true,false,gpt-5.6-sol
+rnovak936,Rosa Novak,Enterprise,VS Code,typescript,2026-07-19T14:17:37.978Z,197,45,false,true,claude-sonnet-5
+itanaka937,Ivy Tanaka,Business,VS Code,ruby,2026-06-17T14:17:37.978Z,0,23,false,false,claude-sonnet-5
+tkaur938,Tariq Kaur,Business,JetBrains,python,2026-07-20T14:17:37.978Z,314,20,true,true,claude-sonnet-5
+onovak939,Omar Novak,Enterprise,VS Code,java,2026-07-20T14:17:37.978Z,553,46,false,false,claude-sonnet-5
+nhaas940,Noah Haas,Enterprise,JetBrains,ruby,2026-07-17T14:17:37.978Z,691,23,true,true,claude-sonnet-5
+dhaugen941,Dmitri Haugen,Enterprise,Visual Studio,csharp,2026-07-14T14:17:37.978Z,774,17,false,true,claude-opus-4.6
+ssorensen942,Sara Sorensen,Business,JetBrains,typescript,2026-07-19T14:17:37.978Z,552,42,false,false,gpt-5.3-codex
+wduarte943,Wei Duarte,Enterprise,Visual Studio,csharp,2026-07-18T14:17:37.978Z,642,45,true,true,claude-sonnet-5
+sokafor944,Sara Okafor,Business,Visual Studio,typescript,2026-07-14T14:17:37.978Z,587,39,true,true,claude-sonnet-5
+inguyen945,Ivy Nguyen,Enterprise,VS Code,python,2026-07-15T14:17:37.978Z,799,31,false,true,claude-sonnet-5
+kolsen946,Kofi Olsen,Business,VS Code,java,2026-06-25T14:17:37.978Z,98,36,true,true,claude-sonnet-5
+opetrov947,Owen Petrov,Business,VS Code,java,2026-07-08T14:17:37.978Z,29,31,true,true,gpt-5.6-sol
+ameyer948,Ana Meyer,Business,JetBrains,go,2026-07-15T14:17:37.978Z,338,32,false,true,claude-opus-4.6
+kkovacs949,Kofi Kovacs,Business,JetBrains,python,2026-07-16T14:17:37.978Z,158,45,false,true,claude-4.5-haiku
+ohaugen950,Omar Haugen,Business,VS Code,go,2026-07-05T14:17:37.978Z,19,26,false,false,claude-opus-4.6
+anguyen951,Aoife Nguyen,Business,VS Code,python,2026-07-16T14:17:37.978Z,158,44,false,true,claude-sonnet-5
+zkim,Zoe Kim,Business,JetBrains,ruby,2026-07-19T14:17:37.978Z,401,24,false,false,claude-opus-4.6
+okaur953,Owen Kaur,Enterprise,VS Code,go,2026-07-18T14:17:37.978Z,481,36,true,true,claude-sonnet-5
+pbianchi,Priya Bianchi,Business,VS Code,go,2026-07-14T14:17:37.978Z,461,35,true,false,claude-4.5-haiku
+rmoreau955,Ruth Moreau,Business,VS Code,ruby,2026-07-16T14:17:37.978Z,500,31,false,true,gpt-5.3-codex
+lhaugen956,Liam Haugen,Business,,,,0,,,,
+ahaugen957,Aoife Haugen,Business,Xcode,kotlin,2026-07-08T14:17:37.978Z,15,30,true,true,claude-sonnet-5
+esorensen958,Eli Sorensen,Business,Neovim,csharp,2026-07-19T14:17:37.978Z,779,30,false,false,claude-sonnet-5
+enguyen959,Eli Nguyen,Business,VS Code,java,2026-07-18T14:17:37.978Z,309,38,true,true,claude-sonnet-5
+iweber960,Ivy Weber,Business,VS Code,go,2026-07-17T14:17:37.978Z,851,22,false,true,claude-sonnet-5
+anovak961,Aoife Novak,Enterprise,,,,0,,,,
+anovak962,Aoife Novak,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,302,42,false,true,claude-sonnet-5
+tkaur963,Tariq Kaur,Business,JetBrains,go,2026-07-20T14:17:37.978Z,479,45,true,true,claude-sonnet-5
+esorensen964,Eli Sorensen,Business,JetBrains,ruby,2026-05-14T14:17:37.978Z,0,27,false,false,gpt-5.3-codex
+ztanaka965,Zoe Tanaka,Business,VS Code,python,2026-05-06T14:17:37.978Z,0,35,false,true,claude-opus-4.6
+tsorensen,Tariq Sorensen,Business,Visual Studio,csharp,2026-07-17T14:17:37.978Z,479,38,false,true,claude-sonnet-5
+zhaas967,Zoe Haas,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,539,40,false,true,claude-sonnet-5
+ohaugen968,Omar Haugen,Business,VS Code,java,2026-07-18T14:17:37.978Z,177,19,true,true,gpt-5.6-sol
+ebianchi969,Eli Bianchi,Enterprise,,,,0,,,,
+nkim970,Nina Kim,Business,VS Code,python,2026-07-11T14:17:37.978Z,59,35,true,true,claude-opus-4.6
+npetrov971,Nina Petrov,Business,VS Code,typescript,2026-07-15T14:17:37.978Z,227,23,true,false,claude-sonnet-5
+jiqbal972,Jan Iqbal,Business,VS Code,python,2026-06-17T14:17:37.978Z,0,17,true,true,claude-sonnet-5
+pmoreau973,Priya Moreau,Business,VS Code,python,2026-07-16T14:17:37.978Z,724,34,false,true,claude-sonnet-5
+mduarte974,Maya Duarte,Business,JetBrains,java,2026-06-30T14:17:37.978Z,45,43,true,true,claude-opus-4.6
+thaugen975,Tariq Haugen,Business,Xcode,python,2026-06-25T14:17:37.978Z,37,38,true,true,claude-sonnet-5
+ssantos976,Sara Santos,Enterprise,VS Code,typescript,2026-07-18T14:17:37.978Z,679,26,false,false,claude-sonnet-5
+wkim,Wei Kim,Business,JetBrains,typescript,2026-07-15T14:17:37.978Z,273,40,true,true,gpt-5.3-codex
+zolsen978,Zoe Olsen,Business,VS Code,rust,2026-07-12T14:17:37.978Z,117,33,true,true,claude-4.5-haiku
+tnovak979,Tariq Novak,Business,JetBrains,csharp,2026-07-17T14:17:37.978Z,754,45,true,true,claude-opus-4.6
+solsen980,Sara Olsen,Business,JetBrains,python,2026-07-04T14:17:37.978Z,79,37,true,true,claude-sonnet-5
+ykim981,Yuki Kim,Business,,,,0,,,,
+dhaugen982,Dmitri Haugen,Business,JetBrains,rust,2026-07-19T14:17:37.978Z,323,45,true,true,claude-sonnet-5
+zokafor983,Zoe Okafor,Business,VS Code,python,2026-07-15T14:17:37.978Z,115,23,true,false,claude-sonnet-5
+pnakamura,Priya Nakamura,Business,VS Code,typescript,2026-07-16T14:17:37.978Z,172,32,true,true,claude-sonnet-5
+niqbal985,Noah Iqbal,Enterprise,,,,0,,,,
+nbianchi986,Nina Bianchi,Business,Neovim,typescript,2026-06-25T14:17:37.978Z,113,38,false,true,claude-opus-4.6
+tsantos987,Tariq Santos,Business,JetBrains,typescript,2026-07-14T14:17:37.978Z,846,33,false,true,claude-opus-4.6
+ybianchi,Yuki Bianchi,Business,VS Code,python,2026-06-27T14:17:37.978Z,104,21,true,false,claude-opus-4.6
+jlarsen989,Jan Larsen,Business,VS Code,csharp,2026-07-19T14:17:37.978Z,185,40,false,true,claude-opus-4.6
+wsantos990,Wei Santos,Business,JetBrains,typescript,2026-06-29T14:17:37.978Z,17,24,true,true,claude-sonnet-5
+sfischer991,Sara Fischer,Enterprise,Neovim,kotlin,2026-07-19T14:17:37.978Z,674,18,false,true,claude-opus-4.6
+ppetrov992,Priya Petrov,Business,VS Code,java,2026-07-14T14:17:37.978Z,145,21,false,true,claude-sonnet-5
+aduarte993,Aoife Duarte,Business,VS Code,ruby,2026-06-05T14:17:37.978Z,0,45,true,true,gpt-5.3-codex
+nlarsen994,Nina Larsen,Business,Visual Studio,python,2026-07-14T14:17:37.978Z,538,35,false,true,claude-4.5-haiku
+osilva995,Omar Silva,Enterprise,VS Code,kotlin,2026-07-18T14:17:37.978Z,134,21,false,true,claude-sonnet-5
+onovak996,Owen Novak,Business,Visual Studio,java,2026-07-20T14:17:37.978Z,834,29,true,true,claude-4.5-haiku
+lokafor997,Lena Okafor,Business,VS Code,java,2026-07-18T14:17:37.978Z,448,37,false,false,claude-sonnet-5
+afischer998,Aoife Fischer,Business,VS Code,go,2026-07-14T14:17:37.978Z,779,41,false,false,claude-sonnet-5
+ameyer999,Aoife Meyer,Enterprise,VS Code,csharp,2026-05-08T14:17:37.978Z,0,19,true,true,claude-sonnet-5
