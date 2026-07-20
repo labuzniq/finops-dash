@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { PLAN_PRICE, BILLING_MONTH_DAYS, PREMIUM_WINDOW_DAYS, premiumOverage } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -51,8 +52,10 @@ function toCents(dollars: number): number {
  * Derive the daily spend series. GitHub exposes no dollar billing to this org
  * (usage endpoint 404s), so money comes entirely from the cost model:
  *
- *   • License is the current roster × plan price ÷ 30, flat across the window —
- *     we only know today's roster, not each past day's.
+ *   • License is the current roster × plan price ÷ 30. We only know today's
+ *     roster, not each past day's, so license history is append-only: this value
+ *     seeds days new to the series and past days keep what they already recorded
+ *     (see persistSnapshot) rather than being rewritten to today's headcount.
  *   • Premium overage is the modelled 28-day total, distributed across the last
  *     28 report days in proportion to that day's code-generation activity, so
  *     the trend has real shape without inventing dollars outside the window.
@@ -90,39 +93,86 @@ export function deriveSpend(
   });
 }
 
+/** `excluded.<col>` — the value the failed insert would have written. */
+function incoming(col: AnyPgColumn) {
+  return sql`excluded.${sql.identifier(col.name)}`;
+}
+
 /**
- * Replaces the seat table with a fresh snapshot and upserts the daily series.
+ * `coalesce(excluded.<col>, <col>)` — take the incoming value only when it is
+ * non-null, otherwise keep what's already stored. GitHub leaves these metrics
+ * null on live orgs; a CSV import may have enriched them, and a sync must not
+ * blank that back out.
+ */
+function keepIfNull(col: AnyPgColumn) {
+  return sql`coalesce(${incoming(col)}, ${col})`;
+}
+
+/**
+ * Reconciles the seat table with a fresh snapshot and upserts the daily series.
  *
- * Seats are deleted-then-inserted inside a transaction: a refresh represents
- * the org as it is now, so a seat that vanished upstream must vanish here.
+ * Seats are upserted by login inside a transaction, then any login missing from
+ * the snapshot is deleted: a refresh represents the org as it is now, so a seat
+ * that vanished upstream must vanish here. On conflict the GitHub-authoritative
+ * columns (name, plan, lastActivityAt, team) always overwrite, but the nullable
+ * metric columns only overwrite when the incoming value is non-null — so
+ * CSV-imported enrichment survives a sync that reports those metrics as null.
  * The daily tables are upserted, since past days are settled and only the most
- * recent ones move.
+ * recent ones move. License spend is append-only: a day already in spend_daily
+ * keeps its recorded licenseCents, since we only know today's roster and must
+ * not rewrite past headcount — only new days take the current derived value.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
   const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
   const spend = deriveSpend(seats, org);
 
   await db.transaction(async (tx) => {
-    await tx.delete(copilotSeats);
-
     if (seats.length > 0) {
-      await tx.insert(copilotSeats).values(
-        seats.map((seat) => ({
-          login: seat.login,
-          name: seat.name,
-          plan: seat.plan,
-          editor: seat.editor,
-          language: seat.language,
-          lastActivityAt: seat.lastActivityAt,
-          premiumRequests28d: seat.premiumRequests28d,
-          acceptanceRate: seat.acceptanceRate,
-          usedAgent: seat.usedAgent,
-          usedChat: seat.usedChat,
-          topModel: seat.topModel,
-          team: seat.team,
-        })),
-      );
+      await tx
+        .insert(copilotSeats)
+        .values(
+          seats.map((seat) => ({
+            login: seat.login,
+            name: seat.name,
+            plan: seat.plan,
+            editor: seat.editor,
+            language: seat.language,
+            lastActivityAt: seat.lastActivityAt,
+            premiumRequests28d: seat.premiumRequests28d,
+            acceptanceRate: seat.acceptanceRate,
+            usedAgent: seat.usedAgent,
+            usedChat: seat.usedChat,
+            topModel: seat.topModel,
+            team: seat.team,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: copilotSeats.login,
+          set: {
+            name: incoming(copilotSeats.name),
+            plan: incoming(copilotSeats.plan),
+            lastActivityAt: incoming(copilotSeats.lastActivityAt),
+            team: incoming(copilotSeats.team),
+            editor: keepIfNull(copilotSeats.editor),
+            language: keepIfNull(copilotSeats.language),
+            premiumRequests28d: keepIfNull(copilotSeats.premiumRequests28d),
+            acceptanceRate: keepIfNull(copilotSeats.acceptanceRate),
+            usedAgent: keepIfNull(copilotSeats.usedAgent),
+            usedChat: keepIfNull(copilotSeats.usedChat),
+            topModel: keepIfNull(copilotSeats.topModel),
+            syncedAt: new Date(),
+          },
+        });
     }
+
+    // Anything not in this snapshot has vanished upstream — an empty snapshot
+    // clears the table (notInArray of an empty set matches every row).
+    await tx.delete(copilotSeats).where(
+      notInArray(
+        copilotSeats.login,
+        seats.map((seat) => seat.login),
+      ),
+    );
 
     for (const point of spend) {
       await tx
@@ -130,7 +180,8 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         .values(point)
         .onConflictDoUpdate({
           target: spendDaily.date,
-          set: { licenseCents: point.licenseCents, premiumOverageCents: point.premiumOverageCents },
+          // licenseCents is deliberately not updated — see persistSnapshot doc.
+          set: { premiumOverageCents: point.premiumOverageCents },
         });
     }
 
@@ -172,33 +223,31 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         });
     }
 
-    // Breakdown and adoption rows are replaced wholesale like seats — the key
+    // Breakdown and adoption rows are replaced per day, not table-wide — the key
     // set for a day can shrink between refreshes (a model or phase vanishing),
-    // and stale keys would linger under an upsert.
-    await tx.delete(usageBreakdownDaily);
-    if (breakdownDaily.length > 0) {
+    // so each fetched day is fully deleted then reinserted to clear stale keys.
+    // Days the fetch returned nothing for keep their previously stored rows,
+    // so a report outage can't erase history the way a wholesale delete would.
+    const breakdownDates = [...new Set(breakdownDaily.map((row) => row.date))];
+    if (breakdownDates.length > 0) {
+      await tx.delete(usageBreakdownDaily).where(inArray(usageBreakdownDaily.date, breakdownDates));
       await tx.insert(usageBreakdownDaily).values(breakdownDaily);
     }
 
-    await tx.delete(adoptionPhaseDaily);
-    if (adoptionDaily.length > 0) {
+    const adoptionDates = [...new Set(adoptionDaily.map((row) => row.date))];
+    if (adoptionDates.length > 0) {
+      await tx.delete(adoptionPhaseDaily).where(inArray(adoptionPhaseDaily.date, adoptionDates));
       await tx.insert(adoptionPhaseDaily).values(adoptionDaily);
     }
 
-    for (const row of models) {
-      await tx
-        .insert(modelDaily)
-        .values(row)
-        .onConflictDoUpdate({
-          target: [modelDaily.date, modelDaily.model],
-          set: {
-            generations: row.generations,
-            acceptances: row.acceptances,
-            locAdded: row.locAdded,
-            locDeleted: row.locDeleted,
-            syncedAt: new Date(),
-          },
-        });
+    // model_daily gets the same per-day replacement treatment: the set of models
+    // reported for a day can shrink or re-bucket between refreshes, and a stale
+    // (date, model) key would linger under an upsert and double-count in
+    // listModels. Replace only the days this refresh fetched — leave the rest.
+    if (models.length > 0) {
+      const modelDates = [...new Set(models.map((row) => row.date))];
+      await tx.delete(modelDaily).where(inArray(modelDaily.date, modelDates));
+      await tx.insert(modelDaily).values(models);
     }
   });
 }
