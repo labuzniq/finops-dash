@@ -101,8 +101,8 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
       <div className={styles.user}>
         <div className={styles.userAvatar}>EK</div>
         <div>
-          <div className={styles.userName}>Elena K.</div>
-          <div className={styles.userRole}>FinOps admin</div>
+          <div className={styles.userName}>Filip Turek</div>
+          <div className={styles.userRole}>Profesionální řidič</div>
         </div>
       </div>
     </aside>
