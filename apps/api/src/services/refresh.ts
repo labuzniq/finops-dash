@@ -177,16 +177,20 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         });
     }
 
-    // Breakdown and adoption rows are replaced wholesale like seats — the key
+    // Breakdown and adoption rows are replaced per day, not table-wide — the key
     // set for a day can shrink between refreshes (a model or phase vanishing),
-    // and stale keys would linger under an upsert.
-    await tx.delete(usageBreakdownDaily);
-    if (breakdownDaily.length > 0) {
+    // so each fetched day is fully deleted then reinserted to clear stale keys.
+    // Days the fetch returned nothing for keep their previously stored rows,
+    // so a report outage can't erase history the way a wholesale delete would.
+    const breakdownDates = [...new Set(breakdownDaily.map((row) => row.date))];
+    if (breakdownDates.length > 0) {
+      await tx.delete(usageBreakdownDaily).where(inArray(usageBreakdownDaily.date, breakdownDates));
       await tx.insert(usageBreakdownDaily).values(breakdownDaily);
     }
 
-    await tx.delete(adoptionPhaseDaily);
-    if (adoptionDaily.length > 0) {
+    const adoptionDates = [...new Set(adoptionDaily.map((row) => row.date))];
+    if (adoptionDates.length > 0) {
+      await tx.delete(adoptionPhaseDaily).where(inArray(adoptionPhaseDaily.date, adoptionDates));
       await tx.insert(adoptionPhaseDaily).values(adoptionDaily);
     }
 
