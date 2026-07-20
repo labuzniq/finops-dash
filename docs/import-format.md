@@ -1,6 +1,6 @@
 # Manual import format (CSV / JSON / NDJSON)
 
-The **Add data → Upload CSV** and **Manual entry** tabs post to `POST /api/import`,
+The **Add data → Upload CSV** and **Manual entry** tabs post to `POST /api/finops/import`,
 which upserts seat rows by `login`. Use it for seats or fields the GitHub sync can't
 provide — a partner org, an offline export, or a correction.
 
@@ -65,7 +65,7 @@ lsilva,Liam Silva,Business,90,,2026-07-10,JetBrains,python,gpt-5.3-codex
 ## API shape
 
 ```
-POST /api/import
+POST /api/finops/import
 Content-Type: application/json
 
 { "content": "<raw CSV / JSON / NDJSON text>" }

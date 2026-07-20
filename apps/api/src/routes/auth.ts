@@ -6,7 +6,7 @@ import { clearSessionCookie, hasSession, setSessionCookie } from '../auth/sessio
 const loginBody = z.object({ token: z.string() });
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  app.post('/api/auth/login', async (request, reply) => {
+  app.post('/api/finops/auth/login', async (request, reply) => {
     const parsed = loginBody.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Expected { token }' });
@@ -18,14 +18,14 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  app.get('/api/auth/me', async (request, reply) => {
+  app.get('/api/finops/auth/me', async (request, reply) => {
     if (!hasSession(request)) {
       return reply.code(401).send({ authenticated: false });
     }
     return { authenticated: true };
   });
 
-  app.post('/api/auth/logout', async (_request, reply) => {
+  app.post('/api/finops/auth/logout', async (_request, reply) => {
     clearSessionCookie(reply);
     return { ok: true };
   });
