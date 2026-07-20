@@ -1,6 +1,8 @@
-import type { Editor, Plan } from '@dash/shared';
+import type { Editor, Plan, UsageDimension } from '@dash/shared';
 import { GithubApi } from './reports.js';
 import type {
+  AdoptionPhaseDailySnapshot,
+  BreakdownDailySnapshot,
   CopilotClient,
   CopilotSnapshot,
   ModelDailySnapshot,
@@ -36,6 +38,7 @@ interface GithubSeat {
   plan_type?: string | null;
   last_activity_at?: string | null;
   last_activity_editor?: string | null;
+  assigning_team?: { name?: string | null } | null;
 }
 
 interface GithubSeatsPage {
@@ -43,26 +46,56 @@ interface GithubSeatsPage {
   seats: GithubSeat[];
 }
 
-interface IdeTotals {
-  ide: string;
+/** The numeric fields every `totals_by_*` entry may carry. */
+interface RawTotals {
   user_initiated_interaction_count?: number;
-  code_generation_activity_count?: number;
-}
-
-interface LanguageModelTotals {
-  language: string;
-  model: string;
   code_generation_activity_count?: number;
   code_acceptance_activity_count?: number;
   loc_added_sum?: number;
   loc_deleted_sum?: number;
+  loc_suggested_to_add_sum?: number;
+  loc_suggested_to_delete_sum?: number;
 }
 
-interface ModelFeatureTotals {
+interface IdeTotals extends RawTotals {
+  ide: string;
+}
+
+interface FeatureTotals extends RawTotals {
+  feature: string;
+}
+
+interface LanguageModelTotals extends RawTotals {
+  language: string;
+  model: string;
+}
+
+interface ModelFeatureTotals extends RawTotals {
   model: string;
   feature?: string;
-  user_initiated_interaction_count?: number;
-  code_generation_activity_count?: number;
+}
+
+interface AdoptionPhaseTotals {
+  phase?: string;
+  phase_number?: number;
+  total_engaged_users?: number;
+  avg_user_initiated_interactions?: number;
+  avg_code_generation_activities?: number;
+  avg_code_acceptance_activities?: number;
+  avg_loc_added?: number;
+  avg_loc_deleted?: number;
+  avg_pull_requests_created?: number;
+  avg_pull_requests_reviewed?: number;
+}
+
+interface PullRequestTotals {
+  total_created?: number;
+  total_merged?: number;
+  total_created_by_copilot?: number;
+  total_merged_created_by_copilot?: number;
+  total_reviewed_by_copilot?: number;
+  total_copilot_suggestions?: number;
+  total_copilot_applied_suggestions?: number;
 }
 
 interface UserReportRow {
@@ -82,12 +115,28 @@ interface OrgReportRow {
   daily_active_users?: number;
   weekly_active_users?: number;
   monthly_active_users?: number;
+  monthly_active_chat_users?: number;
+  monthly_active_agent_users?: number;
+  daily_active_copilot_code_review_users?: number;
+  weekly_active_copilot_code_review_users?: number;
+  monthly_active_copilot_code_review_users?: number;
+  monthly_passive_copilot_code_review_users?: number;
+  daily_active_copilot_cloud_agent_users?: number;
+  weekly_active_copilot_cloud_agent_users?: number;
+  monthly_active_copilot_cloud_agent_users?: number;
   user_initiated_interaction_count?: number;
   code_generation_activity_count?: number;
   code_acceptance_activity_count?: number;
   loc_added_sum?: number;
   loc_deleted_sum?: number;
+  loc_suggested_to_add_sum?: number;
+  loc_suggested_to_delete_sum?: number;
+  totals_by_ide?: IdeTotals[];
+  totals_by_feature?: FeatureTotals[];
   totals_by_language_model?: LanguageModelTotals[];
+  totals_by_model_feature?: ModelFeatureTotals[];
+  totals_by_ai_adoption_phase?: AdoptionPhaseTotals[];
+  pull_requests?: PullRequestTotals;
 }
 
 // --- Field parsing ----------------------------------------------------------
@@ -143,6 +192,71 @@ function dominant<T>(items: T[], label: (t: T) => string, weight: (t: T) => numb
 function acceptanceRate(generations: number, acceptances: number): number | null {
   if (generations <= 0) return null;
   return Math.round((acceptances / generations) * 100);
+}
+
+/**
+ * Merge `totals_by_*` entries into `into`, keyed by `keyOf`, summing every
+ * numeric field. Non-numeric fields (version objects) keep the first value.
+ */
+function mergeTotals<T extends object>(
+  into: Map<string, T>,
+  items: readonly T[] | undefined,
+  keyOf: (item: T) => string,
+): void {
+  for (const item of items ?? []) {
+    const key = keyOf(item);
+    const existing = into.get(key);
+    if (!existing) {
+      into.set(key, { ...item });
+      continue;
+    }
+    const target = existing as Record<string, unknown>;
+    for (const [field, value] of Object.entries(item)) {
+      if (typeof value === 'number' && typeof target[field] === 'number') {
+        target[field] = (target[field] as number) + value;
+      }
+    }
+  }
+}
+
+/**
+ * The users report has one row per user per *day*. Collapse a user's rows into
+ * one 28-day aggregate before deriving metrics — keying by login alone would
+ * keep only the last day seen.
+ */
+function aggregateUserRows(rows: readonly UserReportRow[]): UserReportRow {
+  const first = rows[0]!;
+  const ide = new Map<string, IdeTotals>();
+  const langModel = new Map<string, LanguageModelTotals>();
+  const modelFeature = new Map<string, ModelFeatureTotals>();
+  let credits: number | undefined;
+  let usedAgent: boolean | undefined;
+  let usedChat: boolean | undefined;
+  let generations = 0;
+  let acceptances = 0;
+
+  for (const row of rows) {
+    if (row.ai_credits_used != null) credits = (credits ?? 0) + row.ai_credits_used;
+    if (row.used_agent != null) usedAgent = (usedAgent ?? false) || row.used_agent;
+    if (row.used_chat != null) usedChat = (usedChat ?? false) || row.used_chat;
+    generations += row.code_generation_activity_count ?? 0;
+    acceptances += row.code_acceptance_activity_count ?? 0;
+    mergeTotals(ide, row.totals_by_ide, (item) => item.ide);
+    mergeTotals(langModel, row.totals_by_language_model, (item) => `${item.language}\n${item.model}`);
+    mergeTotals(modelFeature, row.totals_by_model_feature, (item) => `${item.model}\n${item.feature ?? ''}`);
+  }
+
+  return {
+    user_login: first.user_login,
+    ...(credits !== undefined ? { ai_credits_used: credits } : {}),
+    ...(usedAgent !== undefined ? { used_agent: usedAgent } : {}),
+    ...(usedChat !== undefined ? { used_chat: usedChat } : {}),
+    code_generation_activity_count: generations,
+    code_acceptance_activity_count: acceptances,
+    totals_by_ide: [...ide.values()],
+    totals_by_language_model: [...langModel.values()],
+    totals_by_model_feature: [...modelFeature.values()],
+  };
 }
 
 /** Derive the per-user metrics half of a seat from its users-report row. */
@@ -246,9 +360,9 @@ export class GithubCopilotClient implements CopilotClient {
       return metrics ? { ...seat, ...metrics } : seat;
     });
 
-    const { orgDaily, modelDaily } = await this.fetchDailyHistory(historyDays);
+    const daily = await this.fetchDailyHistory(historyDays);
 
-    return { seats, orgDaily, modelDaily };
+    return { seats, ...daily };
   }
 
   /** Paginate the seats endpoint into roster rows (no metrics yet). */
@@ -274,6 +388,7 @@ export class GithubCopilotClient implements CopilotClient {
           usedAgent: null,
           usedChat: null,
           topModel: null,
+          team: seat.assigning_team?.name?.trim() || null,
         });
       }
 
@@ -289,9 +404,16 @@ export class GithubCopilotClient implements CopilotClient {
     const map = new Map<string, Partial<SeatSnapshot>>();
     if (!report) return map;
 
+    const byLogin = new Map<string, UserReportRow[]>();
     for (const row of report.rows) {
       if (!row.user_login) continue;
-      map.set(row.user_login, metricsFromUserRow(row));
+      const rows = byLogin.get(row.user_login);
+      if (rows) rows.push(row);
+      else byLogin.set(row.user_login, [row]);
+    }
+
+    for (const [login, rows] of byLogin) {
+      map.set(login, metricsFromUserRow(aggregateUserRows(rows)));
     }
     return map;
   }
@@ -303,7 +425,7 @@ export class GithubCopilotClient implements CopilotClient {
    */
   private async fetchDailyHistory(
     historyDays: number,
-  ): Promise<{ orgDaily: OrgDailySnapshot[]; modelDaily: ModelDailySnapshot[] }> {
+  ): Promise<Omit<CopilotSnapshot, 'seats'>> {
     const anchor = await this.newestReportDay();
     const days = Array.from({ length: historyDays }, (_, i) => addDays(anchor, -i));
 
@@ -316,16 +438,27 @@ export class GithubCopilotClient implements CopilotClient {
 
     const orgDaily: OrgDailySnapshot[] = [];
     const modelDaily: ModelDailySnapshot[] = [];
+    const breakdownDaily: BreakdownDailySnapshot[] = [];
+    const adoptionDaily: AdoptionPhaseDailySnapshot[] = [];
 
     for (const row of reports) {
       if (!row) continue;
       orgDaily.push(orgSnapshot(row));
       modelDaily.push(...modelSnapshots(row));
+      breakdownDaily.push(...breakdownSnapshots(row));
+      adoptionDaily.push(...adoptionSnapshots(row));
     }
 
     orgDaily.sort((a, b) => a.date.localeCompare(b.date));
     modelDaily.sort((a, b) => a.date.localeCompare(b.date) || a.model.localeCompare(b.model));
-    return { orgDaily, modelDaily };
+    breakdownDaily.sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        a.dimension.localeCompare(b.dimension) ||
+        a.key.localeCompare(b.key),
+    );
+    adoptionDaily.sort((a, b) => a.date.localeCompare(b.date) || a.phaseNumber - b.phaseNumber);
+    return { orgDaily, modelDaily, breakdownDaily, adoptionDaily };
   }
 
   /** The newest day that has a report — from the 28-day window's end, else yesterday. */
@@ -337,6 +470,7 @@ export class GithubCopilotClient implements CopilotClient {
 }
 
 function orgSnapshot(row: OrgReportRow): OrgDailySnapshot {
+  const pr = row.pull_requests;
   return {
     date: row.day,
     dailyActiveUsers: row.daily_active_users ?? 0,
@@ -347,7 +481,102 @@ function orgSnapshot(row: OrgReportRow): OrgDailySnapshot {
     acceptances: row.code_acceptance_activity_count ?? 0,
     locAdded: row.loc_added_sum ?? 0,
     locDeleted: row.loc_deleted_sum ?? 0,
+    locSuggestedAdd: row.loc_suggested_to_add_sum ?? 0,
+    locSuggestedDelete: row.loc_suggested_to_delete_sum ?? 0,
+    chatMau: row.monthly_active_chat_users ?? 0,
+    agentMau: row.monthly_active_agent_users ?? 0,
+    codeReviewDau: row.daily_active_copilot_code_review_users ?? 0,
+    codeReviewWau: row.weekly_active_copilot_code_review_users ?? 0,
+    codeReviewMau: row.monthly_active_copilot_code_review_users ?? 0,
+    codeReviewPassiveMau: row.monthly_passive_copilot_code_review_users ?? 0,
+    cloudAgentDau: row.daily_active_copilot_cloud_agent_users ?? 0,
+    cloudAgentWau: row.weekly_active_copilot_cloud_agent_users ?? 0,
+    cloudAgentMau: row.monthly_active_copilot_cloud_agent_users ?? 0,
+    prCreated: pr?.total_created ?? 0,
+    prMerged: pr?.total_merged ?? 0,
+    prCreatedByCopilot: pr?.total_created_by_copilot ?? 0,
+    prMergedCreatedByCopilot: pr?.total_merged_created_by_copilot ?? 0,
+    prReviewedByCopilot: pr?.total_reviewed_by_copilot ?? 0,
+    prCopilotSuggestions: pr?.total_copilot_suggestions ?? 0,
+    prCopilotAppliedSuggestions: pr?.total_copilot_applied_suggestions ?? 0,
   };
+}
+
+/** Fold one `totals_by_*` entry into the day's per-(dimension, key) accumulator. */
+function accumulateBreakdown(
+  into: Map<string, BreakdownDailySnapshot>,
+  date: string,
+  dimension: UsageDimension,
+  key: string | undefined,
+  item: RawTotals,
+): void {
+  if (!key || NOISE_LABELS.has(key.toLowerCase())) return;
+  const mapKey = `${dimension}\n${key}`;
+  const acc =
+    into.get(mapKey) ??
+    {
+      date,
+      dimension,
+      key,
+      interactions: 0,
+      generations: 0,
+      acceptances: 0,
+      locAdded: 0,
+      locDeleted: 0,
+      locSuggestedAdd: 0,
+      locSuggestedDelete: 0,
+    };
+  acc.interactions += item.user_initiated_interaction_count ?? 0;
+  acc.generations += item.code_generation_activity_count ?? 0;
+  acc.acceptances += item.code_acceptance_activity_count ?? 0;
+  acc.locAdded += item.loc_added_sum ?? 0;
+  acc.locDeleted += item.loc_deleted_sum ?? 0;
+  acc.locSuggestedAdd += item.loc_suggested_to_add_sum ?? 0;
+  acc.locSuggestedDelete += item.loc_suggested_to_delete_sum ?? 0;
+  into.set(mapKey, acc);
+}
+
+/**
+ * One day's breakdown rows across all four dimensions. The composite arrays
+ * collapse to their primary axis: language from language×model, model from
+ * model×feature (which also covers chat-only usage).
+ */
+function breakdownSnapshots(row: OrgReportRow): BreakdownDailySnapshot[] {
+  const map = new Map<string, BreakdownDailySnapshot>();
+  for (const item of row.totals_by_ide ?? []) {
+    accumulateBreakdown(map, row.day, 'ide', item.ide, item);
+  }
+  for (const item of row.totals_by_feature ?? []) {
+    accumulateBreakdown(map, row.day, 'feature', item.feature, item);
+  }
+  for (const item of row.totals_by_language_model ?? []) {
+    accumulateBreakdown(map, row.day, 'language', item.language, item);
+  }
+  for (const item of row.totals_by_model_feature ?? []) {
+    accumulateBreakdown(map, row.day, 'model', item.model, item);
+  }
+  return [...map.values()];
+}
+
+function adoptionSnapshots(row: OrgReportRow): AdoptionPhaseDailySnapshot[] {
+  const phases: AdoptionPhaseDailySnapshot[] = [];
+  for (const item of row.totals_by_ai_adoption_phase ?? []) {
+    if (item.phase_number == null) continue;
+    phases.push({
+      date: row.day,
+      phaseNumber: item.phase_number,
+      phase: item.phase ?? `Phase ${item.phase_number}`,
+      engagedUsers: item.total_engaged_users ?? 0,
+      avgInteractions: item.avg_user_initiated_interactions ?? 0,
+      avgGenerations: item.avg_code_generation_activities ?? 0,
+      avgAcceptances: item.avg_code_acceptance_activities ?? 0,
+      avgLocAdded: item.avg_loc_added ?? 0,
+      avgLocDeleted: item.avg_loc_deleted ?? 0,
+      avgPrCreated: item.avg_pull_requests_created ?? 0,
+      avgPrReviewed: item.avg_pull_requests_reviewed ?? 0,
+    });
+  }
+  return phases;
 }
 
 /** Collapse a day's totals_by_language_model into one row per model. */
