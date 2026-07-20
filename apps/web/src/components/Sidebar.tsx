@@ -99,7 +99,7 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
       <div className={styles.spacer} />
 
       <div className={styles.user}>
-        <div className={styles.userAvatar}>EK</div>
+        <div className={styles.userAvatar}>FT</div>
         <div>
           <div className={styles.userName}>Filip Turek</div>
           <div className={styles.userRole}>Profesionální řidič</div>
