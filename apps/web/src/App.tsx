@@ -11,6 +11,7 @@ import {
   useRefresh,
   useSeats,
   useSpend,
+  useUsage,
 } from './hooks/useCopilotData.js';
 import { useDashboardMetrics } from './hooks/useDashboardMetrics.js';
 import { useTheme } from './hooks/useTheme.js';
@@ -27,6 +28,7 @@ import { TopBar } from './components/TopBar.js';
 import { UserTable } from './components/UserTable.js';
 import { UtilizationDonut } from './components/UtilizationDonut.js';
 import { WastedSpendPanel } from './components/WastedSpendPanel.js';
+import { UsageSections } from './components/usage/UsageSections.js';
 import { AddDataModal } from './components/modal/AddDataModal.js';
 import styles from './App.module.css';
 
@@ -44,6 +46,7 @@ export function App() {
 
   const seatsQuery = useSeats();
   const spendQuery = useSpend();
+  const usageQuery = useUsage();
   const modelsQuery = useModels(state.range);
   const latestJobQuery = useLatestRefreshJob();
   const { refresh, isRunning, error: refreshError } = useRefresh();
@@ -186,6 +189,12 @@ export function App() {
                 onReviewIdleSeats={() => dispatch({ type: 'toggleSort', key: 'lastActive' })}
               />
             </div>
+
+            <UsageSections
+              usage={usageQuery.data}
+              seats={metrics.filteredSeats}
+              range={state.range}
+            />
           </>
         )}
       </main>

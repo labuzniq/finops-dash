@@ -25,6 +25,18 @@
   /* Light grounds need the deeper accent step to hold contrast. */
   --accent: var(--acc);
 
+  /* Categorical series ramp for multi-line charts. --chart-1 tracks the
+     accent; the rest are Nocturne-weight hues spaced for adjacency. */
+  --chart-1: var(--accent);
+  --chart-2: #2c7a7b;
+  --chart-3: #b7791f;
+  --chart-4: #b83280;
+  --chart-5: #3182ce;
+  --chart-6: #1a7f4e;
+  --chart-7: #c05621;
+  --chart-8: #4a5568;
+  --chart-other: var(--faint);
+
   font-variant-numeric: tabular-nums;
 }
 
@@ -42,6 +54,14 @@
   --shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 
   --accent: var(--acc-hi);
+
+  --chart-2: #4cc4b8;
+  --chart-3: #d69e2e;
+  --chart-4: #ed64a6;
+  --chart-5: #63b3ed;
+  --chart-6: #3fae76;
+  --chart-7: #ed8936;
+  --chart-8: #a0aec0;
 }
 
 /* Accent pairs: `--acc` for light grounds, `--acc-hi` for dark. */

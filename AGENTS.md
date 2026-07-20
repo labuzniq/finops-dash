@@ -109,8 +109,9 @@ the pixel. Match the handoff rather than improvising.
   with `pnpm dev:web`.
 - **`COPILOT_SOURCE=github` refuses to boot without `GITHUB_TOKEN` + `GITHUB_ORG`** (`env.ts` refine).
   The token needs `manage_billing:copilot`.
-- **`apps/api/src/copilot/github.ts` has never been run against a live org** — it is written against the
-  documented API shapes only.
+- **`apps/api/src/copilot/github.ts` is validated against a live org** (2026-07): seats, users-28-day
+  and organization-1-day reports all parse. The users report is per-user-per-*day* — aggregate rows per
+  login before deriving metrics.
 - **Edit `db/schema.ts`, then run `pnpm db:generate`** to regenerate SQL migrations. The API also migrates
   on boot, so `pnpm db:migrate` is only needed standalone.
 - **Strip `"public".` qualifiers from generated migration SQL.** `drizzle-kit generate` hardcodes

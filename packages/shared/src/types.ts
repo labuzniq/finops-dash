@@ -53,6 +53,8 @@ export interface CopilotSeat {
   usedChat: boolean | null;
   /** Most-used model for this user in the window (e.g. `claude-sonnet-5`); null if none. */
   topModel: string | null;
+  /** Name of the team the seat was assigned through; null when assigned directly. */
+  team: string | null;
 }
 
 /** One day of an org-level aggregate, from the `organization-1-day` report. */
@@ -67,6 +69,73 @@ export interface OrgDailyPoint {
   acceptances: number;
   locAdded: number;
   locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+  /** Users who used chat in the trailing month (`monthly_active_chat_users`). */
+  chatMau: number;
+  /** Users who used agent mode in the trailing month (`monthly_active_agent_users`). */
+  agentMau: number;
+  codeReviewDau: number;
+  codeReviewWau: number;
+  codeReviewMau: number;
+  /** Passively reviewed (Copilot reviewed their PR without an explicit ask), trailing month. */
+  codeReviewPassiveMau: number;
+  cloudAgentDau: number;
+  cloudAgentWau: number;
+  cloudAgentMau: number;
+  prCreated: number;
+  prMerged: number;
+  prCreatedByCopilot: number;
+  prMergedCreatedByCopilot: number;
+  prReviewedByCopilot: number;
+  prCopilotSuggestions: number;
+  prCopilotAppliedSuggestions: number;
+}
+
+export const USAGE_DIMENSIONS = ['ide', 'language', 'feature', 'model'] as const;
+export type UsageDimension = (typeof USAGE_DIMENSIONS)[number];
+
+/**
+ * One day of one category's activity within a breakdown dimension, from the
+ * daily org report's `totals_by_*` arrays. `key` is free-form and lowercase as
+ * GitHub emits it (`vscode`, `python`, `chat_panel_agent_mode`, model ids).
+ */
+export interface BreakdownPoint {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  dimension: UsageDimension;
+  key: string;
+  interactions: number;
+  generations: number;
+  acceptances: number;
+  locAdded: number;
+  locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+}
+
+/** One day of one AI-adoption phase, from `totals_by_ai_adoption_phase`. */
+export interface AdoptionPhasePoint {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  phaseNumber: number;
+  /** GitHub's display label, e.g. `Phase 1`. */
+  phase: string;
+  engagedUsers: number;
+  avgInteractions: number;
+  avgGenerations: number;
+  avgAcceptances: number;
+  avgLocAdded: number;
+  avgLocDeleted: number;
+  avgPrCreated: number;
+  avgPrReviewed: number;
+}
+
+/** Everything `/api/usage` returns — full stored history, sliced client-side. */
+export interface UsageHistory {
+  orgDaily: OrgDailyPoint[];
+  breakdowns: BreakdownPoint[];
+  adoption: AdoptionPhasePoint[];
 }
 
 /** One day of per-model activity, from a daily report's `totals_by_language_model`. */

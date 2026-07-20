@@ -3,7 +3,15 @@ import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import { PLAN_PRICE, BILLING_MONTH_DAYS, PREMIUM_WINDOW_DAYS, premiumOverage } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
-import { copilotSeats, modelDaily, orgDaily, refreshJobs, spendDaily } from '../db/schema.js';
+import {
+  adoptionPhaseDaily,
+  copilotSeats,
+  modelDaily,
+  orgDaily,
+  refreshJobs,
+  spendDaily,
+  usageBreakdownDaily,
+} from '../db/schema.js';
 import type { RefreshJobRow, SpendInsert } from '../db/schema.js';
 import { createCopilotClient } from '../copilot/index.js';
 import type { CopilotSnapshot, SeatSnapshot } from '../copilot/index.js';
@@ -91,7 +99,7 @@ export function deriveSpend(
  * recent ones move.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
-  const { seats, orgDaily: org, modelDaily: models } = snapshot;
+  const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
   const spend = deriveSpend(seats, org);
 
   await db.transaction(async (tx) => {
@@ -111,6 +119,7 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
           usedAgent: seat.usedAgent,
           usedChat: seat.usedChat,
           topModel: seat.topModel,
+          team: seat.team,
         })),
       );
     }
@@ -140,9 +149,40 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
             acceptances: day.acceptances,
             locAdded: day.locAdded,
             locDeleted: day.locDeleted,
+            locSuggestedAdd: day.locSuggestedAdd,
+            locSuggestedDelete: day.locSuggestedDelete,
+            chatMau: day.chatMau,
+            agentMau: day.agentMau,
+            codeReviewDau: day.codeReviewDau,
+            codeReviewWau: day.codeReviewWau,
+            codeReviewMau: day.codeReviewMau,
+            codeReviewPassiveMau: day.codeReviewPassiveMau,
+            cloudAgentDau: day.cloudAgentDau,
+            cloudAgentWau: day.cloudAgentWau,
+            cloudAgentMau: day.cloudAgentMau,
+            prCreated: day.prCreated,
+            prMerged: day.prMerged,
+            prCreatedByCopilot: day.prCreatedByCopilot,
+            prMergedCreatedByCopilot: day.prMergedCreatedByCopilot,
+            prReviewedByCopilot: day.prReviewedByCopilot,
+            prCopilotSuggestions: day.prCopilotSuggestions,
+            prCopilotAppliedSuggestions: day.prCopilotAppliedSuggestions,
             syncedAt: new Date(),
           },
         });
+    }
+
+    // Breakdown and adoption rows are replaced wholesale like seats — the key
+    // set for a day can shrink between refreshes (a model or phase vanishing),
+    // and stale keys would linger under an upsert.
+    await tx.delete(usageBreakdownDaily);
+    if (breakdownDaily.length > 0) {
+      await tx.insert(usageBreakdownDaily).values(breakdownDaily);
+    }
+
+    await tx.delete(adoptionPhaseDaily);
+    if (adoptionDaily.length > 0) {
+      await tx.insert(adoptionPhaseDaily).values(adoptionDaily);
     }
 
     for (const row of models) {

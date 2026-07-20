@@ -1,0 +1,106 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.subtitle {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 60%;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.plot {
+  position: relative;
+  height: 250px;
+  margin-top: 14px;
+}
+
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  color: var(--muted);
+  border: 1px dashed var(--border2);
+  border-radius: 8px;
+}
+
+.gridLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed var(--border2);
+}
+
+.gridLabel {
+  position: absolute;
+  right: 0;
+  top: -15px;
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+/* preserveAspectRatio="none" + non-scaling strokes: the path maths is fixed
+   at 900×240 and stretches to the card's width without distorting strokes. */
+.svg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  width: 100%;
+  height: 240px;
+  display: block;
+  overflow: visible;
+}
+
+.line {
+  fill: none;
+  stroke-width: 1.75;
+}
+
+.xLabels {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.xLabel {
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--faint);
+}

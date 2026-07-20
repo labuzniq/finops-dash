@@ -1,4 +1,4 @@
-import type { Editor, Plan } from '@dash/shared';
+import type { Editor, Plan, UsageDimension } from '@dash/shared';
 
 /**
  * A seat as a source reports it — the roster row (seats endpoint) already
@@ -18,6 +18,8 @@ export interface SeatSnapshot {
   usedAgent: boolean | null;
   usedChat: boolean | null;
   topModel: string | null;
+  /** Name of the assigning team (seats endpoint); null when assigned directly. */
+  team: string | null;
 }
 
 /** One day of org aggregate, from the `organization-1-day` report. */
@@ -32,6 +34,58 @@ export interface OrgDailySnapshot {
   acceptances: number;
   locAdded: number;
   locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+  chatMau: number;
+  agentMau: number;
+  codeReviewDau: number;
+  codeReviewWau: number;
+  codeReviewMau: number;
+  codeReviewPassiveMau: number;
+  cloudAgentDau: number;
+  cloudAgentWau: number;
+  cloudAgentMau: number;
+  prCreated: number;
+  prMerged: number;
+  prCreatedByCopilot: number;
+  prMergedCreatedByCopilot: number;
+  prReviewedByCopilot: number;
+  prCopilotSuggestions: number;
+  prCopilotAppliedSuggestions: number;
+}
+
+/**
+ * One day of one category's activity for a breakdown dimension, from the
+ * daily report's `totals_by_*` arrays (composites collapsed to one key).
+ */
+export interface BreakdownDailySnapshot {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  dimension: UsageDimension;
+  key: string;
+  interactions: number;
+  generations: number;
+  acceptances: number;
+  locAdded: number;
+  locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+}
+
+/** One day of one AI-adoption phase, from `totals_by_ai_adoption_phase`. */
+export interface AdoptionPhaseDailySnapshot {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  phaseNumber: number;
+  phase: string;
+  engagedUsers: number;
+  avgInteractions: number;
+  avgGenerations: number;
+  avgAcceptances: number;
+  avgLocAdded: number;
+  avgLocDeleted: number;
+  avgPrCreated: number;
+  avgPrReviewed: number;
 }
 
 /** One day of per-model activity, summed across languages. */
@@ -50,6 +104,8 @@ export interface CopilotSnapshot {
   seats: SeatSnapshot[];
   orgDaily: OrgDailySnapshot[];
   modelDaily: ModelDailySnapshot[];
+  breakdownDaily: BreakdownDailySnapshot[];
+  adoptionDaily: AdoptionPhaseDailySnapshot[];
 }
 
 /**
