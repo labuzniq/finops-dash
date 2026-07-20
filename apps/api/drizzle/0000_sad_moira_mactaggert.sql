@@ -1,5 +1,5 @@
-CREATE TYPE "public"."plan" AS ENUM('Business', 'Enterprise');--> statement-breakpoint
-CREATE TYPE "public"."refresh_status" AS ENUM('pending', 'running', 'succeeded', 'failed');--> statement-breakpoint
+CREATE TYPE "plan" AS ENUM('Business', 'Enterprise');--> statement-breakpoint
+CREATE TYPE "refresh_status" AS ENUM('pending', 'running', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TABLE "copilot_seats" (
 	"login" varchar(100) PRIMARY KEY NOT NULL,
 	"name" varchar(200) NOT NULL,

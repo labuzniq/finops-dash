@@ -23,7 +23,8 @@ curl -X POST http://localhost:4000/api/import \
 ```
 
 **Daily series** have no import endpoint; load them straight into Postgres — the
-headers match the column names:
+headers match the column names. If you run the API with a non-default `DB_SCHEMA`,
+prefix each table name with it (e.g. `\copy myschema.org_daily(...)`):
 
 ```bash
 psql "$DATABASE_URL" \

@@ -113,4 +113,8 @@ the pixel. Match the handoff rather than improvising.
   documented API shapes only.
 - **Edit `db/schema.ts`, then run `pnpm db:generate`** to regenerate SQL migrations. The API also migrates
   on boot, so `pnpm db:migrate` is only needed standalone.
+- **Strip `"public".` qualifiers from generated migration SQL.** `drizzle-kit generate` hardcodes
+  `"public"."<enum>"` on `CREATE TYPE`/`ALTER TYPE`, but the whole dataset lives in the schema named by
+  the `DB_SCHEMA` env var (applied as connection `search_path`) — a baked-in `public` would pin new
+  enums to the wrong schema.
 - **`graphify-out/` is a generated knowledge graph**, not source. Ignore it unless working with `/graphify`.
