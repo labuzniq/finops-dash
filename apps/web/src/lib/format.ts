@@ -1,3 +1,5 @@
+import type { DateRange } from '@dash/shared';
+
 /** Display formatting. Every user-facing string in the dashboard comes from here. */
 
 /** The placeholder for a value GitHub does not expose per-user. */
@@ -41,6 +43,18 @@ export function lastActiveLabel(days: number | null): string {
 
 export function dateLabel(date: Date): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/** ISO `2026-06-03` → "Jun 3", parsed as local midnight so it can't slip a day. */
+export function isoDateLabel(iso: string): string {
+  const [year, month, day] = iso.split('-');
+  return dateLabel(new Date(Number(year), Number(month) - 1, Number(day)));
+}
+
+/** The selected range in card subtitles: "last 28d" or "Jun 3 – Jul 1". */
+export function rangeLabel(range: DateRange): string {
+  if (range.kind === 'preset') return `last ${range.days}d`;
+  return `${isoDateLabel(range.from)} – ${isoDateLabel(range.to)}`;
 }
 
 /** "2h ago" / "just now" — for the sync note. */

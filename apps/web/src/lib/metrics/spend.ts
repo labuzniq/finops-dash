@@ -1,4 +1,5 @@
-import type { SpendPoint } from '@dash/shared';
+import { rangeDayCount } from '@dash/shared';
+import type { DateRange, SpendPoint } from '@dash/shared';
 
 /**
  * Spend derivations over the selected range.
@@ -53,6 +54,47 @@ export function sliceRange(
   return series.slice(Math.max(0, series.length - rangeDays)).map((point) => scale(point, ratio));
 }
 
+/** The points between two inclusive ISO dates, scaled like `sliceRange`. */
+export function sliceDates(
+  series: readonly SpendPoint[],
+  from: string,
+  to: string,
+  ratio: number,
+): ScaledSpendPoint[] {
+  return series
+    .filter((point) => point.date >= from && point.date <= to)
+    .map((point) => scale(point, ratio));
+}
+
+/** ISO date shifted by `days` (negative shifts backwards), in UTC. */
+function shiftIso(iso: string, days: number): string {
+  const [year, month, day] = iso.split('-');
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + days))
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * The preceding equal-length window, or null when the series doesn't reach
+ * back far enough to contain all of it.
+ */
+function previousWindow(
+  series: readonly SpendPoint[],
+  range: DateRange,
+  ratio: number,
+): ScaledSpendPoint[] | null {
+  if (range.kind === 'preset') {
+    if (range.days * 2 > series.length) return null;
+    return sliceRange(series.slice(0, series.length - range.days), range.days, ratio);
+  }
+
+  const days = rangeDayCount(range);
+  const previousFrom = shiftIso(range.from, -days);
+  const first = series[0];
+  if (first === undefined || first.date > previousFrom) return null;
+  return sliceDates(series, previousFrom, shiftIso(range.from, -1), ratio);
+}
+
 /**
  * Percent change vs the preceding window.
  *
@@ -60,15 +102,12 @@ export function sliceRange(
  * fall back to comparing the window's own first half against its second.
  */
 function deltaPercent(
-  series: readonly SpendPoint[],
+  previous: readonly ScaledSpendPoint[] | null,
   window: readonly ScaledSpendPoint[],
-  rangeDays: number,
-  ratio: number,
 ): number {
   const current = sumTotal(window);
 
-  if (rangeDays * 2 <= series.length) {
-    const previous = sliceRange(series.slice(0, series.length - rangeDays), rangeDays, ratio);
+  if (previous !== null) {
     const previousTotal = sumTotal(previous);
     return previousTotal > 0 ? ((current - previousTotal) / previousTotal) * 100 : 0;
   }
@@ -81,16 +120,19 @@ function deltaPercent(
 
 export function summariseSpend(
   series: readonly SpendPoint[],
-  rangeDays: number,
+  range: DateRange,
   ratio: number,
 ): SpendSummary {
-  const points = sliceRange(series, rangeDays, ratio);
+  const points =
+    range.kind === 'preset'
+      ? sliceRange(series, range.days, ratio)
+      : sliceDates(series, range.from, range.to, ratio);
 
   return {
     points,
     total: sumTotal(points),
     license: points.reduce((sum, point) => sum + point.license, 0),
     premiumOverage: points.reduce((sum, point) => sum + point.premiumOverage, 0),
-    deltaPercent: deltaPercent(series, points, rangeDays, ratio),
+    deltaPercent: deltaPercent(previousWindow(series, range, ratio), points),
   };
 }

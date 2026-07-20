@@ -1,5 +1,5 @@
 import { TELEMETRY_METRICS } from '@dash/shared';
-import type { TelemetryRollupRow } from '@dash/shared';
+import type { DateRange, TelemetryRollupRow } from '@dash/shared';
 import { ALL } from './filter.js';
 import type { ScaledSpendPoint } from './spend.js';
 
@@ -92,6 +92,19 @@ function isoDaysAgo(days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Every ISO date from `from` to `to` inclusive — the chart's zero-fill spine. */
+function isoDatesBetween(from: string, to: string): string[] {
+  const [year, month, day] = from.split('-');
+  const cursor = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  const dates: string[] = [];
+  for (let iso = from; iso <= to; ) {
+    dates.push(iso);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    iso = cursor.toISOString().slice(0, 10);
+  }
+  return dates;
+}
+
 /** `2026-07-16` as a *local* midnight, so axis labels can't slip a day. */
 function parseIsoDate(iso: string): Date {
   const [year, month, day] = iso.split('-');
@@ -169,11 +182,12 @@ function topModel(modelTokens: ReadonlyMap<string, number>): string | null {
 
 export function deriveTelemetry(
   rows: readonly TelemetryRollupRow[],
-  rangeDays: number,
+  range: DateRange,
   filters: TelemetryFilters,
 ): TelemetrySummary {
-  const startIso = isoDaysAgo(rangeDays - 1);
-  const inRange = rows.filter((row) => row.date >= startIso);
+  const startIso = range.kind === 'preset' ? isoDaysAgo(range.days - 1) : range.from;
+  const endIso = range.kind === 'preset' ? isoDaysAgo(0) : range.to;
+  const inRange = rows.filter((row) => row.date >= startIso && row.date <= endIso);
 
   const userSet = new Set<string>();
   const modelSet = new Set<string>();
@@ -235,23 +249,17 @@ export function deriveTelemetry(
     byUser.set(user, acc);
   }
 
-  const points: ScaledSpendPoint[] = [];
-  for (let daysBack = rangeDays - 1; daysBack >= 0; daysBack -= 1) {
-    const iso = isoDaysAgo(daysBack);
-    const cost = costByDate.get(iso) ?? 0;
-    points.push({ date: parseIsoDate(iso), license: cost, premiumOverage: 0, total: cost });
-  }
+  const spine = isoDatesBetween(startIso, endIso);
 
-  const dailyTokens: DailyTokenPoint[] = [];
-  for (let daysBack = rangeDays - 1; daysBack >= 0; daysBack -= 1) {
-    const iso = isoDaysAgo(daysBack);
+  const points: ScaledSpendPoint[] = spine.map((iso) => {
+    const cost = costByDate.get(iso) ?? 0;
+    return { date: parseIsoDate(iso), license: cost, premiumOverage: 0, total: cost };
+  });
+
+  const dailyTokens: DailyTokenPoint[] = spine.map((iso) => {
     const day = tokensByDate.get(iso) ?? { input: 0, output: 0, cache: 0 };
-    dailyTokens.push({
-      date: parseIsoDate(iso),
-      ...day,
-      total: day.input + day.output + day.cache,
-    });
-  }
+    return { date: parseIsoDate(iso), ...day, total: day.input + day.output + day.cache };
+  });
 
   const users = [...byUser.values()]
     .map(({ modelTokens, ...row }) => ({ ...row, topModel: topModel(modelTokens) }))

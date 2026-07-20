@@ -1,8 +1,9 @@
 import { useMemo, useReducer, useState } from 'react';
-import { RANGE_DAYS } from '@dash/shared';
+import { RANGE_DAYS, rangeDayCount } from '@dash/shared';
 import type { RangeDays } from '@dash/shared';
 import { cx } from './lib/cx.js';
 import { downloadSeatsCsv } from './lib/exportCsv.js';
+import { rangeLabel } from './lib/format.js';
 import {
   useImport,
   useLatestRefreshJob,
@@ -62,6 +63,21 @@ export function App() {
     return options.length > 0 ? options : [RANGE_DAYS[0]];
   }, [spendQuery.data]);
 
+  // The custom picker can only reach dates the fetched series covers; before
+  // data lands, fall back to the 90 days the series request asks for.
+  const seriesBounds = useMemo(() => {
+    const series = spendQuery.data;
+    const first = series?.[0];
+    const last = series?.[series.length - 1];
+    if (first !== undefined && last !== undefined) return { min: first.date, max: last.date };
+
+    const today = new Date();
+    const earliest = new Date(today.getTime() - 89 * 86_400_000);
+    return { min: earliest.toISOString().slice(0, 10), max: today.toISOString().slice(0, 10) };
+  }, [spendQuery.data]);
+
+  const rangeDays = rangeDayCount(state.range);
+
   const languages = useMemo(() => seatLanguages(seatsQuery.data ?? EMPTY_SEATS), [seatsQuery.data]);
 
   const isLoading = seatsQuery.isPending || spendQuery.isPending;
@@ -84,12 +100,14 @@ export function App() {
           isDark={isDark}
           onToggleTheme={toggle}
           onAddData={() => dispatch({ type: 'openModal' })}
-          onExportCsv={() => downloadSeatsCsv(metrics.filteredSeats, state.range)}
+          onExportCsv={() => downloadSeatsCsv(metrics.filteredSeats, rangeDays)}
         />
 
         <FilterBar
           range={state.range}
           availableRanges={availableRanges}
+          minDate={seriesBounds.min}
+          maxDate={seriesBounds.max}
           editor={state.editor}
           language={state.language}
           languages={languages}
@@ -112,7 +130,7 @@ export function App() {
 
         {!loadError && !isLoading && (
           <>
-            <KpiRow metrics={metrics} range={state.range} />
+            <KpiRow metrics={metrics} rangeDays={rangeDays} />
 
             <div className={styles.split}>
               <SpendTrendChart
@@ -148,14 +166,14 @@ export function App() {
                 {state.tableView === 'users' ? (
                   <UserTable
                     page={metrics.page}
-                    range={state.range}
+                    rangeDays={rangeDays}
                     sortKey={state.sortKey}
                     sortDirection={state.sortDirection}
                     onSort={(key) => dispatch({ type: 'toggleSort', key })}
                     onPageChange={(page) => dispatch({ type: 'setPage', page })}
                   />
                 ) : (
-                  <ModelTable models={modelsQuery.data ?? EMPTY_MODELS} range={state.range} />
+                  <ModelTable models={modelsQuery.data ?? EMPTY_MODELS} rangeLabel={rangeLabel(state.range)} />
                 )}
               </div>
 

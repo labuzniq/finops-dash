@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import type { CopilotSeat, ImportResult, ModelUsage, RefreshJob, SpendPoint } from '@dash/shared';
+import type { CopilotSeat, DateRange, ImportResult, ModelUsage, RefreshJob, SpendPoint } from '@dash/shared';
 import {
   fetchLatestRefreshJob,
   fetchModels,
@@ -40,10 +40,11 @@ export function useSpend() {
 }
 
 /** Per-model activity over the selected range — backs the per-model view. */
-export function useModels(days: number) {
+export function useModels(range: DateRange) {
+  const key = range.kind === 'preset' ? `${range.days}d` : `${range.from}_${range.to}`;
   return useQuery<ModelUsage[]>({
-    queryKey: ['models', days],
-    queryFn: () => fetchModels(days),
+    queryKey: ['models', key],
+    queryFn: () => fetchModels(range),
   });
 }
 

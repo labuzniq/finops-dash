@@ -1,4 +1,4 @@
-import { asc, gte } from 'drizzle-orm';
+import { and, asc, gte, lte } from 'drizzle-orm';
 import { EDITORS } from '@dash/shared';
 import type { CopilotSeat, Editor, ModelUsage, SpendPoint } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -78,15 +78,20 @@ export async function listSpend(days: number): Promise<SpendPoint[]> {
   return rows.map(toSpendPoint);
 }
 
+/** "Last N days" tail, or an explicit inclusive calendar window. */
+export type ModelWindow = { days: number } | { from: string; to: string };
+
 /**
- * Per-model activity aggregated over the last `days` days, busiest first.
+ * Per-model activity aggregated over the window, busiest first.
  * Backs the per-model view.
  */
-export async function listModels(days: number): Promise<ModelUsage[]> {
-  const rows = await db
-    .select()
-    .from(modelDaily)
-    .where(gte(modelDaily.date, earliestDate(days)));
+export async function listModels(window: ModelWindow): Promise<ModelUsage[]> {
+  const where =
+    'days' in window
+      ? gte(modelDaily.date, earliestDate(window.days))
+      : and(gte(modelDaily.date, window.from), lte(modelDaily.date, window.to));
+
+  const rows = await db.select().from(modelDaily).where(where);
 
   const byModel = new Map<string, ModelUsage>();
   for (const row of rows as ModelDailyRow[]) {

@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import type { RangeDays } from '@dash/shared';
 import { count, percent, usd } from '../lib/format.js';
 import { cx } from '../lib/cx.js';
 import type { DashboardMetrics } from '../hooks/useDashboardMetrics.js';
@@ -25,16 +24,17 @@ function KpiCard({ kicker, value, valueClassName, children }: KpiCardProps) {
 
 interface KpiRowProps {
   metrics: DashboardMetrics;
-  range: RangeDays;
+  /** Day count of the selected range — presets directly, custom ranges inclusive. */
+  rangeDays: number;
 }
 
-export function KpiRow({ metrics, range }: KpiRowProps) {
+export function KpiRow({ metrics, rangeDays }: KpiRowProps) {
   const { deltaPercent } = metrics.spend;
   const isUp = deltaPercent >= 0;
 
   return (
     <div className={styles.row}>
-      <KpiCard kicker={`TOTAL SPEND · ${range}d`} value={usd(metrics.spend.total)}>
+      <KpiCard kicker={`TOTAL SPEND · ${rangeDays}d`} value={usd(metrics.spend.total)}>
         <div className={cx(styles.sub, styles.subDelta, isUp ? styles.negative : styles.positive)}>
           {isUp ? '↑ +' : '↓ '}
           {deltaPercent.toFixed(1)}% vs prev period
