@@ -51,8 +51,10 @@ function toCents(dollars: number): number {
  * Derive the daily spend series. GitHub exposes no dollar billing to this org
  * (usage endpoint 404s), so money comes entirely from the cost model:
  *
- *   • License is the current roster × plan price ÷ 30, flat across the window —
- *     we only know today's roster, not each past day's.
+ *   • License is the current roster × plan price ÷ 30. We only know today's
+ *     roster, not each past day's, so license history is append-only: this value
+ *     seeds days new to the series and past days keep what they already recorded
+ *     (see persistSnapshot) rather than being rewritten to today's headcount.
  *   • Premium overage is the modelled 28-day total, distributed across the last
  *     28 report days in proportion to that day's code-generation activity, so
  *     the trend has real shape without inventing dollars outside the window.
@@ -96,7 +98,9 @@ export function deriveSpend(
  * Seats are deleted-then-inserted inside a transaction: a refresh represents
  * the org as it is now, so a seat that vanished upstream must vanish here.
  * The daily tables are upserted, since past days are settled and only the most
- * recent ones move.
+ * recent ones move. License spend is append-only: a day already in spend_daily
+ * keeps its recorded licenseCents, since we only know today's roster and must
+ * not rewrite past headcount — only new days take the current derived value.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
   const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
@@ -130,7 +134,8 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         .values(point)
         .onConflictDoUpdate({
           target: spendDaily.date,
-          set: { licenseCents: point.licenseCents, premiumOverageCents: point.premiumOverageCents },
+          // licenseCents is deliberately not updated — see persistSnapshot doc.
+          set: { premiumOverageCents: point.premiumOverageCents },
         });
     }
 
