@@ -1,12 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import type { CopilotSeat, DateRange, ImportResult, ModelUsage, RefreshJob, SpendPoint } from '@dash/shared';
+import type {
+  CopilotSeat,
+  DateRange,
+  ImportResult,
+  ModelUsage,
+  RefreshJob,
+  SpendPoint,
+  UsageHistory,
+} from '@dash/shared';
 import {
   fetchLatestRefreshJob,
   fetchModels,
   fetchRefreshJob,
   fetchSeats,
   fetchSpend,
+  fetchUsage,
   importData,
   startRefresh,
 } from '../api/client.js';
@@ -39,6 +48,14 @@ export function useSpend() {
   });
 }
 
+/** Full usage history (org days, breakdowns, adoption) — sliced client-side. */
+export function useUsage() {
+  return useQuery<UsageHistory>({
+    queryKey: ['usage', SERIES_DAYS],
+    queryFn: () => fetchUsage(SERIES_DAYS),
+  });
+}
+
 /** Per-model activity over the selected range — backs the per-model view. */
 export function useModels(range: DateRange) {
   const key = range.kind === 'preset' ? `${range.days}d` : `${range.from}_${range.to}`;
@@ -65,6 +82,7 @@ export function useImport(): UseImport {
       void queryClient.invalidateQueries({ queryKey: ['seats'] });
       void queryClient.invalidateQueries({ queryKey: ['spend'] });
       void queryClient.invalidateQueries({ queryKey: ['models'] });
+      void queryClient.invalidateQueries({ queryKey: ['usage'] });
     },
   });
 
@@ -117,6 +135,7 @@ export function useRefresh(): UseRefresh {
       void queryClient.invalidateQueries({ queryKey: ['seats'] });
       void queryClient.invalidateQueries({ queryKey: ['spend'] });
       void queryClient.invalidateQueries({ queryKey: ['models'] });
+      void queryClient.invalidateQueries({ queryKey: ['usage'] });
     }
     void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest'] });
   }, [job, queryClient]);

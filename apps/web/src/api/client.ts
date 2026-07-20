@@ -6,6 +6,7 @@ import type {
   RefreshJob,
   SpendPoint,
   TelemetryRollupRow,
+  UsageHistory,
 } from '@dash/shared';
 
 /** Vite proxies /api to the backend in dev; same-origin in production. */
@@ -66,6 +67,12 @@ export async function fetchSeats(): Promise<CopilotSeat[]> {
 export async function fetchSpend(days: number): Promise<SpendPoint[]> {
   const { spend } = await request<{ spend: SpendPoint[] }>(`/spend?days=${days}`);
   return spend;
+}
+
+/** Org usage history — daily aggregates, breakdowns, adoption phases. */
+export async function fetchUsage(days: number): Promise<UsageHistory> {
+  const { usage } = await request<{ usage: UsageHistory }>(`/usage?days=${days}`);
+  return usage;
 }
 
 export async function fetchModels(range: DateRange): Promise<ModelUsage[]> {
