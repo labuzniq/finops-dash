@@ -12,6 +12,7 @@ import type { TelemetryUserRow } from '../../lib/metrics/telemetry.js';
 import { buildTokenChartGeometry } from '../../lib/metrics/tokenChart.js';
 import { useTelemetryRollup } from '../../hooks/useTelemetry.js';
 import { Card } from '../Card.js';
+import { ChartHoverLayer } from '../ChartHoverLayer.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import { TokenLeaderboard } from './TokenLeaderboard.js';
 import { TokenUsageChart } from './TokenUsageChart.js';
@@ -52,6 +53,7 @@ function CostChart({ chart }: { chart: ChartGeometry }) {
           <path className={styles.area} d={chart.areaPath} />
           <path className={styles.line} d={chart.linePath} vectorEffect="non-scaling-stroke" />
         </svg>
+        <ChartHoverLayer points={chart.hoverPoints} />
         <div className={styles.xLabels}>
           {chart.xLabels.map((label, index) => (
             // Dates can repeat across a short range, so pair them with position.
@@ -108,7 +110,11 @@ export function ClaudeCodePage() {
     () => deriveTelemetry(rollupQuery.data ?? EMPTY_ROWS, range, { user, model }),
     [rollupQuery.data, range, user, model],
   );
-  const chart = useMemo(() => buildChartGeometry(summary.points), [summary.points]);
+  const chart = useMemo(
+    // Telemetry cost points carry no premium series, and daily API cost needs cents.
+    () => buildChartGeometry(summary.points, { totalLabel: 'Cost', premiumLabel: null, decimals: 2 }),
+    [summary.points],
+  );
   const tokenCharts = useMemo(
     () => ({
       total: buildTokenChartGeometry(summary.dailyTokens, 'total'),

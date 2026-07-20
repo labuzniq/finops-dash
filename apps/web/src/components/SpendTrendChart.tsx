@@ -2,6 +2,7 @@ import { count, usd } from '../lib/format.js';
 import { CHART_VIEWBOX } from '../lib/metrics/chart.js';
 import type { ChartGeometry } from '../lib/metrics/chart.js';
 import { Card } from './Card.js';
+import { ChartHoverLayer } from './ChartHoverLayer.js';
 import styles from './SpendTrendChart.module.css';
 
 interface SpendTrendChartProps {
@@ -50,6 +51,8 @@ export function SpendTrendChart({
             vectorEffect="non-scaling-stroke"
           />
         </svg>
+
+        <ChartHoverLayer points={chart.hoverPoints} />
 
         <div className={styles.xLabels}>
           {chart.xLabels.map((label, index) => (

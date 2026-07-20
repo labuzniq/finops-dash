@@ -1,5 +1,6 @@
-import { compactCount, dateLabel } from '../format.js';
+import { compactCount, count, dateLabel } from '../format.js';
 import type { GridLine } from './chart.js';
+import type { ChartHoverPoint } from './hover.js';
 import type { DailyTokenPoint } from './telemetry.js';
 
 /**
@@ -24,11 +25,19 @@ const X_LABEL_COUNT = 5;
 
 export type TokenSeries = 'total' | 'input' | 'output' | 'cache';
 
+const SERIES_LABEL: Record<TokenSeries, string> = {
+  total: 'Total tokens',
+  input: 'Input tokens',
+  output: 'Output tokens',
+  cache: 'Cache tokens',
+};
+
 export interface TokenChartGeometry {
   areaPath: string;
   linePath: string;
   gridLines: GridLine[];
   xLabels: string[];
+  hoverPoints: ChartHoverPoint[];
 }
 
 const EMPTY_GEOMETRY: TokenChartGeometry = {
@@ -36,6 +45,7 @@ const EMPTY_GEOMETRY: TokenChartGeometry = {
   linePath: '',
   gridLines: [],
   xLabels: [],
+  hoverPoints: [],
 };
 
 export function buildTokenChartGeometry(
@@ -66,6 +76,18 @@ export function buildTokenChartGeometry(
       const point = points[index];
       return point ? dateLabel(point.date) : '';
     }),
+    hoverPoints: points.map((point, index) => ({
+      xPercent: (x(index) / VIEWBOX_WIDTH) * 100,
+      dateLabel: dateLabel(point.date),
+      series: [
+        {
+          label: SERIES_LABEL[series],
+          value: count(point[series]),
+          color: 'var(--accent)',
+          yPercent: (y(point[series]) / VIEWBOX_HEIGHT) * 100,
+        },
+      ],
+    })),
   };
 }
 

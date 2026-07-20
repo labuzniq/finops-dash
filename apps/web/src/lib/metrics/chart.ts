@@ -1,4 +1,5 @@
-import { dateLabel, usdCompact } from '../format.js';
+import { dateLabel, usd, usdCompact } from '../format.js';
+import type { ChartHoverPoint } from './hover.js';
 import type { ScaledSpendPoint } from './spend.js';
 
 /**
@@ -34,6 +35,7 @@ export interface ChartGeometry {
   premiumPath: string;
   gridLines: GridLine[];
   xLabels: string[];
+  hoverPoints: ChartHoverPoint[];
 }
 
 const EMPTY_GEOMETRY: ChartGeometry = {
@@ -42,6 +44,20 @@ const EMPTY_GEOMETRY: ChartGeometry = {
   premiumPath: '',
   gridLines: [],
   xLabels: [],
+  hoverPoints: [],
+};
+
+export interface ChartHoverOptions {
+  totalLabel: string;
+  /** null drops the premium series from the readout — for charts that don't draw it. */
+  premiumLabel: string | null;
+  /** Cents on the values — daily API cost needs them, seat spend doesn't. */
+  decimals?: number;
+}
+
+const SPEND_HOVER: ChartHoverOptions = {
+  totalLabel: 'Total spend',
+  premiumLabel: 'Premium overage',
 };
 
 function polyline(points: readonly ScaledSpendPoint[], value: (p: ScaledSpendPoint) => number, x: (i: number) => number, y: (v: number) => number): string {
@@ -49,7 +65,10 @@ function polyline(points: readonly ScaledSpendPoint[], value: (p: ScaledSpendPoi
   return `M${steps.join(' L')}`;
 }
 
-export function buildChartGeometry(points: readonly ScaledSpendPoint[]): ChartGeometry {
+export function buildChartGeometry(
+  points: readonly ScaledSpendPoint[],
+  hover: ChartHoverOptions = SPEND_HOVER,
+): ChartGeometry {
   // A single point has no line to draw and would divide by zero below.
   if (points.length < 2) return EMPTY_GEOMETRY;
 
@@ -74,6 +93,28 @@ export function buildChartGeometry(points: readonly ScaledSpendPoint[]): ChartGe
       const point = points[index];
       return point ? dateLabel(point.date) : '';
     }),
+    hoverPoints: points.map((point, index) => ({
+      xPercent: (x(index) / VIEWBOX_WIDTH) * 100,
+      dateLabel: dateLabel(point.date),
+      series: [
+        {
+          label: hover.totalLabel,
+          value: usd(point.total, hover.decimals ?? 0),
+          color: 'var(--accent)',
+          yPercent: (y(point.total) / VIEWBOX_HEIGHT) * 100,
+        },
+        ...(hover.premiumLabel === null
+          ? []
+          : [
+              {
+                label: hover.premiumLabel,
+                value: usd(point.premiumOverage, hover.decimals ?? 0),
+                color: 'var(--faint)',
+                yPercent: (y(point.premiumOverage) / VIEWBOX_HEIGHT) * 100,
+              },
+            ]),
+      ],
+    })),
   };
 }
 
