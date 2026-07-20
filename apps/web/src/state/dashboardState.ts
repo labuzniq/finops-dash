@@ -21,6 +21,12 @@ export interface DashboardState {
   page: number;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
+  /**
+   * Selected metric per merged usage chart, keyed by section
+   * (`orgDailyActivity`, `orgLoc`, `ide`, `language`, `feature`, `model`).
+   * Sparse — a missing key means the chart's first variant.
+   */
+  usageMetric: Record<string, string>;
   modalOpen: boolean;
   modalTab: ModalTab;
 }
@@ -34,6 +40,7 @@ export const initialDashboardState: DashboardState = {
   sortDirection: -1,
   page: 0,
   tableView: 'users',
+  usageMetric: {},
   modalOpen: false,
   modalTab: 'sources',
 };
@@ -46,6 +53,7 @@ export type DashboardAction =
   | { type: 'toggleSort'; key: SortKey }
   | { type: 'setPage'; page: number }
   | { type: 'setTableView'; view: TableView }
+  | { type: 'setUsageMetric'; section: string; metric: string }
   | { type: 'openModal' }
   | { type: 'closeModal' }
   | { type: 'setModalTab'; tab: ModalTab };
@@ -73,6 +81,11 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
       return { ...state, page: action.page };
     case 'setTableView':
       return { ...state, tableView: action.view };
+    case 'setUsageMetric':
+      return {
+        ...state,
+        usageMetric: { ...state.usageMetric, [action.section]: action.metric },
+      };
     case 'openModal':
       return { ...state, modalOpen: true };
     case 'closeModal':

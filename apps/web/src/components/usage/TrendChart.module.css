@@ -16,6 +16,40 @@
   color: var(--muted);
 }
 
+.headerRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 60%;
+}
+
+/* Same segmented-control treatment as the page's table view toggle. */
+.toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--border2);
+}
+
+.segment {
+  border: 0;
+  background: transparent;
+  padding: 3px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segmentActive {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;
@@ -23,7 +57,6 @@
   gap: 6px 14px;
   font-size: 11.5px;
   color: var(--muted);
-  max-width: 60%;
 }
 
 .legendItem {
