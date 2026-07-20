@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { RANGE_DAYS } from '@dash/shared';
-import type { RangeDays } from '@dash/shared';
+import { RANGE_DAYS, rangeDayCount } from '@dash/shared';
+import type { DateRange } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import { compactCount, count, EMPTY, lastActiveLabel, usd } from '../../lib/format.js';
+import { compactCount, count, EMPTY, lastActiveLabel, rangeLabel, usd } from '../../lib/format.js';
 import { buildChartGeometry, CHART_VIEWBOX } from '../../lib/metrics/chart.js';
 import type { ChartGeometry } from '../../lib/metrics/chart.js';
 import { ALL } from '../../lib/metrics/filter.js';
@@ -12,6 +12,7 @@ import type { TelemetryUserRow } from '../../lib/metrics/telemetry.js';
 import { buildTokenChartGeometry } from '../../lib/metrics/tokenChart.js';
 import { useTelemetryRollup } from '../../hooks/useTelemetry.js';
 import { Card } from '../Card.js';
+import { DateRangePicker } from '../DateRangePicker.js';
 import { TokenLeaderboard } from './TokenLeaderboard.js';
 import { TokenUsageChart } from './TokenUsageChart.js';
 import styles from './ClaudeCodePage.module.css';
@@ -92,9 +93,14 @@ function UserRow({ row, hasPrData }: { row: TelemetryUserRow; hasPrData: boolean
 }
 
 export function ClaudeCodePage() {
-  const [range, setRange] = useState<RangeDays>(RANGE_DAYS[0]);
+  const [range, setRange] = useState<DateRange>({ kind: 'preset', days: RANGE_DAYS[0] });
   const [user, setUser] = useState<string>(ALL);
   const [model, setModel] = useState<string>(ALL);
+
+  // The rollup fetch reaches 90 days back; the picker is clamped to match.
+  const maxIso = new Date().toISOString().slice(0, 10);
+  const minIso = new Date(Date.now() - 89 * MS_PER_DAY).toISOString().slice(0, 10);
+  const rangeDays = rangeDayCount(range);
 
   const rollupQuery = useTelemetryRollup();
 
@@ -124,17 +130,26 @@ export function ClaudeCodePage() {
 
       <div className={styles.filterBar}>
         <div className={styles.segmented} role="group" aria-label="Date range">
-          {RANGE_DAYS.map((days) => (
-            <button
-              key={days}
-              type="button"
-              className={cx(styles.segment, days === range && styles.segmentActive)}
-              aria-pressed={days === range}
-              onClick={() => setRange(days)}
-            >
-              {days}d
-            </button>
-          ))}
+          {RANGE_DAYS.map((days) => {
+            const active = range.kind === 'preset' && days === range.days;
+            return (
+              <button
+                key={days}
+                type="button"
+                className={cx(styles.segment, active && styles.segmentActive)}
+                aria-pressed={active}
+                onClick={() => setRange({ kind: 'preset', days })}
+              >
+                {days}d
+              </button>
+            );
+          })}
+          <DateRangePicker
+            range={range}
+            min={minIso}
+            max={maxIso}
+            onApply={(from, to) => setRange({ kind: 'custom', from, to })}
+          />
         </div>
 
         <select
@@ -192,7 +207,7 @@ export function ClaudeCodePage() {
       {!rollupQuery.error && !rollupQuery.isPending && hasAnyData && (
         <>
           <div className={styles.kpiRow}>
-            <KpiCard kicker={`TOTAL COST · ${range}d`} value={usd(summary.totalCostUsd, 2)}>
+            <KpiCard kicker={`TOTAL COST · ${rangeDays}d`} value={usd(summary.totalCostUsd, 2)}>
               API-equivalent spend reported by clients
             </KpiCard>
             <KpiCard kicker="TOKENS" value={compactCount(summary.totalTokens)}>
@@ -208,7 +223,7 @@ export function ClaudeCodePage() {
 
           <div className={styles.kpiRowOutput}>
             <KpiCard
-              kicker={`LINES OF CODE · ${range}d`}
+              kicker={`LINES OF CODE · ${rangeDays}d`}
               value={
                 summary.totals.linesAdded === null && summary.totals.linesRemoved === null ? (
                   EMPTY
@@ -223,13 +238,13 @@ export function ClaudeCodePage() {
               added / removed by Claude Code
             </KpiCard>
             <KpiCard
-              kicker={`COMMITS · ${range}d`}
+              kicker={`COMMITS · ${rangeDays}d`}
               value={summary.totals.commits === null ? EMPTY : count(Math.round(summary.totals.commits))}
             >
               commits created via Claude Code
             </KpiCard>
             <KpiCard
-              kicker={`PULL REQUESTS · ${range}d`}
+              kicker={`PULL REQUESTS · ${rangeDays}d`}
               value={summary.totals.pullRequests === null ? EMPTY : count(Math.round(summary.totals.pullRequests))}
             >
               PRs opened via Claude Code
@@ -252,7 +267,7 @@ export function ClaudeCodePage() {
           <Card padded={false} className={styles.tableCard}>
             <div className={styles.tableHeader}>
               <div className={styles.tableTitle}>Per-user usage</div>
-              <div className={styles.tableSub}>cost, tokens and activity · last {range}d</div>
+              <div className={styles.tableSub}>cost, tokens and activity · {rangeLabel(range)}</div>
             </div>
 
             <div className={cx(styles.columns, styles.headerStrip)}>

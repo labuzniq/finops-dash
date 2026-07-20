@@ -1,5 +1,6 @@
 import type {
   CopilotSeat,
+  DateRange,
   ImportResult,
   ModelUsage,
   RefreshJob,
@@ -67,8 +68,10 @@ export async function fetchSpend(days: number): Promise<SpendPoint[]> {
   return spend;
 }
 
-export async function fetchModels(days: number): Promise<ModelUsage[]> {
-  const { models } = await request<{ models: ModelUsage[] }>(`/models?days=${days}`);
+export async function fetchModels(range: DateRange): Promise<ModelUsage[]> {
+  const query =
+    range.kind === 'preset' ? `days=${range.days}` : `from=${range.from}&to=${range.to}`;
+  const { models } = await request<{ models: ModelUsage[] }>(`/models?${query}`);
   return models;
 }
 

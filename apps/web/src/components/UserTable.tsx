@@ -1,5 +1,5 @@
 import { seatPeriodCost } from '@dash/shared';
-import type { CopilotSeat, RangeDays } from '@dash/shared';
+import type { CopilotSeat } from '@dash/shared';
 import { EMPTY, lastActiveLabel, optionalCount, optionalPercent, usd } from '../lib/format.js';
 import type { Page, SortDirection, SortKey } from '../lib/metrics/table.js';
 import { Avatar } from './Avatar.js';
@@ -29,7 +29,8 @@ function modelTitle(seat: CopilotSeat): string | undefined {
 
 interface UserTableProps {
   page: Page<CopilotSeat>;
-  range: RangeDays;
+  /** Day count of the selected range — presets directly, custom ranges inclusive. */
+  rangeDays: number;
   sortKey: SortKey;
   sortDirection: SortDirection;
   onSort: (key: SortKey) => void;
@@ -38,7 +39,7 @@ interface UserTableProps {
 
 export function UserTable({
   page,
-  range,
+  rangeDays,
   sortKey,
   sortDirection,
   onSort,
@@ -104,7 +105,7 @@ export function UserTable({
             <div>{optionalCount(seat.premiumRequests28d)}</div>
             <div>{optionalPercent(seat.acceptanceRate)}</div>
             <div className={styles.muted}>{lastActiveLabel(seat.lastActivityDays)}</div>
-            <div className={styles.cost}>{usd(seatPeriodCost(seat, range), 2)}</div>
+            <div className={styles.cost}>{usd(seatPeriodCost(seat, rangeDays), 2)}</div>
           </div>
         ))
       )}

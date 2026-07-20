@@ -54,8 +54,8 @@ Series points carry ISO dates already.
 ## Delta ("vs previous period")
 
 A custom range spanning N days compares against the preceding N days when the series
-contains them (generalising the existing `rangeDays * 2 <= series.length` guard); otherwise
-the delta is hidden — same as today's behaviour for presets.
+contains all of them; otherwise it falls back to comparing the window's own first half
+against its second — the same fallback presets use today when history runs out.
 
 ## Fixed 28d-window metrics
 

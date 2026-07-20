@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { wastedMonthlySpend } from '@dash/shared';
+import { rangeDayCount, wastedMonthlySpend } from '@dash/shared';
 import type { CopilotSeat, SpendPoint } from '@dash/shared';
 import { buildChartGeometry } from '../lib/metrics/chart.js';
 import type { ChartGeometry } from '../lib/metrics/chart.js';
@@ -59,9 +59,11 @@ export function useDashboardMetrics(
   const utilization = useMemo(() => buildUtilization(filteredSeats), [filteredSeats]);
   const reclaim = useMemo(() => reclaimCandidates(filteredSeats), [filteredSeats]);
 
+  const rangeDays = rangeDayCount(state.range);
+
   const sorted = useMemo(
-    () => sortSeats(filteredSeats, state.sortKey, state.sortDirection, state.range),
-    [filteredSeats, state.sortKey, state.sortDirection, state.range],
+    () => sortSeats(filteredSeats, state.sortKey, state.sortDirection, rangeDays),
+    [filteredSeats, state.sortKey, state.sortDirection, rangeDays],
   );
 
   const page = useMemo(() => paginate(sorted, state.page), [sorted, state.page]);
@@ -70,9 +72,9 @@ export function useDashboardMetrics(
     () =>
       Math.round(
         filteredSeats.reduce((total, seat) => total + (seat.premiumRequests28d ?? 0), 0) *
-          (state.range / 28),
+          (rangeDays / 28),
       ),
-    [filteredSeats, state.range],
+    [filteredSeats, rangeDays],
   );
 
   const wastedMonthly = useMemo(() => wastedMonthlySpend(filteredSeats), [filteredSeats]);

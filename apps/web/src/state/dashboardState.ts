@@ -1,4 +1,4 @@
-import type { RangeDays } from '@dash/shared';
+import type { DateRange } from '@dash/shared';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
 import type { SortDirection, SortKey } from '../lib/metrics/table.js';
@@ -12,7 +12,7 @@ export type ModalTab = 'sources' | 'csv' | 'manual';
 export type TableView = 'users' | 'models';
 
 export interface DashboardState {
-  range: RangeDays;
+  range: DateRange;
   editor: EditorFilter;
   language: LanguageFilter;
   search: string;
@@ -26,7 +26,7 @@ export interface DashboardState {
 }
 
 export const initialDashboardState: DashboardState = {
-  range: 28,
+  range: { kind: 'preset', days: 28 },
   editor: ALL,
   language: ALL,
   search: '',
@@ -39,7 +39,7 @@ export const initialDashboardState: DashboardState = {
 };
 
 export type DashboardAction =
-  | { type: 'setRange'; range: RangeDays }
+  | { type: 'setRange'; range: DateRange }
   | { type: 'setEditor'; editor: EditorFilter }
   | { type: 'setLanguage'; language: LanguageFilter }
   | { type: 'setSearch'; search: string }

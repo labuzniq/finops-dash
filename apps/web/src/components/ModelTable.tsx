@@ -1,4 +1,4 @@
-import type { ModelUsage, RangeDays } from '@dash/shared';
+import type { ModelUsage } from '@dash/shared';
 import { count, EMPTY, optionalPercent } from '../lib/format.js';
 import { Card } from './Card.js';
 import styles from './ModelTable.module.css';
@@ -11,17 +11,18 @@ import styles from './ModelTable.module.css';
 
 interface ModelTableProps {
   models: readonly ModelUsage[];
-  range: RangeDays;
+  /** Human label of the selected range — "last 28d" or "Jun 3 – Jul 1". */
+  rangeLabel: string;
 }
 
-export function ModelTable({ models, range }: ModelTableProps) {
+export function ModelTable({ models, rangeLabel }: ModelTableProps) {
   const totalGenerations = models.reduce((sum, m) => sum + m.generations, 0);
 
   return (
     <Card padded={false} className={styles.card}>
       <div className={styles.header}>
         <div className={styles.title}>Per-model usage</div>
-        <div className={styles.sub}>code generations · last {range}d</div>
+        <div className={styles.sub}>code generations · {rangeLabel}</div>
       </div>
 
       <div className={`${styles.columns} ${styles.headerStrip}`}>

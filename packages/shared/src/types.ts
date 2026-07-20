@@ -118,6 +118,30 @@ export interface RefreshJob {
 export const RANGE_DAYS = [28, 56, 90] as const;
 export type RangeDays = (typeof RANGE_DAYS)[number];
 
+/**
+ * The dashboard's selected time window. Presets slice the tail of the series
+ * ("last N days"); a custom range is an inclusive pair of ISO calendar dates.
+ * Fixed 28-day metrics (GitHub's `premiumRequests28d`) never re-slice — only
+ * daily series respond to the selection.
+ */
+export type DateRange =
+  | { kind: 'preset'; days: RangeDays }
+  | { kind: 'custom'; from: string; to: string };
+
+const MS_PER_DAY = 86_400_000;
+
+/** `2026-04-17` at UTC midnight, so day arithmetic can't drift across DST. */
+function utcDate(iso: string): number {
+  const [year, month, day] = iso.split('-');
+  return Date.UTC(Number(year), Number(month) - 1, Number(day));
+}
+
+/** Number of days a range spans, inclusive of both endpoints. */
+export function rangeDayCount(range: DateRange): number {
+  if (range.kind === 'preset') return range.days;
+  return Math.max(1, Math.round((utcDate(range.to) - utcDate(range.from)) / MS_PER_DAY) + 1);
+}
+
 /** Outcome of a manual CSV/JSON import. */
 export interface ImportResult {
   /** Seats that did not exist before. */
