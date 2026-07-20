@@ -38,6 +38,7 @@ export const copilotSeats = pgTable('copilot_seats', {
   usedAgent: boolean('used_agent'),
   usedChat: boolean('used_chat'),
   topModel: varchar('top_model', { length: 60 }),
+  team: varchar('team', { length: 120 }),
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -55,8 +56,73 @@ export const orgDaily = pgTable('org_daily', {
   acceptances: integer('acceptances').notNull(),
   locAdded: integer('loc_added').notNull(),
   locDeleted: integer('loc_deleted').notNull(),
+  // Suggested LOC and engaged-cohort counts from the same daily report row.
+  // Defaults keep rows synced before this migration readable as zeros.
+  locSuggestedAdd: integer('loc_suggested_add').notNull().default(0),
+  locSuggestedDelete: integer('loc_suggested_delete').notNull().default(0),
+  chatMau: integer('chat_mau').notNull().default(0),
+  agentMau: integer('agent_mau').notNull().default(0),
+  codeReviewDau: integer('code_review_dau').notNull().default(0),
+  codeReviewWau: integer('code_review_wau').notNull().default(0),
+  codeReviewMau: integer('code_review_mau').notNull().default(0),
+  codeReviewPassiveMau: integer('code_review_passive_mau').notNull().default(0),
+  cloudAgentDau: integer('cloud_agent_dau').notNull().default(0),
+  cloudAgentWau: integer('cloud_agent_wau').notNull().default(0),
+  cloudAgentMau: integer('cloud_agent_mau').notNull().default(0),
+  prCreated: integer('pr_created').notNull().default(0),
+  prMerged: integer('pr_merged').notNull().default(0),
+  prCreatedByCopilot: integer('pr_created_by_copilot').notNull().default(0),
+  prMergedCreatedByCopilot: integer('pr_merged_created_by_copilot').notNull().default(0),
+  prReviewedByCopilot: integer('pr_reviewed_by_copilot').notNull().default(0),
+  prCopilotSuggestions: integer('pr_copilot_suggestions').notNull().default(0),
+  prCopilotAppliedSuggestions: integer('pr_copilot_applied_suggestions').notNull().default(0),
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Per-day, per-category activity for one breakdown dimension of the daily org
+ * report (`totals_by_ide`, `totals_by_feature`, and the language/model sides
+ * of the composite arrays). One generic table instead of one per dimension —
+ * the shape is identical and the UI treats every dimension the same way.
+ */
+export const usageBreakdownDaily = pgTable(
+  'usage_breakdown_daily',
+  {
+    date: date('date').notNull(),
+    /** `ide` | `language` | `feature` | `model` — see USAGE_DIMENSIONS in @dash/shared. */
+    dimension: varchar('dimension', { length: 20 }).notNull(),
+    key: varchar('key', { length: 80 }).notNull(),
+    interactions: integer('interactions').notNull(),
+    generations: integer('generations').notNull(),
+    acceptances: integer('acceptances').notNull(),
+    locAdded: integer('loc_added').notNull(),
+    locDeleted: integer('loc_deleted').notNull(),
+    locSuggestedAdd: integer('loc_suggested_add').notNull(),
+    locSuggestedDelete: integer('loc_suggested_delete').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.dimension, table.key] })],
+);
+
+/** Per-day AI-adoption-phase cohort from `totals_by_ai_adoption_phase`. */
+export const adoptionPhaseDaily = pgTable(
+  'adoption_phase_daily',
+  {
+    date: date('date').notNull(),
+    phaseNumber: smallint('phase_number').notNull(),
+    phase: varchar('phase', { length: 40 }).notNull(),
+    engagedUsers: integer('engaged_users').notNull(),
+    avgInteractions: doublePrecision('avg_interactions').notNull(),
+    avgGenerations: doublePrecision('avg_generations').notNull(),
+    avgAcceptances: doublePrecision('avg_acceptances').notNull(),
+    avgLocAdded: doublePrecision('avg_loc_added').notNull(),
+    avgLocDeleted: doublePrecision('avg_loc_deleted').notNull(),
+    avgPrCreated: doublePrecision('avg_pr_created').notNull(),
+    avgPrReviewed: doublePrecision('avg_pr_reviewed').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.phaseNumber] })],
+);
 
 /**
  * Per-day, per-model activity from a daily report's `totals_by_language_model`,
@@ -175,6 +241,10 @@ export type OrgDailyRow = typeof orgDaily.$inferSelect;
 export type OrgDailyInsert = typeof orgDaily.$inferInsert;
 export type ModelDailyRow = typeof modelDaily.$inferSelect;
 export type ModelDailyInsert = typeof modelDaily.$inferInsert;
+export type UsageBreakdownRow = typeof usageBreakdownDaily.$inferSelect;
+export type UsageBreakdownInsert = typeof usageBreakdownDaily.$inferInsert;
+export type AdoptionPhaseRow = typeof adoptionPhaseDaily.$inferSelect;
+export type AdoptionPhaseInsert = typeof adoptionPhaseDaily.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
 export type OtlpMetricPointInsert = typeof otlpMetricPoints.$inferInsert;
 export type OtlpLogRecordInsert = typeof otlpLogRecords.$inferInsert;

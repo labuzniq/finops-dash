@@ -22,6 +22,13 @@
       "when": 1784237825342,
       "tag": "0002_slim_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784583090454,
+      "tag": "0003_common_quicksilver",
+      "breakpoints": true
     }
   ]
 }

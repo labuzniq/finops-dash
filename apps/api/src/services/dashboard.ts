@@ -36,6 +36,7 @@ function toSeat(row: SeatRow, now: Date): CopilotSeat {
     usedAgent: row.usedAgent,
     usedChat: row.usedChat,
     topModel: row.topModel,
+    team: row.team,
   };
 }
 
