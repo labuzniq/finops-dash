@@ -38,11 +38,14 @@ export function premiumOverage(plan: Plan, premiumRequests28d: number | null): n
   return Math.max(0, premiumRequests28d - PREMIUM_ALLOWANCE[plan]) * OVERAGE_RATE;
 }
 
-/** What one seat costs over `rangeDays`: prorated license plus prorated overage. */
+/**
+ * What one seat costs over `rangeDays`: prorated license plus overage. Overage is
+ * only known for the 28-day window; longer ranges do not multiply it.
+ */
 export function seatPeriodCost(seat: CopilotSeat, rangeDays: number): number {
   const license = PLAN_PRICE[seat.plan] * (rangeDays / BILLING_MONTH_DAYS);
-  const overage =
-    premiumOverage(seat.plan, seat.premiumRequests28d) * (rangeDays / PREMIUM_WINDOW_DAYS);
+  const overageFactor = Math.min(rangeDays, PREMIUM_WINDOW_DAYS) / PREMIUM_WINDOW_DAYS;
+  const overage = premiumOverage(seat.plan, seat.premiumRequests28d) * overageFactor;
   return license + overage;
 }
 
