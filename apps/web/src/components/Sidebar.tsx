@@ -102,7 +102,7 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
         <div className={styles.userAvatar}>FA</div>
         <div>
           <div className={styles.userName}>FinOps Administrátor</div>
-          <div className={styles.userRole}>admin</div>
+          {/* <div className={styles.userRole}>admin</div> */}
         </div>
       </div>
     </aside>
