@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cx } from '../../lib/cx.js';
 import { USAGE_CHART_VIEWBOX } from '../../lib/metrics/usage.js';
 import type { MultiSeriesGeometry } from '../../lib/metrics/usage.js';
@@ -49,6 +50,8 @@ export function TrendChart({
   activeVariant,
   onVariantChange,
 }: TrendChartProps) {
+  const [hovered, setHovered] = useState<string | null>(null);
+
   const active =
     variants === undefined
       ? undefined
@@ -62,6 +65,13 @@ export function TrendChart({
         : undefined;
 
   if (shown === undefined) return null;
+
+  // A hovered name left over from a variant switch may not exist in the new
+  // series set — treat it as no hover rather than dimming every line.
+  const highlighted = shown.geometry.series.some((series) => series.name === hovered)
+    ? hovered
+    : null;
+  const dimmed = (name: string) => highlighted !== null && name !== highlighted;
 
   return (
     <Card>
@@ -91,7 +101,12 @@ export function TrendChart({
           {!shown.geometry.empty && (
             <div className={styles.legend}>
               {shown.geometry.series.map((series) => (
-                <div key={series.name} className={styles.legendItem}>
+                <div
+                  key={series.name}
+                  className={cx(styles.legendItem, dimmed(series.name) && styles.legendItemDimmed)}
+                  onMouseEnter={() => setHovered(series.name)}
+                  onMouseLeave={() => setHovered(null)}
+                >
                   <div className={styles.swatch} style={{ background: series.colorVar }} />
                   {series.name}
                 </div>
@@ -121,7 +136,7 @@ export function TrendChart({
               {shown.geometry.series.map((series) => (
                 <path
                   key={`area-${series.name}`}
-                  className={styles.area}
+                  className={cx(styles.area, dimmed(series.name) && styles.seriesDimmed)}
                   d={series.areaPath}
                   style={{
                     fill: `color-mix(in oklab, ${series.colorVar} var(--chart-fill), transparent)`,
@@ -132,7 +147,7 @@ export function TrendChart({
               {shown.geometry.series.map((series) => (
                 <path
                   key={series.name}
-                  className={styles.line}
+                  className={cx(styles.line, dimmed(series.name) && styles.seriesDimmed)}
                   d={series.linePath}
                   style={{ stroke: series.colorVar }}
                   vectorEffect="non-scaling-stroke"
