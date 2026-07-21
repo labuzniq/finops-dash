@@ -1,6 +1,6 @@
 import { inArray, sql } from 'drizzle-orm';
 import { AI_CREDIT_SKU, BILLING_SKUS } from '@dash/shared';
-import type { BillingSku } from '@dash/shared';
+import type { BillingImportResult, BillingSku } from '@dash/shared';
 import { db } from '../db/client.js';
 import { billingDaily, githubUsers, modelSpendDaily } from '../db/schema.js';
 import type { BillingDailyInsert, GithubUserInsert, ModelSpendDailyInsert } from '../db/schema.js';
@@ -27,15 +27,7 @@ const log = moduleLogger('services.billing-import');
  */
 
 /** Report 1 = `model`, Report 2 = `billing`. */
-export type BillingReportType = 'model' | 'billing';
-
-export interface ImportResult {
-  reportType: BillingReportType;
-  rowsUpserted: number;
-  dateRange: { from: string; to: string };
-  /** Distinct logins in the file with no `github_users` row — informational. */
-  unknownLogins: string[];
-}
+export type BillingReportType = BillingImportResult['reportType'];
 
 /** A rejected upload — the route maps this to a 400 with the message. */
 export class CsvImportError extends Error {}
@@ -281,7 +273,7 @@ function chunk<T>(items: T[], size: number): T[][] {
  * `CsvImportError` before any write; the upsert runs in a single transaction.
  * Re-importing the same or an overlapping file is idempotent (upsert by PK).
  */
-export async function importBillingCsv(csv: string): Promise<ImportResult> {
+export async function importBillingCsv(csv: string): Promise<BillingImportResult> {
   const startedAt = Date.now();
   const parsed = parseBillingReport(csv);
 

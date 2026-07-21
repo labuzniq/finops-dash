@@ -65,6 +65,20 @@ export interface SpendPerson {
   mapped: boolean;
 }
 
+/**
+ * What `POST /api/import/billing` answers with. Report 1 (`model`) and Report 2
+ * (`billing`) share the endpoint — the server detects which from the header, so
+ * the client learns the type from the response. Named apart from the seat
+ * `ImportResult` in `types.ts`, which is a different contract.
+ */
+export interface BillingImportResult {
+  reportType: 'model' | 'billing';
+  rowsUpserted: number;
+  dateRange: { from: string; to: string };
+  /** Distinct logins in the file with no `github_users` row — informational. */
+  unknownLogins: string[];
+}
+
 /** Everything `GET /api/spend` returns — fetched once, derived client-side. */
 export interface SpendPayload {
   billingRows: BillingRow[];

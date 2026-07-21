@@ -1,44 +1,39 @@
 import { useEffect, useState } from 'react';
 import type { RefreshJob } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import type { UseImport } from '../../hooks/useCopilotData.js';
+import type { ImportSlot, UseReportImports } from '../../hooks/useCopilotData.js';
 import type { ModalTab } from '../../state/dashboardState.js';
 import { ConnectedSourcesTab } from './ConnectedSourcesTab.js';
-import { ManualEntryTab } from './ManualEntryTab.js';
-import type { ManualRow } from './ManualEntryTab.js';
-import { UploadCsvTab } from './UploadCsvTab.js';
+import { UploadReportsTab, stageFile } from './UploadReportsTab.js';
+import type { StagedFile, StagedFiles } from './UploadReportsTab.js';
 import styles from './AddDataModal.module.css';
 
 /**
  * Add data.
  *
- * Connected sources → the on-demand GitHub sync. Upload CSV and Manual entry
- * post to the import endpoint, which upserts seat rows by login.
+ * Upload reports → the two GitHub AI usage report CSVs plus the org user
+ * export. Connected sources → the on-demand GitHub sync and the JIRA identity
+ * sync, each its own job kind.
  */
 
 const TABS: Array<{ id: ModalTab; label: string }> = [
+  { id: 'upload', label: 'Upload reports' },
   { id: 'sources', label: 'Connected sources' },
-  { id: 'csv', label: 'Upload CSV' },
-  { id: 'manual', label: 'Manual entry' },
 ];
-
-const EMPTY_MANUAL_ROW: ManualRow = {
-  user_login: '',
-  plan: 'Business',
-  ai_credits_used: '',
-  last_activity_at: '',
-};
 
 interface AddDataModalProps {
   tab: ModalTab;
   latestJob: RefreshJob | null;
   isRefreshing: boolean;
   refreshError: string | null;
-  importState: UseImport;
+  jiraJob: RefreshJob | null;
+  isJiraSyncing: boolean;
+  jiraError: string | null;
+  imports: UseReportImports;
   onTabChange: (tab: ModalTab) => void;
   onClose: () => void;
   onRefresh: () => void;
-  onImport: (content: string) => void;
+  onJiraSync: () => void;
 }
 
 export function AddDataModal({
@@ -46,14 +41,16 @@ export function AddDataModal({
   latestJob,
   isRefreshing,
   refreshError,
-  importState,
+  jiraJob,
+  isJiraSyncing,
+  jiraError,
+  imports,
   onTabChange,
   onClose,
   onRefresh,
-  onImport,
+  onJiraSync,
 }: AddDataModalProps) {
-  const [file, setFile] = useState<File | null>(null);
-  const [manualRow, setManualRow] = useState<ManualRow>(EMPTY_MANUAL_ROW);
+  const [staged, setStaged] = useState<StagedFiles>({});
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -63,29 +60,33 @@ export function AddDataModal({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  const manualValid = manualRow.user_login.trim() !== '';
-  const canImport =
-    tab === 'sources' ? !isRefreshing : tab === 'csv' ? file !== null : manualValid;
+  const handleStage = (slot: ImportSlot, file: File): void => {
+    // Restaging clears the previous run's per-slot feedback, which no longer
+    // describes what is in the slot.
+    imports.reset();
+    void stageFile(slot, file).then((result) =>
+      setStaged((current) => ({ ...current, [slot]: result })),
+    );
+  };
 
-  const handleImport = async (): Promise<void> => {
+  /** Only slots that passed the client-side header check are uploadable. */
+  const ready: Partial<Record<ImportSlot, string>> = {};
+  for (const [slot, entry] of Object.entries(staged) as Array<[ImportSlot, StagedFile]>) {
+    if (entry.csv !== null) ready[slot] = entry.csv;
+  }
+
+  const canSubmit =
+    tab === 'sources' ? !isRefreshing : Object.keys(ready).length > 0;
+
+  const handlePrimary = (): void => {
     if (tab === 'sources') {
       onRefresh();
       return;
     }
-    if (tab === 'csv') {
-      if (!file) return;
-      onImport(await file.text());
-      return;
-    }
-    // Manual: post a one-row JSON array, dropping empty optional fields.
-    const row: Record<string, string> = { user_login: manualRow.user_login.trim(), plan: manualRow.plan };
-    if (manualRow.ai_credits_used.trim() !== '') row.ai_credits_used = manualRow.ai_credits_used.trim();
-    if (manualRow.last_activity_at.trim() !== '') row.last_activity_at = manualRow.last_activity_at.trim();
-    onImport(JSON.stringify([row]));
+    imports.runImport(ready);
   };
 
-  const primaryLabel = tab === 'sources' ? (isRefreshing ? 'Syncing…' : 'Import') : 'Import';
-  const result = importState.result;
+  const hasOutcomes = Object.keys(imports.outcomes).length > 0;
 
   return (
     <div className={styles.backdrop} onClick={onClose} role="presentation">
@@ -110,10 +111,7 @@ export function AddDataModal({
               type="button"
               className={cx(styles.tab, item.id === tab && styles.tabActive)}
               aria-selected={item.id === tab}
-              onClick={() => {
-                importState.reset();
-                onTabChange(item.id);
-              }}
+              onClick={() => onTabChange(item.id)}
             >
               {item.label}
             </button>
@@ -121,38 +119,36 @@ export function AddDataModal({
         </div>
 
         <div className={styles.body}>
-          {tab === 'sources' && (
-            <ConnectedSourcesTab latestJob={latestJob} isRefreshing={isRefreshing} />
+          {tab === 'upload' && (
+            <UploadReportsTab staged={staged} outcomes={imports.outcomes} onStage={handleStage} />
           )}
-          {tab === 'csv' && <UploadCsvTab file={file} onFileChange={setFile} />}
-          {tab === 'manual' && <ManualEntryTab row={manualRow} onChange={setManualRow} />}
+          {tab === 'sources' && (
+            <ConnectedSourcesTab
+              latestJob={latestJob}
+              isRefreshing={isRefreshing}
+              jiraJob={jiraJob}
+              isJiraSyncing={isJiraSyncing}
+              jiraError={jiraError}
+              onJiraSync={onJiraSync}
+            />
+          )}
         </div>
 
         <div className={styles.footer}>
           {refreshError && tab === 'sources' && (
             <div className={cx(styles.footerNote, styles.error)}>Sync failed: {refreshError}</div>
           )}
-          {importState.error && tab !== 'sources' && (
-            <div className={cx(styles.footerNote, styles.error)}>Import failed: {importState.error}</div>
-          )}
-          {result && tab !== 'sources' && (
-            <div className={styles.footerNote}>
-              {result.imported} added · {result.updated} updated
-              {result.skipped > 0 && ` · ${result.skipped} skipped`}
-              {result.errors.length > 0 && ` — ${result.errors[0]}`}
-            </div>
-          )}
 
           <button type="button" className={cx(styles.button, styles.secondary)} onClick={onClose}>
-            {result ? 'Done' : 'Cancel'}
+            {hasOutcomes ? 'Done' : 'Cancel'}
           </button>
           <button
             type="button"
             className={cx(styles.button, styles.primary)}
-            onClick={handleImport}
-            disabled={!canImport || importState.isImporting}
+            onClick={handlePrimary}
+            disabled={!canSubmit || imports.isImporting}
           >
-            {importState.isImporting ? 'Importing…' : primaryLabel}
+            {imports.isImporting ? 'Importing…' : 'Import'}
           </button>
         </div>
       </div>
