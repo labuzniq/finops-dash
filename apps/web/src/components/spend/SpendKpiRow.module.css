@@ -19,17 +19,13 @@
   font-size: 26px;
   font-weight: 600;
   margin-top: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sub {
   font-size: 12px;
   color: var(--muted);
   margin-top: 5px;
-}
-
-/* Idle seats climbing is bad news, so the figure borrows the semantic colour. */
-.negative {
-  color: var(--neg);
 }
 
 @media (max-width: 1100px) {

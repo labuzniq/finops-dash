@@ -54,6 +54,26 @@ export interface SpendUserRow {
   licence: number;
 }
 
+/** Sortable numeric columns of the spend user table. */
+export type SpendSortKey = 'credits' | 'gross' | 'discount' | 'net';
+
+/** -1 = descending (the default on every column), 1 = ascending. */
+export type SpendSortDirection = -1 | 1;
+
+export function sortSpendUserRows(
+  rows: readonly SpendUserRow[],
+  key: SpendSortKey,
+  direction: SpendSortDirection,
+): SpendUserRow[] {
+  return [...rows].sort((a, b) => {
+    const left = a[key];
+    const right = b[key];
+    // Equal values fall back to login so paging stays deterministic.
+    if (left === right) return a.login.localeCompare(b.login);
+    return (left < right ? -1 : 1) * direction;
+  });
+}
+
 /** Every ISO date from `from` to `to` inclusive — the trend's zero-fill spine. */
 function isoDatesBetween(from: string, to: string): string[] {
   const [year, month, day] = from.split('-');

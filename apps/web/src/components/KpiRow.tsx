@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { count, percent, usd } from '../lib/format.js';
+import { count, percent } from '../lib/format.js';
 import { cx } from '../lib/cx.js';
 import type { DashboardMetrics } from '../hooks/useDashboardMetrics.js';
 import { Card } from './Card.js';
@@ -28,21 +28,12 @@ interface KpiRowProps {
   rangeDays: number;
 }
 
+/** Usage KPIs only — money lives in the spend section, fed by billing reports. */
 export function KpiRow({ metrics, rangeDays }: KpiRowProps) {
-  const { deltaPercent } = metrics.spend;
-  const isUp = deltaPercent >= 0;
-
   return (
     <div className={styles.row}>
-      <KpiCard kicker={`TOTAL SPEND · ${rangeDays}d`} value={usd(metrics.spend.total)}>
-        <div className={cx(styles.sub, styles.subDelta, isUp ? styles.negative : styles.positive)}>
-          {isUp ? '↑ +' : '↓ '}
-          {deltaPercent.toFixed(1)}% vs prev period
-        </div>
-      </KpiCard>
-
-      <KpiCard kicker="AVG COST / ACTIVE USER" value={usd(metrics.avgCostPerActiveUser, 2)}>
-        <div className={styles.sub}>license + premium requests</div>
+      <KpiCard kicker="SEATS" value={count(metrics.utilization.totalCount)}>
+        <div className={styles.sub}>matching the current filters</div>
       </KpiCard>
 
       <KpiCard kicker="SEAT UTILIZATION" value={percent(metrics.utilization.utilizedPercent)}>
@@ -52,14 +43,16 @@ export function KpiRow({ metrics, rangeDays }: KpiRowProps) {
         </div>
       </KpiCard>
 
+      <KpiCard kicker={`AI CREDITS USED · ${rangeDays}d`} value={count(metrics.premiumRequestsUsed)}>
+        <div className={styles.sub}>prorated across filtered seats</div>
+      </KpiCard>
+
       <KpiCard
-        kicker="WASTED SPEND / MO"
-        value={usd(metrics.wastedMonthly)}
+        kicker="IDLE SEATS"
+        value={count(metrics.idleCount)}
         valueClassName={styles.negative}
       >
-        <div className={styles.sub}>
-          {count(metrics.idleCount)} idle seats · 30d+ or never used
-        </div>
+        <div className={styles.sub}>30d+ or never used</div>
       </KpiCard>
     </div>
   );

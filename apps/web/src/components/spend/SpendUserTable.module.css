@@ -22,34 +22,10 @@
 /* One grid template drives the header strip and every row, so columns line up. */
 .columns {
   display: grid;
-  grid-template-columns: 1.9fr 0.75fr 0.85fr 1fr 0.8fr 0.8fr 0.95fr;
+  grid-template-columns: 1.8fr 1.2fr 1.2fr 1.2fr 0.7fr 0.8fr 0.8fr 0.8fr;
   padding: 8px 20px;
   gap: 6px;
   align-items: center;
-}
-
-.model {
-  font: 400 11px ui-monospace, Menlo, monospace;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tags {
-  display: inline-flex;
-  gap: 4px;
-  margin-left: 6px;
-}
-
-.tag {
-  font: 600 9px ui-monospace, Menlo, monospace;
-  letter-spacing: 0.04em;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  text-transform: uppercase;
 }
 
 .headerStrip {
@@ -70,11 +46,16 @@
   color: inherit;
   letter-spacing: inherit;
   cursor: pointer;
-  text-align: left;
+  text-align: right;
 }
 
 .sortButton:hover {
   color: var(--text);
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .row {
@@ -110,16 +91,27 @@
   color: var(--faint);
 }
 
-.plan {
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  font-size: 10.5px;
-  color: var(--muted);
+/* No JIRA identity for this login — raw login shown, still in every total. */
+.badge {
+  margin-left: 6px;
+  font: 600 9px ui-monospace, Menlo, monospace;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--neg) 14%, transparent);
+  color: var(--neg);
+  text-transform: uppercase;
 }
 
 .muted {
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.money {
+  font-weight: 600;
 }
 
 .empty {

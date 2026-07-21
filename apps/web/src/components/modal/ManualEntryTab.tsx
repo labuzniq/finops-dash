@@ -1,5 +1,4 @@
 import { useId } from 'react';
-import { PLAN_PRICE } from '@dash/shared';
 import type { Plan } from '@dash/shared';
 import styles from './tabs.module.css';
 
@@ -54,8 +53,8 @@ export function ManualEntryTab({ row, onChange }: ManualEntryTabProps) {
           value={row.plan}
           onChange={(event) => set('plan', event.target.value as Plan)}
         >
-          <option value="Business">Business — ${PLAN_PRICE.Business}/mo</option>
-          <option value="Enterprise">Enterprise — ${PLAN_PRICE.Enterprise}/mo</option>
+          <option value="Business">Business</option>
+          <option value="Enterprise">Enterprise</option>
         </select>
       </div>
 
