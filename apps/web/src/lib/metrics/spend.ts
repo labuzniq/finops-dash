@@ -54,6 +54,59 @@ export interface SpendUserRow {
   licence: number;
 }
 
+/**
+ * Licence money paid for logins the per-model report never saw use from.
+ * `measurable` is the honest-zero guard — see `wastedSpend`.
+ */
+export interface WastedSpend {
+  /** Summed licence money of inactive logins. */
+  wasted: number;
+  /** Count of inactive logins. */
+  seats: number;
+  /** Licence money of every login with a licence, inactive or not. */
+  licence: number;
+  /** wasted / licence, 0..1. Zero when there is no licence money. */
+  share: number;
+  /** False when the range carries no per-model report at all. */
+  measurable: boolean;
+}
+
+/**
+ * Wasted licence spend: logins the org paid a seat for across the range that
+ * recorded no AI credits at all.
+ *
+ * Credits come from Report 1 and licence money only from Report 2, so a login
+ * present in Report 2 alone reads as `credits === 0` for two indistinguishable
+ * reasons — it used nothing, or Report 1 was never imported. When the range has
+ * no credits anywhere, `measurable` is false and callers must render the
+ * unknown rather than claim every seat is wasted. The guard is deliberately
+ * coarse: partial Report 1 coverage is not detectable from the data.
+ */
+export function wastedSpend(rows: readonly SpendUserRow[]): WastedSpend {
+  let wasted = 0;
+  let seats = 0;
+  let licence = 0;
+  let credits = 0;
+
+  for (const row of rows) {
+    credits += row.credits;
+    if (row.licence <= 0) continue;
+    licence += row.licence;
+    if (row.credits === 0) {
+      wasted += row.licence;
+      seats += 1;
+    }
+  }
+
+  return {
+    wasted,
+    seats,
+    licence,
+    share: licence > 0 ? wasted / licence : 0,
+    measurable: credits > 0,
+  };
+}
+
 /** Sortable numeric columns of the spend user table. */
 export type SpendSortKey = 'credits' | 'gross' | 'discount' | 'net';
 

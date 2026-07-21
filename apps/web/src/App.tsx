@@ -138,39 +138,39 @@ export function App() {
           <>
             <KpiRow metrics={metrics} rangeDays={rangeDays} />
 
-            <div className={styles.split}>
-              <div className={styles.tableColumn}>
-                <div className={styles.viewToggle} role="group" aria-label="Table view">
-                  <button
-                    type="button"
-                    className={cx(styles.viewSegment, state.tableView === 'users' && styles.viewSegmentActive)}
-                    aria-pressed={state.tableView === 'users'}
-                    onClick={() => dispatch({ type: 'setTableView', view: 'users' })}
-                  >
-                    Per user
-                  </button>
-                  <button
-                    type="button"
-                    className={cx(styles.viewSegment, state.tableView === 'models' && styles.viewSegmentActive)}
-                    aria-pressed={state.tableView === 'models'}
-                    onClick={() => dispatch({ type: 'setTableView', view: 'models' })}
-                  >
-                    Per model
-                  </button>
-                </div>
+            {/* Above the grid, not inside its left column — nesting it there
+                pushed the table down and broke the alignment with the donut. */}
+            <div className={styles.viewToggle} role="group" aria-label="Table view">
+              <button
+                type="button"
+                className={cx(styles.viewSegment, state.tableView === 'users' && styles.viewSegmentActive)}
+                aria-pressed={state.tableView === 'users'}
+                onClick={() => dispatch({ type: 'setTableView', view: 'users' })}
+              >
+                Per user
+              </button>
+              <button
+                type="button"
+                className={cx(styles.viewSegment, state.tableView === 'models' && styles.viewSegmentActive)}
+                aria-pressed={state.tableView === 'models'}
+                onClick={() => dispatch({ type: 'setTableView', view: 'models' })}
+              >
+                Per model
+              </button>
+            </div>
 
-                {state.tableView === 'users' ? (
-                  <UserTable
-                    page={metrics.page}
-                    sortKey={state.sortKey}
-                    sortDirection={state.sortDirection}
-                    onSort={(key) => dispatch({ type: 'toggleSort', key })}
-                    onPageChange={(page) => dispatch({ type: 'setPage', page })}
-                  />
-                ) : (
-                  <ModelTable models={modelsQuery.data ?? EMPTY_MODELS} rangeLabel={rangeLabel(state.range)} />
-                )}
-              </div>
+            <div className={styles.split}>
+              {state.tableView === 'users' ? (
+                <UserTable
+                  page={metrics.page}
+                  sortKey={state.sortKey}
+                  sortDirection={state.sortDirection}
+                  onSort={(key) => dispatch({ type: 'toggleSort', key })}
+                  onPageChange={(page) => dispatch({ type: 'setPage', page })}
+                />
+              ) : (
+                <ModelTable models={modelsQuery.data ?? EMPTY_MODELS} rangeLabel={rangeLabel(state.range)} />
+              )}
 
               <UtilizationDonut utilization={metrics.utilization} />
             </div>
