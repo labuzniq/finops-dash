@@ -2,6 +2,16 @@
 #   docker build -f apps/api/Dockerfile .
 FROM node:24-alpine
 
+# Corporate proxy intercepts TLS, so the RTrust CA chain must be trusted before
+# the first network call (pnpm install) as well as at runtime. update-ca-certificates
+# covers OpenSSL consumers; Node keeps its own bundled store, so it additionally
+# needs NODE_EXTRA_CA_CERTS pointing at a single concatenated PEM.
+COPY certs/ /usr/local/share/ca-certificates/
+RUN cat /usr/local/share/ca-certificates/*.crt > /etc/ssl/corporate-ca-bundle.pem \
+  && apk add --no-cache ca-certificates \
+  && update-ca-certificates
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/corporate-ca-bundle.pem
+
 RUN corepack enable
 WORKDIR /app
 
