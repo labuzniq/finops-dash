@@ -63,6 +63,12 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: default;
+  transition: opacity 150ms ease;
+}
+
+.legendItemDimmed {
+  opacity: 0.45;
 }
 
 .swatch {
@@ -120,11 +126,19 @@
 
 .area {
   stroke: none;
+  transition: opacity 150ms ease;
 }
 
 .line {
   fill: none;
   stroke-width: 2;
+  transition: opacity 150ms ease;
+}
+
+/* Legend hover: non-hovered series recede into the background but stay
+   readable enough to keep the chart's overall shape. */
+.seriesDimmed {
+  opacity: 0.15;
 }
 
 .xLabels {
