@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { RANGE_DAYS } from '@dash/shared';
 import type { DateRange, SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import type { SpendFilters } from '../../lib/metrics/spendFilter.js';
+import type { SpendFilters, SpendScopeField } from '../../lib/metrics/spendFilter.js';
+import { EMPTY_SPEND_FILTERS, personMatches } from '../../lib/metrics/spendFilter.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import type { FilterOption } from './FilterCombobox.js';
 import { FilterCombobox } from './FilterCombobox.js';
@@ -12,7 +13,9 @@ import styles from './SpendFilterBar.module.css';
  * The spend section's own controls: its date window (billing data trails the
  * usage series, so it never shares the usage range) and the org-structure
  * filters — department, B-1, B-2, a single user, and the "Unmapped" group.
- * All four scope filters are the same searchable combobox. Every derivation
+ * All four scope filters are the same searchable combobox, and their option
+ * lists cascade: each offers only the values that can coexist with the other
+ * active filters, so no pick can ever produce an empty chart. Every derivation
  * downstream recomputes from whatever survives these.
  */
 
@@ -27,13 +30,19 @@ interface SpendFilterBarProps {
   onFiltersChange: (filters: Partial<SpendFilters>) => void;
 }
 
-/** Distinct non-null values of one identity field, sorted, as combobox options. */
+/**
+ * Distinct non-null values of one identity field, sorted, as combobox options —
+ * drawn only from the people who pass every *other* active filter, so each
+ * list shows just the combinations that exist.
+ */
 function options(
   people: readonly SpendPerson[],
   field: 'department' | 'b1Manager' | 'b2Manager',
+  filters: SpendFilters,
 ): FilterOption[] {
   const values = new Set<string>();
   for (const person of people) {
+    if (!personMatches(person, filters, field)) continue;
     const value = person[field];
     if (value !== null && value !== '') values.add(value);
   }
@@ -52,24 +61,17 @@ export function SpendFilterBar({
   onRangeChange,
   onFiltersChange,
 }: SpendFilterBarProps) {
-  const departments = useMemo(() => options(people, 'department'), [people]);
-  const b1Managers = useMemo(() => options(people, 'b1Manager'), [people]);
-  const b2Managers = useMemo(() => options(people, 'b2Manager'), [people]);
+  const departments = useMemo(() => options(people, 'department', filters), [people, filters]);
+  const b1Managers = useMemo(() => options(people, 'b1Manager', filters), [people, filters]);
+  const b2Managers = useMemo(() => options(people, 'b2Manager', filters), [people, filters]);
   /**
-   * The user search only offers people who survive the other filters, so a
-   * pick can never produce an empty chart. The keywords let the search match
-   * a raw login, which the label of a mapped person only contains mid-string.
+   * Same cascade for the user search. The keywords let the search match a raw
+   * login, which the label of a mapped person only contains mid-string.
    */
   const users = useMemo(
     () =>
       people
-        .filter((person) => {
-          if (filters.department !== null && person.department !== filters.department) return false;
-          if (filters.b1Manager !== null && person.b1Manager !== filters.b1Manager) return false;
-          if (filters.b2Manager !== null && person.b2Manager !== filters.b2Manager) return false;
-          if (filters.unmappedOnly && person.mapped) return false;
-          return true;
-        })
+        .filter((person) => personMatches(person, filters, 'login'))
         .sort(
           (a, b) => a.displayName.localeCompare(b.displayName) || a.login.localeCompare(b.login),
         )
@@ -78,7 +80,7 @@ export function SpendFilterBar({
           label: personLabel(person),
           keywords: [person.displayName, person.login],
         })),
-    [people, filters.department, filters.b1Manager, filters.b2Manager, filters.unmappedOnly],
+    [people, filters],
   );
 
   const pickerBounds = useMemo(() => {
@@ -88,23 +90,38 @@ export function SpendFilterBar({
   }, []);
 
   /**
-   * Narrowing by department or manager can strip the selected user out of the
-   * roster; dropping the stale login keeps the two controls consistent rather
-   * than leaving a filter that matches nobody.
+   * Changing one filter can orphan another — pick a department the selected
+   * B-1 manager doesn't sit under and the combination matches nobody. The
+   * just-changed field wins: every other selection must still be able to
+   * coexist with it (and with each other), or it is dropped.
    */
   const changeScope = (patch: Partial<SpendFilters>) => {
     const next = { ...filters, ...patch };
-    const selected =
-      next.login === null ? null : people.find((person) => person.login === next.login);
-    const stale =
-      selected !== undefined &&
-      selected !== null &&
-      ((next.department !== null && selected.department !== next.department) ||
-        (next.b1Manager !== null && selected.b1Manager !== next.b1Manager) ||
-        (next.b2Manager !== null && selected.b2Manager !== next.b2Manager) ||
-        (next.unmappedOnly && selected.mapped));
+    const result: Partial<SpendFilters> = { ...patch };
+    const kept: SpendScopeField[] = (
+      ['department', 'b1Manager', 'b2Manager', 'login'] as const
+    ).filter((field) => !(field in patch) && next[field] !== null);
 
-    onFiltersChange(stale ? { ...patch, login: null } : patch);
+    // First pass: each kept selection must coexist with the changed fields alone.
+    const changed: SpendFilters = { ...EMPTY_SPEND_FILTERS, ...patch, unmappedOnly: next.unmappedOnly };
+    for (const field of kept) {
+      const pair: SpendFilters = { ...changed, [field]: next[field] };
+      if (!people.some((person) => personMatches(person, pair))) {
+        next[field] = null;
+        result[field] = null;
+      }
+    }
+
+    // Second pass: survivors can be pairwise-valid yet jointly empty — thin
+    // from the most specific selection up until somebody matches everything.
+    for (const field of [...kept].reverse()) {
+      if (next[field] === null) continue;
+      if (people.some((person) => personMatches(person, next))) break;
+      next[field] = null;
+      result[field] = null;
+    }
+
+    onFiltersChange(result);
   };
 
   return (
