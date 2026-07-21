@@ -30,18 +30,6 @@
   box-shadow: var(--shadow);
 }
 
-.select {
-  height: 34px;
-  max-width: 220px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
 /* The "Unmapped" group toggle — a pill that fills in while active. */
 .unmapped {
   height: 34px;

@@ -4,14 +4,16 @@ import type { DateRange, SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import type { SpendFilters } from '../../lib/metrics/spendFilter.js';
 import { DateRangePicker } from '../DateRangePicker.js';
+import type { FilterOption } from './FilterCombobox.js';
+import { FilterCombobox } from './FilterCombobox.js';
 import styles from './SpendFilterBar.module.css';
-import { UserCombobox } from './UserCombobox.js';
 
 /**
  * The spend section's own controls: its date window (billing data trails the
  * usage series, so it never shares the usage range) and the org-structure
  * filters — department, B-1, B-2, a single user, and the "Unmapped" group.
- * Every derivation downstream recomputes from whatever survives these.
+ * All four scope filters are the same searchable combobox. Every derivation
+ * downstream recomputes from whatever survives these.
  */
 
 /** The custom picker reaches back a year — billing history beyond that is unlikely. */
@@ -25,17 +27,22 @@ interface SpendFilterBarProps {
   onFiltersChange: (filters: Partial<SpendFilters>) => void;
 }
 
-/** Distinct non-null values of one identity field, sorted for the select. */
+/** Distinct non-null values of one identity field, sorted, as combobox options. */
 function options(
   people: readonly SpendPerson[],
   field: 'department' | 'b1Manager' | 'b2Manager',
-): string[] {
+): FilterOption[] {
   const values = new Set<string>();
   for (const person of people) {
     const value = person[field];
     if (value !== null && value !== '') values.add(value);
   }
-  return [...values].sort((a, b) => a.localeCompare(b));
+  return [...values].sort((a, b) => a.localeCompare(b)).map((value) => ({ value, label: value }));
+}
+
+/** Unmapped people have no display name, so the login stands alone. */
+function personLabel(person: SpendPerson): string {
+  return person.mapped ? `${person.displayName} (${person.login})` : person.login;
 }
 
 export function SpendFilterBar({
@@ -50,17 +57,27 @@ export function SpendFilterBar({
   const b2Managers = useMemo(() => options(people, 'b2Manager'), [people]);
   /**
    * The user search only offers people who survive the other filters, so a
-   * pick can never produce an empty chart.
+   * pick can never produce an empty chart. The keywords let the search match
+   * a raw login, which the label of a mapped person only contains mid-string.
    */
   const users = useMemo(
     () =>
-      people.filter((person) => {
-        if (filters.department !== null && person.department !== filters.department) return false;
-        if (filters.b1Manager !== null && person.b1Manager !== filters.b1Manager) return false;
-        if (filters.b2Manager !== null && person.b2Manager !== filters.b2Manager) return false;
-        if (filters.unmappedOnly && person.mapped) return false;
-        return true;
-      }),
+      people
+        .filter((person) => {
+          if (filters.department !== null && person.department !== filters.department) return false;
+          if (filters.b1Manager !== null && person.b1Manager !== filters.b1Manager) return false;
+          if (filters.b2Manager !== null && person.b2Manager !== filters.b2Manager) return false;
+          if (filters.unmappedOnly && person.mapped) return false;
+          return true;
+        })
+        .sort(
+          (a, b) => a.displayName.localeCompare(b.displayName) || a.login.localeCompare(b.login),
+        )
+        .map((person) => ({
+          value: person.login,
+          label: personLabel(person),
+          keywords: [person.displayName, person.login],
+        })),
     [people, filters.department, filters.b1Manager, filters.b2Manager, filters.unmappedOnly],
   );
 
@@ -69,9 +86,6 @@ export function SpendFilterBar({
     const earliest = new Date(today.getTime() - (PICKER_WINDOW_DAYS - 1) * 86_400_000);
     return { min: earliest.toISOString().slice(0, 10), max: today.toISOString().slice(0, 10) };
   }, []);
-
-  /** '' is the "All …" sentinel of the native selects; the state keeps null. */
-  const fromSelect = (value: string): string | null => (value === '' ? null : value);
 
   /**
    * Narrowing by department or manager can strip the selected user out of the
@@ -118,51 +132,31 @@ export function SpendFilterBar({
         />
       </div>
 
-      <select
-        className={styles.select}
-        value={filters.department ?? ''}
-        aria-label="Filter by department"
-        onChange={(event) => changeScope({ department: fromSelect(event.target.value) })}
-      >
-        <option value="">All departments</option>
-        {departments.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+      <FilterCombobox
+        options={departments}
+        value={filters.department}
+        noun="department"
+        onChange={(department) => changeScope({ department })}
+      />
 
-      <select
-        className={styles.select}
-        value={filters.b1Manager ?? ''}
-        aria-label="Filter by B-1 manager"
-        onChange={(event) => changeScope({ b1Manager: fromSelect(event.target.value) })}
-      >
-        <option value="">All B-1 managers</option>
-        {b1Managers.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+      <FilterCombobox
+        options={b1Managers}
+        value={filters.b1Manager}
+        noun="B-1 manager"
+        onChange={(b1Manager) => changeScope({ b1Manager })}
+      />
 
-      <select
-        className={styles.select}
-        value={filters.b2Manager ?? ''}
-        aria-label="Filter by B-2 manager"
-        onChange={(event) => changeScope({ b2Manager: fromSelect(event.target.value) })}
-      >
-        <option value="">All B-2 managers</option>
-        {b2Managers.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+      <FilterCombobox
+        options={b2Managers}
+        value={filters.b2Manager}
+        noun="B-2 manager"
+        onChange={(b2Manager) => changeScope({ b2Manager })}
+      />
 
-      <UserCombobox
-        people={users}
+      <FilterCombobox
+        options={users}
         value={filters.login}
+        noun="user"
         onChange={(login) => onFiltersChange({ login })}
       />
 
