@@ -5,6 +5,7 @@ import { cx } from '../../lib/cx.js';
 import type { SpendFilters } from '../../lib/metrics/spendFilter.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import styles from './SpendFilterBar.module.css';
+import { UserCombobox } from './UserCombobox.js';
 
 /**
  * The spend section's own controls: its date window (billing data trails the
@@ -47,12 +48,20 @@ export function SpendFilterBar({
   const departments = useMemo(() => options(people, 'department'), [people]);
   const b1Managers = useMemo(() => options(people, 'b1Manager'), [people]);
   const b2Managers = useMemo(() => options(people, 'b2Manager'), [people]);
+  /**
+   * The user search only offers people who survive the other filters, so a
+   * pick can never produce an empty chart.
+   */
   const users = useMemo(
     () =>
-      [...people].sort(
-        (a, b) => a.displayName.localeCompare(b.displayName) || a.login.localeCompare(b.login),
-      ),
-    [people],
+      people.filter((person) => {
+        if (filters.department !== null && person.department !== filters.department) return false;
+        if (filters.b1Manager !== null && person.b1Manager !== filters.b1Manager) return false;
+        if (filters.b2Manager !== null && person.b2Manager !== filters.b2Manager) return false;
+        if (filters.unmappedOnly && person.mapped) return false;
+        return true;
+      }),
+    [people, filters.department, filters.b1Manager, filters.b2Manager, filters.unmappedOnly],
   );
 
   const pickerBounds = useMemo(() => {
@@ -63,6 +72,26 @@ export function SpendFilterBar({
 
   /** '' is the "All …" sentinel of the native selects; the state keeps null. */
   const fromSelect = (value: string): string | null => (value === '' ? null : value);
+
+  /**
+   * Narrowing by department or manager can strip the selected user out of the
+   * roster; dropping the stale login keeps the two controls consistent rather
+   * than leaving a filter that matches nobody.
+   */
+  const changeScope = (patch: Partial<SpendFilters>) => {
+    const next = { ...filters, ...patch };
+    const selected =
+      next.login === null ? null : people.find((person) => person.login === next.login);
+    const stale =
+      selected !== undefined &&
+      selected !== null &&
+      ((next.department !== null && selected.department !== next.department) ||
+        (next.b1Manager !== null && selected.b1Manager !== next.b1Manager) ||
+        (next.b2Manager !== null && selected.b2Manager !== next.b2Manager) ||
+        (next.unmappedOnly && selected.mapped));
+
+    onFiltersChange(stale ? { ...patch, login: null } : patch);
+  };
 
   return (
     <div className={styles.filterBar}>
@@ -93,7 +122,7 @@ export function SpendFilterBar({
         className={styles.select}
         value={filters.department ?? ''}
         aria-label="Filter by department"
-        onChange={(event) => onFiltersChange({ department: fromSelect(event.target.value) })}
+        onChange={(event) => changeScope({ department: fromSelect(event.target.value) })}
       >
         <option value="">All departments</option>
         {departments.map((option) => (
@@ -107,7 +136,7 @@ export function SpendFilterBar({
         className={styles.select}
         value={filters.b1Manager ?? ''}
         aria-label="Filter by B-1 manager"
-        onChange={(event) => onFiltersChange({ b1Manager: fromSelect(event.target.value) })}
+        onChange={(event) => changeScope({ b1Manager: fromSelect(event.target.value) })}
       >
         <option value="">All B-1 managers</option>
         {b1Managers.map((option) => (
@@ -121,7 +150,7 @@ export function SpendFilterBar({
         className={styles.select}
         value={filters.b2Manager ?? ''}
         aria-label="Filter by B-2 manager"
-        onChange={(event) => onFiltersChange({ b2Manager: fromSelect(event.target.value) })}
+        onChange={(event) => changeScope({ b2Manager: fromSelect(event.target.value) })}
       >
         <option value="">All B-2 managers</option>
         {b2Managers.map((option) => (
@@ -131,25 +160,17 @@ export function SpendFilterBar({
         ))}
       </select>
 
-      <select
-        className={styles.select}
-        value={filters.login ?? ''}
-        aria-label="Filter by user"
-        onChange={(event) => onFiltersChange({ login: fromSelect(event.target.value) })}
-      >
-        <option value="">All users</option>
-        {users.map((person) => (
-          <option key={person.login} value={person.login}>
-            {person.mapped ? `${person.displayName} (${person.login})` : person.login}
-          </option>
-        ))}
-      </select>
+      <UserCombobox
+        people={users}
+        value={filters.login}
+        onChange={(login) => onFiltersChange({ login })}
+      />
 
       <button
         type="button"
         className={cx(styles.unmapped, filters.unmappedOnly && styles.unmappedActive)}
         aria-pressed={filters.unmappedOnly}
-        onClick={() => onFiltersChange({ unmappedOnly: !filters.unmappedOnly })}
+        onClick={() => changeScope({ unmappedOnly: !filters.unmappedOnly })}
       >
         Unmapped
       </button>
