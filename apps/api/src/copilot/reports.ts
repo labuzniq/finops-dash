@@ -22,6 +22,26 @@ function safeUrl(url: string): string {
   return url.split('?')[0] ?? url;
 }
 
+/**
+ * Network failures from fetch/undici bury the actionable detail (ECONNREFUSED,
+ * UND_ERR_CONNECT_TIMEOUT, self-signed-certificate errors from TLS-intercepting
+ * proxies, …) in `error.code` and a nested `cause` chain. Surface both, so a
+ * corporate-proxy failure is diagnosable from the log line alone.
+ */
+function errorClues(error: unknown): { code: string | null; causeChain: string[] } {
+  let code: string | null = null;
+  const causeChain: string[] = [];
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if (code === null && 'code' in current && typeof current.code === 'string') {
+      code = current.code;
+    }
+    if (current !== error) causeChain.push(current.message);
+    current = current.cause;
+  }
+  return { code, causeChain };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33,6 +53,14 @@ function sleep(ms: number): Promise<void> {
 async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    log.debug(
+      {
+        'http.request.method': init?.method ?? 'GET',
+        'url.full': safeUrl(url),
+        dash: { attempt, maxAttempts: MAX_ATTEMPTS },
+      },
+      'github request',
+    );
     try {
       const response = await fetch(url, init);
       if ((response.status >= 500 || response.status === 429) && attempt < MAX_ATTEMPTS) {
@@ -50,12 +78,23 @@ async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
       return response;
     } catch (error) {
       lastError = error;
+      const clues = errorClues(error);
       if (attempt < MAX_ATTEMPTS) {
         log.warn(
-          { 'url.full': safeUrl(url), err: error, dash: { attempt, maxAttempts: MAX_ATTEMPTS } },
+          { 'url.full': safeUrl(url), err: error, dash: { attempt, maxAttempts: MAX_ATTEMPTS, ...clues } },
           'github request failed — retrying',
         );
         await sleep(RETRY_BASE_MS * attempt);
+      } else {
+        log.error(
+          {
+            'event.outcome': 'failure',
+            'url.full': safeUrl(url),
+            err: error,
+            dash: { attempts: MAX_ATTEMPTS, ...clues },
+          },
+          'github request failed on every attempt — likely proxy/egress/TLS if the code is a connect or certificate error',
+        );
       }
     }
   }
@@ -99,6 +138,20 @@ export class GithubApi {
 
     if (!response.ok) {
       const body = await response.text();
+      log.error(
+        {
+          'event.outcome': 'failure',
+          'url.domain': 'api.github.com',
+          'url.path': path,
+          'http.response.status_code': response.status,
+          dash: {
+            rateLimitRemaining: response.headers.get('x-ratelimit-remaining'),
+            githubSso: response.headers.get('x-github-sso'),
+            body: body.slice(0, 200),
+          },
+        },
+        'github api request rejected',
+      );
       throw new Error(`GitHub ${response.status} on ${path}: ${describe(response, body)}`);
     }
 
@@ -133,6 +186,20 @@ export class GithubApi {
 
     if (!response.ok) {
       const body = await response.text();
+      log.error(
+        {
+          'event.outcome': 'failure',
+          'url.domain': 'api.github.com',
+          'url.path': `/orgs/${this.org}/copilot/metrics/reports/${safeUrl(reportPath)}`,
+          'http.response.status_code': response.status,
+          dash: {
+            rateLimitRemaining: response.headers.get('x-ratelimit-remaining'),
+            githubSso: response.headers.get('x-github-sso'),
+            body: body.slice(0, 200),
+          },
+        },
+        'github report request rejected',
+      );
       throw new Error(
         `GitHub ${response.status} on reports/${reportPath}: ${describe(response, body)}`,
       );
@@ -158,10 +225,21 @@ export class GithubApi {
 
 /** Fetch one presigned NDJSON shard and parse its non-empty lines. */
 async function downloadNdjson<T>(link: string): Promise<T[]> {
+  // Shards live on a different host than api.github.com — a corporate proxy
+  // that allowlists only api.github.com fails exactly here, so name the host.
+  const host = new URL(link).hostname;
   // Presigned URL carries its own auth in the query string — no headers.
   const response = await fetchRetry(link);
   if (!response.ok) {
-    throw new Error(`report shard download failed: ${response.status}`);
+    log.error(
+      {
+        'event.outcome': 'failure',
+        'url.domain': host,
+        'http.response.status_code': response.status,
+      },
+      'report shard download rejected — check egress to this host',
+    );
+    throw new Error(`report shard download failed: ${response.status} (host ${host})`);
   }
 
   const text = await response.text();

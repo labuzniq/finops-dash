@@ -47,7 +47,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.code(401).send({ error: 'Not authenticated' });
   });
 
-  app.get('/api/health', async () => ({ status: 'ok', source: env.COPILOT_SOURCE }));
+  // Health checks poll constantly and drown the log; suppress their request
+  // lines unless the logger runs at debug/trace, where full traffic is wanted.
+  app.get(
+    '/api/health',
+    { logLevel: logger.isLevelEnabled('debug') ? 'info' : 'warn' },
+    async () => ({ status: 'ok', source: env.COPILOT_SOURCE }),
+  );
 
   await app.register(authRoutes);
   await app.register(dashboardRoutes);
