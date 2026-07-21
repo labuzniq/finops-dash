@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   bigserial,
   boolean,
   date,
@@ -16,10 +17,11 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { PLANS, REFRESH_STATUSES } from '@dash/shared';
+import { PLANS, REFRESH_KINDS, REFRESH_STATUSES } from '@dash/shared';
 
 export const planEnum = pgEnum('plan', PLANS);
 export const refreshStatusEnum = pgEnum('refresh_status', REFRESH_STATUSES);
+export const refreshKindEnum = pgEnum('refresh_kind', REFRESH_KINDS);
 
 /**
  * Current seat state, keyed by login. A refresh replaces this wholesale —
@@ -145,13 +147,77 @@ export const modelDaily = pgTable(
 );
 
 /**
- * Daily org spend. Money is stored in integer cents — Postgres `numeric`
- * round-trips as a string and floats drift; cents do neither.
+ * Report 2 (billing usage report) rows — the sole money authority, licences
+ * included. Money is bigint nano-dollars (1e-9 USD): CSV amounts carry up to
+ * 9 decimals, so integer cents cannot hold them; nano-dollars keep sums exact.
+ * Conversion to dollars happens once, at the API response edge (nanoToDollars).
  */
-export const spendDaily = pgTable('spend_daily', {
-  date: date('date').primaryKey(),
-  licenseCents: integer('license_cents').notNull(),
-  premiumOverageCents: integer('premium_overage_cents').notNull(),
+export const billingDaily = pgTable(
+  'billing_daily',
+  {
+    date: date('date').notNull(),
+    login: varchar('login', { length: 100 }).notNull(),
+    /**
+     * Validated at import against BILLING_SKUS — kept varchar, not a pg enum,
+     * so an unknown sku in a future CSV fails loudly at import time instead of
+     * requiring a migration to even name it.
+     */
+    sku: varchar('sku', { length: 40 }).notNull(),
+    /** Credits or user-months × 1e9. */
+    quantityNano: bigint('quantity_nano', { mode: 'bigint' }).notNull(),
+    /** USD × 1e9. */
+    grossNano: bigint('gross_nano', { mode: 'bigint' }).notNull(),
+    discountNano: bigint('discount_nano', { mode: 'bigint' }).notNull(),
+    netNano: bigint('net_nano', { mode: 'bigint' }).notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.login, table.sku] })],
+);
+
+/**
+ * Report 1 rows — per-day, per-login, per-model AI-credit statistics.
+ * Never summed into money totals: it overlaps Report 2's AI-credit money by
+ * construction, and only billing_daily feeds the money KPIs.
+ */
+export const modelSpendDaily = pgTable(
+  'model_spend_daily',
+  {
+    date: date('date').notNull(),
+    login: varchar('login', { length: 100 }).notNull(),
+    model: varchar('model', { length: 80 }).notNull(),
+    /** AI-credit quantity × 1e9. */
+    creditsNano: bigint('credits_nano', { mode: 'bigint' }).notNull(),
+    grossNano: bigint('gross_nano', { mode: 'bigint' }).notNull(),
+    discountNano: bigint('discount_nano', { mode: 'bigint' }).notNull(),
+    netNano: bigint('net_nano', { mode: 'bigint' }).notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.login, table.model] })],
+);
+
+/**
+ * GitHub org user export — the identity bridge from login to SAML name id.
+ * No FKs to billing or jira tables: imports arrive in any order and the
+ * login → saml → person join happens in code at read time.
+ */
+export const githubUsers = pgTable('github_users', {
+  login: varchar('login', { length: 100 }).primaryKey(),
+  /** May be blank in the export — stored as null, renders unmapped. */
+  samlNameId: varchar('saml_name_id', { length: 40 }),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** JIRA Insight batch sync — one row per person, keyed by SAML name id. */
+export const jiraPeople = pgTable('jira_people', {
+  /** Stored uppercase; matched case-insensitively against github_users. */
+  samlNameId: varchar('saml_name_id', { length: 40 }).primaryKey(),
+  firstName: varchar('first_name', { length: 100 }),
+  lastName: varchar('last_name', { length: 100 }),
+  department: varchar('department', { length: 200 }),
+  /** `referencedObject.label` verbatim. */
+  b1Manager: varchar('b1_manager', { length: 200 }),
+  b2Manager: varchar('b2_manager', { length: 200 }),
+  jiraUserId: varchar('jira_user_id', { length: 40 }),
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -160,6 +226,7 @@ export const refreshJobs = pgTable(
   'refresh_jobs',
   {
     id: text('id').primaryKey(),
+    kind: refreshKindEnum('kind').notNull().default('copilot'),
     status: refreshStatusEnum('status').notNull().default('pending'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -167,11 +234,13 @@ export const refreshJobs = pgTable(
     error: text('error'),
   },
   // Single-flight is enforced here, not by a check-then-insert race: at most one
-  // job may sit in an active status at a time. A concurrent insert loses on this
-  // partial unique index instead of starting a second, colliding sync.
+  // job per kind may sit in an active status at a time — a Copilot refresh and
+  // a JIRA sync may run concurrently, but never two of the same kind. A
+  // concurrent insert loses on this partial unique index instead of starting a
+  // second, colliding sync.
   (table) => [
     uniqueIndex('refresh_jobs_single_flight_idx')
-      .on(sql`(true)`)
+      .on(table.kind)
       .where(sql`${table.status} in ('pending', 'running')`),
   ],
 );
@@ -248,8 +317,14 @@ export const otlpLogRecords = pgTable(
 
 export type SeatRow = typeof copilotSeats.$inferSelect;
 export type SeatInsert = typeof copilotSeats.$inferInsert;
-export type SpendRow = typeof spendDaily.$inferSelect;
-export type SpendInsert = typeof spendDaily.$inferInsert;
+export type BillingDailyRow = typeof billingDaily.$inferSelect;
+export type BillingDailyInsert = typeof billingDaily.$inferInsert;
+export type ModelSpendDailyRow = typeof modelSpendDaily.$inferSelect;
+export type ModelSpendDailyInsert = typeof modelSpendDaily.$inferInsert;
+export type GithubUserRow = typeof githubUsers.$inferSelect;
+export type GithubUserInsert = typeof githubUsers.$inferInsert;
+export type JiraPersonRow = typeof jiraPeople.$inferSelect;
+export type JiraPersonInsert = typeof jiraPeople.$inferInsert;
 export type OrgDailyRow = typeof orgDaily.$inferSelect;
 export type OrgDailyInsert = typeof orgDaily.$inferInsert;
 export type ModelDailyRow = typeof modelDaily.$inferSelect;

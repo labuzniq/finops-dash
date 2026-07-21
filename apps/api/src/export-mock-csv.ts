@@ -4,8 +4,7 @@
  * empty and these files are how a demo database gets populated:
  *
  *   • seats.csv          — POST /api/import (or the UI's Add data → Import)
- *   • org_daily.csv, model_daily.csv, spend_daily.csv — `psql \copy`, see
- *     data/mock/README.md
+ *   • org_daily.csv, model_daily.csv — `psql \copy`, see data/mock/README.md
  *
  * `pnpm --filter @dash/api mock:export [days]` regenerates them; activity
  * dates are anchored to the day of export.
@@ -13,7 +12,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { MockCopilotClient } from './copilot/mock.js';
-import { deriveSpend } from './services/refresh.js';
 
 const days = Number(process.argv[2] ?? 90);
 const outDir = fileURLToPath(new URL('../../../data/mock', import.meta.url));
@@ -33,7 +31,6 @@ function csv(headers: readonly string[], rows: ReadonlyArray<readonly Cell[]>): 
 }
 
 const snapshot = await new MockCopilotClient().fetchSnapshot(days);
-const spend = deriveSpend(snapshot.seats, snapshot.offRosterPremiumRequests, snapshot.orgDaily);
 
 mkdirSync(outDir, { recursive: true });
 
@@ -102,10 +99,6 @@ const files: Record<string, string> = {
       m.locAdded,
       m.locDeleted,
     ]),
-  ),
-  'spend_daily.csv': csv(
-    ['date', 'license_cents', 'premium_overage_cents'],
-    spend.map((p) => [p.date, p.licenseCents, p.premiumOverageCents]),
   ),
 };
 
