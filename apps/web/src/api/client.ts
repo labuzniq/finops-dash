@@ -1,9 +1,10 @@
 import type {
+  BillingImportResult,
   CopilotSeat,
   DateRange,
-  ImportResult,
   ModelUsage,
   RefreshJob,
+  RefreshKind,
   SpendPayload,
   TelemetryRollupRow,
   UsageHistory,
@@ -53,10 +54,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${path} failed: ${response.status}`);
+    // The API answers every failure with `{ error }` — a rejected CSV names the
+    // offending line, and a 503 explains that JIRA is unconfigured. Those read
+    // far better than a bare status, so prefer them when present.
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `${init?.method ?? 'GET'} ${path} failed: ${response.status}`);
   }
 
   return (await response.json()) as T;
+}
+
+/** Raw-CSV POST. Same session cookie and error unwrapping as every other call. */
+function postCsv<T>(path: string, csv: string): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/csv' },
+    body: csv,
+  });
 }
 
 export async function fetchSeats(): Promise<CopilotSeat[]> {
@@ -86,22 +100,17 @@ export async function fetchModels(range: DateRange): Promise<ModelUsage[]> {
 }
 
 /**
- * Manual CSV/JSON/NDJSON import. `content` is the raw file text or JSON rows.
- * A 422 (nothing landed, but the server explained why) is a normal outcome we
- * surface to the user, not an exception — so this reads the body directly.
+ * One GitHub billing usage report (Report 1 or Report 2 — the server detects
+ * which from the header). The response body *is* the result, unwrapped.
  */
-export async function importData(content: string): Promise<ImportResult> {
-  const response = await fetch(`${BASE}/import`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
-  });
+export function importBillingReport(csv: string): Promise<BillingImportResult> {
+  return postCsv<BillingImportResult>('/import/billing', csv);
+}
 
-  const payload = (await response.json().catch(() => null)) as { result?: ImportResult } | null;
-  if (!payload?.result) {
-    throw new Error(`Import failed: ${response.status}`);
-  }
-  return payload.result;
+/** GitHub org user export (login → saml_name_id). Wrapped in `{ result }`. */
+export async function importUserExport(csv: string): Promise<{ rowsUpserted: number }> {
+  const { result } = await postCsv<{ result: { rowsUpserted: number } }>('/import/users', csv);
+  return result;
 }
 
 /** Claude Code telemetry, rolled up to (day, user, model, metric, type). */
@@ -122,7 +131,17 @@ export async function fetchRefreshJob(id: string): Promise<RefreshJob> {
   return job;
 }
 
-export async function fetchLatestRefreshJob(): Promise<RefreshJob | null> {
-  const { job } = await request<{ job: RefreshJob | null }>('/refresh/latest');
+export async function fetchLatestRefreshJob(kind: RefreshKind = 'copilot'): Promise<RefreshJob | null> {
+  const { job } = await request<{ job: RefreshJob | null }>(`/refresh/latest?kind=${kind}`);
+  return job;
+}
+
+/**
+ * Kick off a JIRA identity sync — same job table as the Copilot refresh, so the
+ * returned job is polled through `fetchRefreshJob`. A 503 (JIRA env unset)
+ * surfaces the server's own message via the shared error unwrapping.
+ */
+export async function startJiraSync(): Promise<RefreshJob> {
+  const { job } = await request<{ job: RefreshJob }>('/jira/sync', { method: 'POST' });
   return job;
 }

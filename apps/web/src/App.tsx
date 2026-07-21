@@ -5,10 +5,12 @@ import { cx } from './lib/cx.js';
 import { downloadSeatsCsv } from './lib/exportCsv.js';
 import { rangeLabel } from './lib/format.js';
 import {
-  useImport,
+  useJiraSync,
+  useLatestJiraJob,
   useLatestRefreshJob,
   useModels,
   useRefresh,
+  useReportImports,
   useSeats,
   useUsage,
 } from './hooks/useCopilotData.js';
@@ -47,7 +49,9 @@ export function App() {
   const modelsQuery = useModels(state.range);
   const latestJobQuery = useLatestRefreshJob();
   const { refresh, isRunning, error: refreshError } = useRefresh();
-  const importState = useImport();
+  const jiraJobQuery = useLatestJiraJob();
+  const { sync: syncJira, isRunning: isJiraSyncing, error: jiraError } = useJiraSync();
+  const imports = useReportImports();
 
   const metrics = useDashboardMetrics(seatsQuery.data ?? EMPTY_SEATS, state);
 
@@ -191,14 +195,17 @@ export function App() {
           latestJob={latestJobQuery.data ?? null}
           isRefreshing={isRunning}
           refreshError={refreshError}
-          importState={importState}
+          jiraJob={jiraJobQuery.data ?? null}
+          isJiraSyncing={isJiraSyncing}
+          jiraError={jiraError}
+          imports={imports}
           onTabChange={(tab) => dispatch({ type: 'setModalTab', tab })}
           onClose={() => {
-            importState.reset();
+            imports.reset();
             dispatch({ type: 'closeModal' });
           }}
           onRefresh={refresh}
-          onImport={importState.runImport}
+          onJiraSync={syncJira}
         />
       )}
     </div>

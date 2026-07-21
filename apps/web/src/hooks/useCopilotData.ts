@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import type {
+  BillingImportResult,
   CopilotSeat,
   DateRange,
-  ImportResult,
   ModelUsage,
   RefreshJob,
   UsageHistory,
@@ -14,7 +14,9 @@ import {
   fetchRefreshJob,
   fetchSeats,
   fetchUsage,
-  importData,
+  importBillingReport,
+  importUserExport,
+  startJiraSync,
   startRefresh,
 } from '../api/client.js';
 
@@ -56,20 +58,68 @@ export function useModels(range: DateRange) {
   });
 }
 
-export interface UseImport {
-  runImport: (content: string) => void;
+/** The three upload slots of the Add-data modal. */
+export type ImportSlot = 'model' | 'cost' | 'users';
+
+/** What one slot ended up doing — rendered next to the slot that produced it. */
+export type SlotOutcome =
+  | { status: 'billing'; result: BillingImportResult }
+  | { status: 'users'; rowsUpserted: number }
+  | { status: 'error'; message: string };
+
+export type SlotOutcomes = Partial<Record<ImportSlot, SlotOutcome>>;
+
+/**
+ * Import order. The user export lands first so the billing imports can report
+ * an accurate `unknownLogins` — that set is computed against `github_users`.
+ */
+const SLOT_ORDER: ImportSlot[] = ['users', 'cost', 'model'];
+
+export interface UseReportImports {
+  /** Import every staged slot, in `SLOT_ORDER`. Values are raw CSV text. */
+  runImport: (files: Partial<Record<ImportSlot, string>>) => void;
   isImporting: boolean;
-  result: ImportResult | null;
-  error: string | null;
+  outcomes: SlotOutcomes;
   reset: () => void;
 }
 
-/** Manual CSV/JSON import; invalidates the dashboard queries on success. */
-export function useImport(): UseImport {
+const NO_OUTCOMES: SlotOutcomes = {};
+
+/**
+ * The billing-report uploads. Each slot succeeds or fails on its own — a
+ * rejected cost report must not discard a user export that already landed —
+ * so failures are recorded per slot rather than thrown, and the dashboard
+ * queries are invalidated when at least one slot got through.
+ */
+export function useReportImports(): UseReportImports {
   const queryClient = useQueryClient();
+
   const mutation = useMutation({
-    mutationFn: importData,
-    onSuccess: () => {
+    mutationFn: async (files: Partial<Record<ImportSlot, string>>): Promise<SlotOutcomes> => {
+      const outcomes: SlotOutcomes = {};
+
+      for (const slot of SLOT_ORDER) {
+        const csv = files[slot];
+        if (csv === undefined) continue;
+
+        try {
+          if (slot === 'users') {
+            const { rowsUpserted } = await importUserExport(csv);
+            outcomes[slot] = { status: 'users', rowsUpserted };
+          } else {
+            outcomes[slot] = { status: 'billing', result: await importBillingReport(csv) };
+          }
+        } catch (error) {
+          outcomes[slot] = { status: 'error', message: (error as Error).message };
+        }
+      }
+
+      return outcomes;
+    },
+    onSuccess: (outcomes) => {
+      const landed = Object.values(outcomes).some((outcome) => outcome.status !== 'error');
+      if (!landed) return;
+
       void queryClient.invalidateQueries({ queryKey: ['seats'] });
       void queryClient.invalidateQueries({ queryKey: ['spend'] });
       void queryClient.invalidateQueries({ queryKey: ['models'] });
@@ -78,10 +128,9 @@ export function useImport(): UseImport {
   });
 
   return {
-    runImport: (content: string) => mutation.mutate(content),
+    runImport: (files) => mutation.mutate(files),
     isImporting: mutation.isPending,
-    result: mutation.data ?? null,
-    error: mutation.error ? (mutation.error as Error).message : null,
+    outcomes: mutation.data ?? NO_OUTCOMES,
     reset: () => mutation.reset(),
   };
 }
@@ -89,8 +138,16 @@ export function useImport(): UseImport {
 /** The last sync of any status — drives the "synced 2h ago" note. */
 export function useLatestRefreshJob() {
   return useQuery<RefreshJob | null>({
-    queryKey: ['refresh', 'latest'],
-    queryFn: fetchLatestRefreshJob,
+    queryKey: ['refresh', 'latest', 'copilot'],
+    queryFn: () => fetchLatestRefreshJob('copilot'),
+  });
+}
+
+/** The last JIRA identity sync — the modal's JIRA row reads its status. */
+export function useLatestJiraJob() {
+  return useQuery<RefreshJob | null>({
+    queryKey: ['refresh', 'latest', 'jira'],
+    queryFn: () => fetchLatestRefreshJob('jira'),
   });
 }
 
@@ -135,5 +192,51 @@ export function useRefresh(): UseRefresh {
     refresh: () => start.mutate(),
     isRunning: jobId !== null || start.isPending,
     error: job?.status === 'failed' ? job.error : null,
+  };
+}
+
+export interface UseJiraSync {
+  sync: () => void;
+  isRunning: boolean;
+  /** A failed job's error, or the 503 message when JIRA env is unconfigured. */
+  error: string | null;
+}
+
+/**
+ * The JIRA identity sync. Same job table and polling shape as the Copilot
+ * refresh (kind `jira`); on success only `spend` changes, since identity is
+ * joined into the spend payload alone.
+ */
+export function useJiraSync(): UseJiraSync {
+  const queryClient = useQueryClient();
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const start = useMutation({
+    mutationFn: startJiraSync,
+    onSuccess: (job) => setJobId(job.id),
+  });
+
+  const { data: job } = useQuery<RefreshJob>({
+    queryKey: ['refresh', jobId],
+    queryFn: () => fetchRefreshJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => (isSettled(query.state.data) ? false : POLL_INTERVAL_MS),
+  });
+
+  useEffect(() => {
+    if (!isSettled(job)) return;
+
+    setJobId(null);
+    if (job?.status === 'succeeded') {
+      void queryClient.invalidateQueries({ queryKey: ['spend'] });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest', 'jira'] });
+  }, [job, queryClient]);
+
+  return {
+    sync: () => start.mutate(),
+    isRunning: jobId !== null || start.isPending,
+    // A 503 from the start call never produces a job, so surface it directly.
+    error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),
   };
 }

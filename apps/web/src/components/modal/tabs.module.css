@@ -1,4 +1,4 @@
-/* Shared styling for the three Add-data tab bodies. */
+/* Shared styling for the two Add-data tab bodies. */
 
 .sourceList {
   display: flex;
@@ -36,6 +36,10 @@
 
 .dotRunning {
   background: var(--accent);
+}
+
+.dotFailed {
+  background: var(--neg);
 }
 
 .sourceBody {
@@ -83,36 +87,56 @@
   cursor: pointer;
 }
 
-/* — CSV tab — */
+/* — Upload reports tab — */
+
+/* The two AI usage reports: equal weight, side by side. */
+.slotPair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.slot {
+  min-width: 0;
+}
+
+/* The user export is supporting material, not part of the primary pair. */
+.slotSecondary {
+  margin-top: 14px;
+}
 
 .dropzone {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 150px;
+  text-align: center;
+  gap: 4px;
+  height: 132px;
+  padding: 0 12px;
   border: 1.5px dashed var(--border);
   border-radius: 12px;
   background: var(--card2);
   cursor: pointer;
 }
 
-.dropzone:hover {
+.dropzone:hover,
+.dropzoneActive {
   border-color: var(--accent);
 }
 
-.badge {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: color-mix(in oklab, var(--accent) 12%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--accent);
-  font-size: 16px;
-  font-weight: 600;
+.dropzoneActive {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.dropzoneError {
+  border-color: var(--neg);
+}
+
+.dropzoneSecondary {
+  height: 78px;
+  border-radius: 10px;
+  background: transparent;
 }
 
 .dropTitle {
@@ -120,9 +144,18 @@
   font-weight: 600;
 }
 
+.dropzoneSecondary .dropTitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .dropHint {
   font-size: 11.5px;
   color: var(--faint);
+}
+
+.dropzoneSecondary .dropHint {
+  font-size: 11px;
 }
 
 .hiddenInput {
@@ -133,8 +166,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 12px;
-  padding: 10px 14px;
+  margin-top: 8px;
+  padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--card2);
@@ -143,10 +176,27 @@
 .chipName {
   font: 500 12px ui-monospace, Menlo, monospace;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slotResult {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.slotError {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--neg);
+  line-height: 1.5;
 }
 
 .columnsNote {
-  margin-top: 14px;
+  margin-top: 12px;
   font-size: 11.5px;
   color: var(--muted);
   line-height: 1.6;
@@ -155,64 +205,4 @@
 .mono {
   font-family: ui-monospace, Menlo, monospace;
   color: var(--text);
-}
-
-.link {
-  font-weight: 600;
-  color: var(--accent);
-}
-
-/* — Manual tab — */
-
-.form {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.label {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 5px;
-  display: block;
-}
-
-.req {
-  color: var(--accent);
-}
-
-.input {
-  width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 12.5px;
-}
-
-.input:focus {
-  border-color: var(--accent);
-}
-
-.addRow {
-  grid-column: 1 / -1;
-}
-
-.addRowButton {
-  height: 32px;
-  padding: 0 14px;
-  border-radius: 8px;
-  border: 1px dashed var(--border);
-  background: transparent;
-  color: var(--muted);
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
-.addRowButton:hover {
-  color: var(--accent);
-  border-color: var(--accent);
 }

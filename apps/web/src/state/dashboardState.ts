@@ -11,7 +11,7 @@ import type { SortDirection, SortKey } from '../lib/metrics/table.js';
  * from this plus the fetched data — no metric is ever stored.
  */
 
-export type ModalTab = 'sources' | 'csv' | 'manual';
+export type ModalTab = 'upload' | 'sources';
 export type TableView = 'users' | 'models';
 
 export interface DashboardState {
@@ -57,7 +57,7 @@ export const initialDashboardState: DashboardState = {
   tableView: 'users',
   usageMetric: {},
   modalOpen: false,
-  modalTab: 'sources',
+  modalTab: 'upload',
 };
 
 export type DashboardAction =
