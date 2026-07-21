@@ -1,0 +1,78 @@
+/*
+ * A column that stretches to the grid row's height — the spacer between the
+ * headline figure and the footer absorbs whatever the trend chart leaves over.
+ * No min-height here: the chart sets the height, never this card.
+ */
+.card {
+  padding: 16px 18px;
+  min-width: 0;
+}
+
+.kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.value {
+  margin-top: 10px;
+  font-size: 26px;
+  font-weight: 650;
+  color: var(--neg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.unknown {
+  margin-top: 10px;
+  font-size: 26px;
+  font-weight: 650;
+  color: var(--faint);
+  line-height: 1.1;
+}
+
+.sub {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Pushes the bar and its caption to the bottom of whatever height we get. */
+.spacer {
+  flex: 1;
+  min-height: 12px;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border2);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--neg);
+}
+
+.footer {
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.share {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.note {
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.45;
+}

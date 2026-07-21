@@ -9,16 +9,18 @@ import {
   spendKpis,
   spendTrend,
   spendUserRows,
+  wastedSpend,
 } from '../../lib/metrics/spend.js';
 import { applySpendFilter, filterLogins } from '../../lib/metrics/spendFilter.js';
 import { paginate } from '../../lib/metrics/table.js';
 import { spendRangeBounds, useSpendData } from '../../hooks/useSpendData.js';
 import type { DashboardAction, DashboardState } from '../../state/dashboardState.js';
-import { ModelBreakdownTable } from './ModelBreakdownTable.js';
+import { ModelSpendChart } from './ModelSpendChart.js';
 import { SpendFilterBar } from './SpendFilterBar.js';
 import { SpendKpiRow } from './SpendKpiRow.js';
 import { SpendTrendCard } from './SpendTrendCard.js';
 import { SpendUserTable } from './SpendUserTable.js';
+import { WastedSpendCard } from './WastedSpendCard.js';
 import styles from './SpendSection.module.css';
 
 /**
@@ -70,6 +72,10 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
   );
   const page = useMemo(() => paginate(sorted, state.spendPage), [sorted, state.spendPage]);
 
+  // Derived from the same filtered rows the table shows, so the rail can never
+  // disagree with the KPIs about who is being counted.
+  const waste = useMemo(() => wastedSpend(userRows), [userRows]);
+
   const label = rangeLabel(state.spendRange);
 
   return (
@@ -103,7 +109,7 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
 
           <div className={styles.split}>
             <SpendTrendCard trend={trend} subtitle={label} />
-            <ModelBreakdownTable rows={breakdown} />
+            <WastedSpendCard waste={waste} rangeLabel={label} />
           </div>
 
           <SpendUserTable
@@ -113,6 +119,8 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
             onSort={(key) => dispatch({ type: 'toggleSpendSort', key })}
             onPageChange={(pageIndex) => dispatch({ type: 'setSpendPage', page: pageIndex })}
           />
+
+          <ModelSpendChart rows={breakdown} />
         </>
       )}
     </section>

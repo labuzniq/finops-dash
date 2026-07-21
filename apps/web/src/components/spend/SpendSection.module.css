@@ -22,11 +22,16 @@
   color: var(--muted);
 }
 
-/* Trend beside the model breakdown: fluid chart, fixed 380px rail. */
+/*
+ * Trend beside the wasted-spend rail: fluid chart, narrow fixed rail. Grid
+ * stretches both to the row height, and the rail declares no height of its own,
+ * so the chart is always what sets it.
+ */
 .split {
   display: grid;
-  grid-template-columns: 1fr 380px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 14px;
+  align-items: stretch;
 }
 
 @media (max-width: 1100px) {
