@@ -4,7 +4,7 @@ import type {
   ImportResult,
   ModelUsage,
   RefreshJob,
-  SpendPoint,
+  SpendPayload,
   TelemetryRollupRow,
   UsageHistory,
 } from '@dash/shared';
@@ -64,9 +64,12 @@ export async function fetchSeats(): Promise<CopilotSeat[]> {
   return seats;
 }
 
-export async function fetchSpend(days: number): Promise<SpendPoint[]> {
-  const { spend } = await request<{ spend: SpendPoint[] }>(`/spend?days=${days}`);
-  return spend;
+/**
+ * The billing-report payload for an inclusive ISO date range. The body *is*
+ * the `SpendPayload` — no wrapper key, unlike the other endpoints.
+ */
+export async function fetchSpend(from: string, to: string): Promise<SpendPayload> {
+  return request<SpendPayload>(`/spend?from=${from}&to=${to}`);
 }
 
 /** Org usage history — daily aggregates, breakdowns, adoption phases. */

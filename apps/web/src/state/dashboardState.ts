@@ -1,6 +1,8 @@
 import type { DateRange } from '@dash/shared';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
+import { EMPTY_SPEND_FILTERS } from '../lib/metrics/spendFilter.js';
+import type { SpendFilters } from '../lib/metrics/spendFilter.js';
 import type { SortDirection, SortKey } from '../lib/metrics/table.js';
 
 /**
@@ -19,6 +21,10 @@ export interface DashboardState {
   sortKey: SortKey;
   sortDirection: SortDirection;
   page: number;
+  /** The spend section's own window — billing data trails usage data. */
+  spendRange: DateRange;
+  /** Org-structure filters over the spend section; recompute everything. */
+  spendFilters: SpendFilters;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
   /**
@@ -36,9 +42,11 @@ export const initialDashboardState: DashboardState = {
   editor: ALL,
   language: ALL,
   search: '',
-  sortKey: 'cost',
+  sortKey: 'premiumRequests',
   sortDirection: -1,
   page: 0,
+  spendRange: { kind: 'preset', days: 28 },
+  spendFilters: EMPTY_SPEND_FILTERS,
   tableView: 'users',
   usageMetric: {},
   modalOpen: false,
@@ -52,6 +60,8 @@ export type DashboardAction =
   | { type: 'setSearch'; search: string }
   | { type: 'toggleSort'; key: SortKey }
   | { type: 'setPage'; page: number }
+  | { type: 'setSpendRange'; range: DateRange }
+  | { type: 'setSpendFilters'; filters: Partial<SpendFilters> }
   | { type: 'setTableView'; view: TableView }
   | { type: 'setUsageMetric'; section: string; metric: string }
   | { type: 'openModal' }
@@ -79,6 +89,13 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
 
     case 'setPage':
       return { ...state, page: action.page };
+
+    case 'setSpendRange':
+      return { ...state, spendRange: action.range };
+    // Partial patches compose — a single filter change keeps the others.
+    case 'setSpendFilters':
+      return { ...state, spendFilters: { ...state.spendFilters, ...action.filters } };
+
     case 'setTableView':
       return { ...state, tableView: action.view };
     case 'setUsageMetric':

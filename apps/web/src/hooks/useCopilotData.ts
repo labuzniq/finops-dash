@@ -6,7 +6,6 @@ import type {
   ImportResult,
   ModelUsage,
   RefreshJob,
-  SpendPoint,
   UsageHistory,
 } from '@dash/shared';
 import {
@@ -14,7 +13,6 @@ import {
   fetchModels,
   fetchRefreshJob,
   fetchSeats,
-  fetchSpend,
   fetchUsage,
   importData,
   startRefresh,
@@ -39,13 +37,6 @@ function isSettled(job: RefreshJob | undefined): boolean {
 
 export function useSeats() {
   return useQuery<CopilotSeat[]>({ queryKey: ['seats'], queryFn: fetchSeats });
-}
-
-export function useSpend() {
-  return useQuery<SpendPoint[]>({
-    queryKey: ['spend', SERIES_DAYS],
-    queryFn: () => fetchSpend(SERIES_DAYS),
-  });
 }
 
 /** Full usage history (org days, breakdowns, adoption) — sliced client-side. */
