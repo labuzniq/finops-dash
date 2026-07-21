@@ -53,5 +53,17 @@
   "51": "Merged Usage Charts — Design",
   "52": "export-mock-csv.ts",
   "53": "Global Constraints",
-  "54": "TeamsPanel.tsx"
+  "54": "TeamsPanel.tsx",
+  "55": "app.ts",
+  "56": "log.ts",
+  "57": "refresh-once.ts",
+  "58": "spend.ts",
+  "59": "Spend Data Redesign — Billing CSV Import + JIRA Identity",
+  "60": "Spend page layout redesign — design",
+  "61": "useAuth.ts",
+  "62": "Global Constraints",
+  "63": "App.tsx",
+  "64": "LoginScreen.tsx",
+  "65": "Sidebar.tsx",
+  "66": "exportCsv.ts"
 }
