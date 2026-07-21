@@ -41,17 +41,19 @@
   text-overflow: ellipsis;
 }
 
+/* Track and fill share the row's hue: the track is the same colour at the
+   chart fill alpha, so a short bar still reads as belonging to its model. */
 .track {
   height: 10px;
   border-radius: 5px;
-  background: var(--border2);
+  background: color-mix(in oklab, var(--row-color) var(--chart-fill), transparent);
   overflow: hidden;
 }
 
 .fill {
   height: 100%;
   border-radius: 5px;
-  background: var(--accent);
+  background: var(--row-color);
 }
 
 .gross,

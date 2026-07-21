@@ -32,8 +32,9 @@ interface TrendChartProps {
 
 /**
  * The spend chart's line treatment, generalised to N series — one line per
- * category, legend from the series names, shared hover readout. No area fill:
- * with several lines a fill would occlude the ones behind it.
+ * category, legend from the series names, shared hover readout. Each line sits
+ * on a translucent fill of its own colour — every fill is painted before every
+ * line, so no series' fill can hide another's line.
  *
  * With `variants`, the chart shows exactly one metric at a time and renders a
  * toggle to switch — related metrics share one card without ever mixing kinds
@@ -117,6 +118,17 @@ export function TrendChart({
               preserveAspectRatio="none"
               aria-hidden
             >
+              {shown.geometry.series.map((series) => (
+                <path
+                  key={`area-${series.name}`}
+                  className={styles.area}
+                  d={series.areaPath}
+                  style={{
+                    fill: `color-mix(in oklab, ${series.colorVar} var(--chart-fill), transparent)`,
+                  }}
+                />
+              ))}
+
               {shown.geometry.series.map((series) => (
                 <path
                   key={series.name}

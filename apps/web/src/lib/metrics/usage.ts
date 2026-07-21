@@ -202,7 +202,7 @@ export function teamStats(seats: readonly CopilotSeat[]): TeamStat[] {
 // --- Multi-series geometry ---------------------------------------------------
 
 export interface MultiSeriesGeometry {
-  series: Array<{ name: string; linePath: string; colorVar: string }>;
+  series: Array<{ name: string; linePath: string; areaPath: string; colorVar: string }>;
   gridLines: GridLine[];
   xLabels: string[];
   hoverPoints: ChartHoverPoint[];
@@ -230,24 +230,57 @@ function colorVarFor(name: string, index: number): string {
   return `var(--chart-${Math.min(index + 1, MAX_SERIES)})`;
 }
 
+/** Contiguous runs of known values — a null day ends one run and starts the next. */
+function runs(
+  points: ReadonlyArray<{ value: number | null }>,
+): Array<Array<{ index: number; value: number }>> {
+  const out: Array<Array<{ index: number; value: number }>> = [];
+  let current: Array<{ index: number; value: number }> = [];
+  points.forEach((point, index) => {
+    if (point.value === null) {
+      if (current.length > 0) out.push(current);
+      current = [];
+      return;
+    }
+    current.push({ index, value: point.value });
+  });
+  if (current.length > 0) out.push(current);
+  return out;
+}
+
 /** Polyline that restarts at null gaps, so unknown days don't draw as zero. */
 function gappedPath(
   points: ReadonlyArray<{ value: number | null }>,
   x: (index: number) => number,
   y: (value: number) => number,
 ): string {
-  const parts: string[] = [];
-  let pen = false;
-  points.forEach((point, index) => {
-    if (point.value === null) {
-      pen = false;
-      return;
-    }
-    const step = `${x(index).toFixed(1)} ${y(point.value).toFixed(1)}`;
-    parts.push(`${pen ? 'L' : 'M'}${step}`);
-    pen = true;
-  });
-  return parts.join(' ');
+  return runs(points)
+    .map(
+      (run) =>
+        `M${run.map((p) => `${x(p.index).toFixed(1)} ${y(p.value).toFixed(1)}`).join(' L')}`,
+    )
+    .join(' ');
+}
+
+/**
+ * The same runs closed down to the baseline, one subpath per run, so the
+ * translucent fill honours the gaps instead of bridging them. A run of a
+ * single day has no width to fill and is skipped.
+ */
+function gappedAreaPath(
+  points: ReadonlyArray<{ value: number | null }>,
+  x: (index: number) => number,
+  y: (value: number) => number,
+): string {
+  return runs(points)
+    .filter((run) => run.length > 1)
+    .map((run) => {
+      const first = run[0] as { index: number; value: number };
+      const last = run[run.length - 1] as { index: number; value: number };
+      const line = run.map((p) => `${x(p.index).toFixed(1)} ${y(p.value).toFixed(1)}`).join(' L');
+      return `M${line} L${x(last.index).toFixed(1)} ${PLOT_BOTTOM} L${x(first.index).toFixed(1)} ${PLOT_BOTTOM} Z`;
+    })
+    .join(' ');
 }
 
 export function buildMultiSeriesGeometry(
@@ -272,6 +305,7 @@ export function buildMultiSeriesGeometry(
     series: input.map((series, index) => ({
       name: series.name,
       linePath: gappedPath(series.points, x, y),
+      areaPath: gappedAreaPath(series.points, x, y),
       colorVar: colorVarFor(series.name, index),
     })),
     gridLines: GRID_FRACTIONS.map((fraction) => ({
