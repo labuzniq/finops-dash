@@ -81,15 +81,6 @@ export async function listSeats(): Promise<CopilotSeat[]> {
   return rows.map((row) => toSeat(row, now));
 }
 
-/**
- * Temporary stub — `spend_daily` is gone with the fake cost model. Real spend
- * reads come from `billing_daily` via services/spend.ts (Task 4), which also
- * removes this endpoint's spend field from routes/dashboard.ts.
- */
-export async function listSpend(_days: number): Promise<never[]> {
-  return [];
-}
-
 function toOrgDailyPoint(row: OrgDailyRow): OrgDailyPoint {
   const { syncedAt: _syncedAt, ...point } = row;
   return point;

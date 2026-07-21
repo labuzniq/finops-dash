@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import type { RefreshJob } from '@dash/shared';
+import type { RefreshJob, RefreshKind } from '@dash/shared';
 import { db } from '../db/client.js';
 import {
   adoptionPhaseDaily,
@@ -30,7 +30,7 @@ const ACTIVE_STATUSES = ['pending', 'running'] as const;
  */
 const STALE_JOB_MS = 5 * 60_000;
 
-function toJob(row: RefreshJobRow): RefreshJob {
+export function toJob(row: RefreshJobRow): RefreshJob {
   return {
     id: row.id,
     kind: row.kind,
@@ -217,31 +217,39 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
   log.debug('snapshot persisted');
 }
 
-/** Runs the sync and records the outcome on the job row. Never throws. */
-async function run(jobId: string): Promise<void> {
-  const client = createCopilotClient();
+/** What one job runs: an ECS action name plus the work, returning a synced count. */
+export interface JobRunner {
+  /** ECS `event.action`, e.g. `copilot-refresh` / `jira-sync`. */
+  action: string;
+  /** Extra `dash.*` context for the job's log lines. */
+  context?: Record<string, unknown>;
+  /** Does the sync; the count lands in the job row's `seats_synced` column. */
+  run(): Promise<number>;
+}
+
+/** Wraps the runner with status transitions and outcome logging. Never throws. */
+async function runJob(jobId: string, runner: JobRunner): Promise<void> {
   const startedAt = Date.now();
   // Everything about the job rides in one `dash` object per line — pino does
   // not merge duplicate keys between child bindings and call payloads.
-  const job = { jobId, copilotSource: client.name };
-  const jobLog = log.child({ 'event.action': 'copilot-refresh' });
+  const job = { jobId, ...runner.context };
+  const jobLog = log.child({ 'event.action': runner.action });
 
   try {
     await db.update(refreshJobs).set({ status: 'running' }).where(eq(refreshJobs.id, jobId));
-    jobLog.info({ dash: { ...job, historyDays: SERIES_DAYS } }, 'refresh job running');
+    jobLog.info({ dash: job }, 'refresh job running');
 
-    const snapshot = await client.fetchSnapshot(SERIES_DAYS);
-    await persistSnapshot(snapshot);
+    const synced = await runner.run();
 
     await db
       .update(refreshJobs)
-      .set({ status: 'succeeded', finishedAt: new Date(), seatsSynced: snapshot.seats.length })
+      .set({ status: 'succeeded', finishedAt: new Date(), seatsSynced: synced })
       .where(eq(refreshJobs.id, jobId));
     jobLog.info(
       {
         'event.outcome': 'success',
         'event.duration': eventDuration(startedAt),
-        dash: { ...job, seatsSynced: snapshot.seats.length },
+        dash: { ...job, synced },
       },
       'refresh job succeeded',
     );
@@ -262,31 +270,32 @@ async function run(jobId: string): Promise<void> {
   }
 }
 
+/** Active jobs of one kind — reap, dedup, and the loser's re-select all use this. */
+function activeOfKind(kind: RefreshKind) {
+  return and(eq(refreshJobs.kind, kind), inArray(refreshJobs.status, [...ACTIVE_STATUSES]));
+}
+
 /**
- * Starts a refresh and returns immediately with the job to poll.
+ * Starts a job of the given kind and returns immediately with the row to poll.
  *
- * If one is already in flight its job is returned instead, so a double-click
- * on "Refresh" cannot start two concurrent syncs of the same table. Single-flight
- * is enforced by a partial unique index on `refresh_jobs` (one active row max),
- * so two concurrent callers race safely: the loser's insert hits the index and
- * is answered with the winner's in-flight job, never a second sync.
+ * If one of the same kind is already in flight its job is returned instead, so
+ * a double-click on "Refresh" cannot start two concurrent syncs of the same
+ * tables — while a Copilot refresh and a JIRA sync run side by side freely.
+ * Single-flight is enforced by a partial unique index on `refresh_jobs` (one
+ * active row per kind), so two concurrent callers race safely: the loser's
+ * insert hits the index and is answered with the winner's in-flight job.
  */
-export async function startRefresh(): Promise<RefreshJob> {
-  // Fail any job left running past the stale threshold before we dedup, so a
-  // crashed process can't block refreshes indefinitely.
+export async function startJob(kind: RefreshKind, runner: JobRunner): Promise<RefreshJob> {
+  // Fail any job of this kind left running past the stale threshold before we
+  // dedup, so a crashed process can't block future syncs indefinitely.
   const reaped = await db
     .update(refreshJobs)
     .set({ status: 'failed', finishedAt: new Date(), error: 'abandoned (stale)' })
-    .where(
-      and(
-        inArray(refreshJobs.status, [...ACTIVE_STATUSES]),
-        lt(refreshJobs.startedAt, new Date(Date.now() - STALE_JOB_MS)),
-      ),
-    )
+    .where(and(activeOfKind(kind), lt(refreshJobs.startedAt, new Date(Date.now() - STALE_JOB_MS))))
     .returning({ id: refreshJobs.id });
   if (reaped.length > 0) {
     log.warn(
-      { dash: { jobIds: reaped.map((row) => row.id) } },
+      { dash: { kind, jobIds: reaped.map((row) => row.id) } },
       'reaped stale refresh jobs left behind by a dead process',
     );
   }
@@ -294,27 +303,30 @@ export async function startRefresh(): Promise<RefreshJob> {
   const [existing] = await db
     .select()
     .from(refreshJobs)
-    .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
+    .where(activeOfKind(kind))
     .orderBy(desc(refreshJobs.startedAt))
     .limit(1);
 
   if (existing) {
-    log.debug({ dash: { jobId: existing.id } }, 'refresh already in flight — returning existing job');
+    log.debug(
+      { dash: { kind, jobId: existing.id } },
+      'refresh already in flight — returning existing job',
+    );
     return toJob(existing);
   }
 
   let job: RefreshJobRow | undefined;
   try {
-    [job] = await db.insert(refreshJobs).values({ id: randomUUID() }).returning();
+    [job] = await db.insert(refreshJobs).values({ id: randomUUID(), kind }).returning();
   } catch (error) {
-    // Lost the race to the single-flight index: another caller's job is now
-    // active. Return it rather than surfacing the constraint violation.
+    // Lost the race to the single-flight index: another caller's job of this
+    // kind is now active. Return it rather than surfacing the violation.
     if (isUniqueViolation(error)) {
-      log.debug('lost the single-flight race — returning the winning job');
+      log.debug({ dash: { kind } }, 'lost the single-flight race — returning the winning job');
       const [inFlight] = await db
         .select()
         .from(refreshJobs)
-        .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
+        .where(activeOfKind(kind))
         .orderBy(desc(refreshJobs.startedAt))
         .limit(1);
       if (inFlight) return toJob(inFlight);
@@ -323,12 +335,26 @@ export async function startRefresh(): Promise<RefreshJob> {
   }
   if (!job) throw new Error('failed to create refresh job');
 
-  log.info({ 'event.action': 'copilot-refresh', dash: { jobId: job.id } }, 'refresh job created');
+  log.info({ 'event.action': runner.action, dash: { kind, jobId: job.id } }, 'refresh job created');
 
   // Deliberately not awaited — the request returns 202 while this runs.
-  void run(job.id);
+  void runJob(job.id, runner);
 
   return toJob(job);
+}
+
+/** Starts a Copilot refresh (kind `copilot`) and returns the job to poll. */
+export async function startRefresh(): Promise<RefreshJob> {
+  const client = createCopilotClient();
+  return startJob('copilot', {
+    action: 'copilot-refresh',
+    context: { copilotSource: client.name, historyDays: SERIES_DAYS },
+    run: async () => {
+      const snapshot = await client.fetchSnapshot(SERIES_DAYS);
+      await persistSnapshot(snapshot);
+      return snapshot.seats.length;
+    },
+  });
 }
 
 export async function getRefreshJob(id: string): Promise<RefreshJob | null> {
@@ -336,8 +362,16 @@ export async function getRefreshJob(id: string): Promise<RefreshJob | null> {
   return row ? toJob(row) : null;
 }
 
-/** The most recent job, whatever its state — drives the "synced 2h ago" note. */
-export async function getLatestRefreshJob(): Promise<RefreshJob | null> {
-  const [row] = await db.select().from(refreshJobs).orderBy(desc(refreshJobs.startedAt)).limit(1);
+/**
+ * The most recent job of one kind, whatever its state — drives the header's
+ * "synced 2h ago" note (`copilot`) and the JIRA sync status.
+ */
+export async function getLatestRefreshJob(kind: RefreshKind = 'copilot'): Promise<RefreshJob | null> {
+  const [row] = await db
+    .select()
+    .from(refreshJobs)
+    .where(eq(refreshJobs.kind, kind))
+    .orderBy(desc(refreshJobs.startedAt))
+    .limit(1);
   return row ? toJob(row) : null;
 }

@@ -36,3 +36,16 @@ export function parseNano(decimal: string): bigint {
 export function nanoToDollars(nano: bigint): number {
   return Number(nano) / 1e9;
 }
+
+/**
+ * Nano units → decimal string ("281.55905", "-0.04", "1900"), the exact
+ * inverse of `parseNano` (modulo trailing fraction zeros). Used by the mock
+ * CSV export so generated report files round-trip through the importer.
+ */
+export function formatNano(nano: bigint): string {
+  const sign = nano < 0n ? '-' : '';
+  const abs = nano < 0n ? -nano : nano;
+  const whole = abs / NANO_PER_UNIT;
+  const fraction = (abs % NANO_PER_UNIT).toString().padStart(NANO_SCALE, '0').replace(/0+$/, '');
+  return fraction === '' ? `${sign}${whole}` : `${sign}${whole}.${fraction}`;
+}

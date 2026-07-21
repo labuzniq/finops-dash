@@ -7,8 +7,10 @@ import { hasSession } from './auth/session.js';
 import { authRoutes } from './routes/auth.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { importRoutes } from './routes/import.js';
+import { jiraRoutes } from './routes/jira.js';
 import { otlpRoutes } from './routes/otlp.js';
 import { refreshRoutes } from './routes/refresh.js';
+import { spendRoutes } from './routes/spend.js';
 import { telemetryRoutes } from './routes/telemetry.js';
 
 /**
@@ -57,7 +59,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(authRoutes);
   await app.register(dashboardRoutes);
+  await app.register(spendRoutes);
   await app.register(refreshRoutes);
+  await app.register(jiraRoutes);
   await app.register(importRoutes);
   await app.register(otlpRoutes);
   await app.register(telemetryRoutes);
