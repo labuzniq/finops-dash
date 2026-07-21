@@ -1,4 +1,4 @@
-import { and, asc, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import { BILLING_SKUS } from '@dash/shared';
 import type { BillingRow, ModelSpendRow, SpendPayload, SpendPerson } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -19,11 +19,14 @@ function displayName(person: JiraPersonRow | undefined, login: string): string {
 }
 
 /**
- * The code-side identity join: one entry per login appearing in `github_users`
- * or in the fetched billing/model rows. SAML ids match `jira_people`
- * case-insensitively (the PK is stored uppercase). Logins without a saml id or
- * without a JIRA hit come back `mapped: false` with null org fields — they
- * still count in every total.
+ * The code-side identity join: one entry per *active* login in `github_users`
+ * (ever seen in a billing report — the flag is sticky, so once active a user
+ * stays listed even when the selected range carries no rows for them) plus any
+ * login in the fetched billing/model rows. Org members who never appear in a
+ * report are excluded from the list but never deleted. SAML ids match
+ * `jira_people` case-insensitively (the PK is stored uppercase). Logins without
+ * a saml id or without a JIRA hit come back `mapped: false` with null org
+ * fields — they still count in every total.
  */
 function joinPeople(
   users: { login: string; samlNameId: string | null }[],
@@ -71,7 +74,10 @@ export async function getSpend(from: string, to: string): Promise<SpendPayload> 
       .from(modelSpendDaily)
       .where(and(gte(modelSpendDaily.date, from), lte(modelSpendDaily.date, to)))
       .orderBy(asc(modelSpendDaily.date), asc(modelSpendDaily.login), asc(modelSpendDaily.model)),
-    db.select({ login: githubUsers.login, samlNameId: githubUsers.samlNameId }).from(githubUsers),
+    db
+      .select({ login: githubUsers.login, samlNameId: githubUsers.samlNameId })
+      .from(githubUsers)
+      .where(eq(githubUsers.active, true)),
     db.select().from(jiraPeople),
   ]);
 

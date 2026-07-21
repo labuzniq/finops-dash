@@ -1,4 +1,4 @@
-import { inArray, sql } from 'drizzle-orm';
+import { and, inArray, isNotNull, sql } from 'drizzle-orm';
 import { AI_CREDIT_SKU, BILLING_SKUS } from '@dash/shared';
 import type { BillingImportResult, BillingSku } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -311,6 +311,20 @@ export async function importBillingCsv(csv: string): Promise<BillingImportResult
           });
       }
     }
+
+    // Sticky activity flag: every login in the report gets a github_users row
+    // with active = true. Insert-or-flag only — never cleared, never deleted —
+    // so a user who was active at any point stays in the user filter forever,
+    // even when later reports no longer mention them.
+    for (const logins of chunk(parsed.logins, CHUNK_SIZE)) {
+      await tx
+        .insert(githubUsers)
+        .values(logins.map((login) => ({ login, active: true })))
+        .onConflictDoUpdate({
+          target: githubUsers.login,
+          set: { active: sql`true` },
+        });
+    }
   });
 
   const unknownLogins = await findUnknownLogins(parsed.logins);
@@ -336,14 +350,19 @@ export async function importBillingCsv(csv: string): Promise<BillingImportResult
   return { reportType: parsed.reportType, rowsUpserted, dateRange: parsed.dateRange, unknownLogins };
 }
 
-/** Distinct logins with no github_users row yet — surfaced, never blocking. */
+/**
+ * Distinct logins with no SAML mapping in github_users — surfaced, never
+ * blocking. The billing import itself inserts bare active rows for report
+ * logins, so "row exists" no longer means "identity known"; a login counts as
+ * known only once the user export supplied its saml_name_id.
+ */
 async function findUnknownLogins(logins: string[]): Promise<string[]> {
   const known = new Set<string>();
   for (const batch of chunk(logins, CHUNK_SIZE)) {
     const rows = await db
       .select({ login: githubUsers.login })
       .from(githubUsers)
-      .where(inArray(githubUsers.login, batch));
+      .where(and(inArray(githubUsers.login, batch), isNotNull(githubUsers.samlNameId)));
     for (const row of rows) known.add(row.login);
   }
   return logins.filter((login) => !known.has(login)).sort();
