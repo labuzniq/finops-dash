@@ -1,7 +1,8 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { env } from './env.js';
+import { logger } from './log.js';
 import { hasSession } from './auth/session.js';
 import { authRoutes } from './routes/auth.js';
 import { dashboardRoutes } from './routes/dashboard.js';
@@ -26,7 +27,11 @@ const PUBLIC_PATHS = new Set([
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: env.NODE_ENV === 'production' ? 'info' : 'debug' },
+    // The shared ECS logger (log.ts) — its baked-in serializers turn Fastify's
+    // req/res log fields into ECS http.* / url.*, so request logs ship as-is.
+    // The cast narrows pino's Logger to the pino-compatible surface Fastify
+    // types against; the runtime instance is a plain pino logger either way.
+    loggerInstance: logger as FastifyBaseLogger,
     // CSV/JSON imports can approach the modal's 25 MB limit.
     bodyLimit: 30_000_000,
   });
@@ -42,7 +47,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     return reply.code(401).send({ error: 'Not authenticated' });
   });
 
-  app.get('/api/health', async () => ({ status: 'ok', source: env.COPILOT_SOURCE }));
+  // Health checks poll constantly and drown the log; suppress their request
+  // lines unless the logger runs at debug/trace, where full traffic is wanted.
+  app.get(
+    '/api/health',
+    { logLevel: logger.isLevelEnabled('debug') ? 'info' : 'warn' },
+    async () => ({ status: 'ok', source: env.COPILOT_SOURCE }),
+  );
 
   await app.register(authRoutes);
   await app.register(dashboardRoutes);

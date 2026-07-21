@@ -21,6 +21,15 @@ const schema = z
       .string()
       .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'must be a plain Postgres identifier')
       .default('public'),
+    /**
+     * Log verbosity for the ECS JSON logger (see log.ts). Unset (or empty, as
+     * a commented-out .env line leaves it) falls back to `info` in production
+     * and `debug` everywhere else.
+     */
+    LOG_LEVEL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).optional(),
+    ),
     CORS_ORIGIN: z.string().default('http://localhost:5173'),
     COPILOT_SOURCE: z.enum(['mock', 'github']).default('mock'),
     GITHUB_TOKEN: z.string().optional(),

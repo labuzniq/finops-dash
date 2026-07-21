@@ -16,6 +16,9 @@ import {
 import type { RefreshJobRow, SpendInsert } from '../db/schema.js';
 import { createCopilotClient } from '../copilot/index.js';
 import type { CopilotSnapshot, SeatSnapshot } from '../copilot/index.js';
+import { eventDuration, moduleLogger } from '../log.js';
+
+const log = moduleLogger('services.refresh');
 
 /** How much history a refresh pulls — the widest range the dashboard offers. */
 const SERIES_DAYS = 90;
@@ -152,6 +155,21 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
   const { seats, offRosterPremiumRequests, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
   const spend = deriveSpend(seats, offRosterPremiumRequests, org);
 
+  log.debug(
+    {
+      dash: {
+        seats: seats.length,
+        offRosterUsers: offRosterPremiumRequests.length,
+        spendPoints: spend.length,
+        orgDays: org.length,
+        modelRows: models.length,
+        breakdownRows: breakdownDaily.length,
+        adoptionRows: adoptionDaily.length,
+      },
+    },
+    'persisting snapshot',
+  );
+
   await db.transaction(async (tx) => {
     if (seats.length > 0) {
       await tx
@@ -281,14 +299,22 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
       await tx.insert(modelDaily).values(models);
     }
   });
+
+  log.debug('snapshot persisted');
 }
 
 /** Runs the sync and records the outcome on the job row. Never throws. */
 async function run(jobId: string): Promise<void> {
   const client = createCopilotClient();
+  const startedAt = Date.now();
+  // Everything about the job rides in one `dash` object per line — pino does
+  // not merge duplicate keys between child bindings and call payloads.
+  const job = { jobId, copilotSource: client.name };
+  const jobLog = log.child({ 'event.action': 'copilot-refresh' });
 
   try {
     await db.update(refreshJobs).set({ status: 'running' }).where(eq(refreshJobs.id, jobId));
+    jobLog.info({ dash: { ...job, historyDays: SERIES_DAYS } }, 'refresh job running');
 
     const snapshot = await client.fetchSnapshot(SERIES_DAYS);
     await persistSnapshot(snapshot);
@@ -297,11 +323,28 @@ async function run(jobId: string): Promise<void> {
       .update(refreshJobs)
       .set({ status: 'succeeded', finishedAt: new Date(), seatsSynced: snapshot.seats.length })
       .where(eq(refreshJobs.id, jobId));
+    jobLog.info(
+      {
+        'event.outcome': 'success',
+        'event.duration': eventDuration(startedAt),
+        dash: { ...job, seatsSynced: snapshot.seats.length },
+      },
+      'refresh job succeeded',
+    );
   } catch (error) {
     await db
       .update(refreshJobs)
       .set({ status: 'failed', finishedAt: new Date(), error: errorMessage(error) })
       .where(eq(refreshJobs.id, jobId));
+    jobLog.error(
+      {
+        'event.outcome': 'failure',
+        'event.duration': eventDuration(startedAt),
+        err: error,
+        dash: job,
+      },
+      'refresh job failed',
+    );
   }
 }
 
@@ -317,7 +360,7 @@ async function run(jobId: string): Promise<void> {
 export async function startRefresh(): Promise<RefreshJob> {
   // Fail any job left running past the stale threshold before we dedup, so a
   // crashed process can't block refreshes indefinitely.
-  await db
+  const reaped = await db
     .update(refreshJobs)
     .set({ status: 'failed', finishedAt: new Date(), error: 'abandoned (stale)' })
     .where(
@@ -325,7 +368,14 @@ export async function startRefresh(): Promise<RefreshJob> {
         inArray(refreshJobs.status, [...ACTIVE_STATUSES]),
         lt(refreshJobs.startedAt, new Date(Date.now() - STALE_JOB_MS)),
       ),
+    )
+    .returning({ id: refreshJobs.id });
+  if (reaped.length > 0) {
+    log.warn(
+      { dash: { jobIds: reaped.map((row) => row.id) } },
+      'reaped stale refresh jobs left behind by a dead process',
     );
+  }
 
   const [existing] = await db
     .select()
@@ -334,7 +384,10 @@ export async function startRefresh(): Promise<RefreshJob> {
     .orderBy(desc(refreshJobs.startedAt))
     .limit(1);
 
-  if (existing) return toJob(existing);
+  if (existing) {
+    log.debug({ dash: { jobId: existing.id } }, 'refresh already in flight — returning existing job');
+    return toJob(existing);
+  }
 
   let job: RefreshJobRow | undefined;
   try {
@@ -343,6 +396,7 @@ export async function startRefresh(): Promise<RefreshJob> {
     // Lost the race to the single-flight index: another caller's job is now
     // active. Return it rather than surfacing the constraint violation.
     if (isUniqueViolation(error)) {
+      log.debug('lost the single-flight race — returning the winning job');
       const [inFlight] = await db
         .select()
         .from(refreshJobs)
@@ -354,6 +408,8 @@ export async function startRefresh(): Promise<RefreshJob> {
     throw error;
   }
   if (!job) throw new Error('failed to create refresh job');
+
+  log.info({ 'event.action': 'copilot-refresh', dash: { jobId: job.id } }, 'refresh job created');
 
   // Deliberately not awaited — the request returns 202 while this runs.
   void run(job.id);
