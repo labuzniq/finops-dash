@@ -6,9 +6,9 @@ import type { BillingRow, ModelSpendRow, SpendPerson } from '@dash/shared';
  *
  * `billingRows` (Report 2) is the sole money authority; `modelRows` (Report 1)
  * only ever contributes per-model statistics and credit counts — it is never
- * summed into money totals. Net always means non-licence skus only: what the
- * org paid for usage beyond the enterprise pool. Licence money is its own
- * value, part of Gross but never added to it a second time.
+ * summed into money totals. Net is the real charged total across every sku,
+ * licences included. Licence money is also broken out on its own as an
+ * informational value — part of Gross and Net, never charted.
  *
  * All functions are pure and memo-friendly; callers pass rows already narrowed
  * by `applySpendFilter`, so every derivation recomputes under the filters.
@@ -18,18 +18,18 @@ import type { BillingRow, ModelSpendRow, SpendPerson } from '@dash/shared';
 export interface SpendKpis {
   gross: number;
   discount: number;
-  /** Non-licence skus only. */
+  /** All skus, licences included — the real charged total. */
   net: number;
-  /** Sum of the daily licence rows in range — included in Gross. */
+  /** Sum of the daily licence rows in range — inside Gross and Net, informational only. */
   licence: number;
 }
 
+/** Chart series only — licence money is informational and never charted. */
 export interface SpendTrendDay {
   date: string; // YYYY-MM-DD
   gross: number;
   discount: number;
   net: number;
-  licence: number;
 }
 
 export interface ModelBreakdownRow {
@@ -149,10 +149,9 @@ export function spendKpis(rows: BillingRow[]): SpendKpis {
   for (const row of rows) {
     gross += row.gross;
     discount += row.discount;
-    // Licence rows accrue with discount 0, so gross == net there; the split
-    // keeps the daily accrual out of the usage-beyond-pool Net.
+    net += row.net;
+    // Licence rows accrue with discount 0, so gross == net there.
     if (row.sku === LICENCE_SKU) licence += row.gross;
-    else net += row.net;
   }
 
   return { gross, discount, net, licence };
@@ -162,7 +161,7 @@ export function spendKpis(rows: BillingRow[]): SpendKpis {
 export function spendTrend(rows: BillingRow[], from: string, to: string): SpendTrendDay[] {
   const byDate = new Map<string, SpendTrendDay>();
   for (const iso of isoDatesBetween(from, to)) {
-    byDate.set(iso, { date: iso, gross: 0, discount: 0, net: 0, licence: 0 });
+    byDate.set(iso, { date: iso, gross: 0, discount: 0, net: 0 });
   }
 
   for (const row of rows) {
@@ -170,8 +169,7 @@ export function spendTrend(rows: BillingRow[], from: string, to: string): SpendT
     if (day === undefined) continue;
     day.gross += row.gross;
     day.discount += row.discount;
-    if (row.sku === LICENCE_SKU) day.licence += row.gross;
-    else day.net += row.net;
+    day.net += row.net;
   }
 
   return [...byDate.values()];
@@ -239,8 +237,8 @@ export function spendUserRows(
     const user = rowFor(row.login);
     user.gross += row.gross;
     user.discount += row.discount;
+    user.net += row.net;
     if (row.sku === LICENCE_SKU) user.licence += row.gross;
-    else user.net += row.net;
   }
 
   for (const row of models) {
