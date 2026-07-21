@@ -24,6 +24,33 @@ export const EMPTY_SPEND_FILTERS: SpendFilters = {
   unmappedOnly: false,
 };
 
+/** The four single-value scope filters — the ones cascading options reason about. */
+export type SpendScopeField = 'department' | 'b1Manager' | 'b2Manager' | 'login';
+
+/**
+ * Whether one person survives the filters. `ignore` exempts a single field —
+ * that is what makes a combobox's option list cascade: options for field X
+ * come from the people who pass every filter *except* X.
+ */
+export function personMatches(
+  person: SpendPerson,
+  f: SpendFilters,
+  ignore?: SpendScopeField,
+): boolean {
+  if (ignore !== 'department' && f.department !== null && person.department !== f.department) {
+    return false;
+  }
+  if (ignore !== 'b1Manager' && f.b1Manager !== null && person.b1Manager !== f.b1Manager) {
+    return false;
+  }
+  if (ignore !== 'b2Manager' && f.b2Manager !== null && person.b2Manager !== f.b2Manager) {
+    return false;
+  }
+  if (ignore !== 'login' && f.login !== null && person.login !== f.login) return false;
+  if (f.unmappedOnly && person.mapped) return false;
+  return true;
+}
+
 /**
  * The logins surviving the filters, or null when no filter is active — the
  * distinction lets callers skip row filtering entirely on the common path.
@@ -41,12 +68,7 @@ export function filterLogins(people: SpendPerson[], f: SpendFilters): Set<string
 
   const logins = new Set<string>();
   for (const person of people) {
-    if (f.department !== null && person.department !== f.department) continue;
-    if (f.b1Manager !== null && person.b1Manager !== f.b1Manager) continue;
-    if (f.b2Manager !== null && person.b2Manager !== f.b2Manager) continue;
-    if (f.login !== null && person.login !== f.login) continue;
-    if (f.unmappedOnly && person.mapped) continue;
-    logins.add(person.login);
+    if (personMatches(person, f)) logins.add(person.login);
   }
   return logins;
 }
