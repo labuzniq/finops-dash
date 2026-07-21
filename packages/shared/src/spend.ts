@@ -15,7 +15,7 @@ export const BILLING_SKUS = [
 ] as const;
 export type BillingSku = (typeof BILLING_SKUS)[number];
 
-/** The daily licence-accrual sku. Net KPIs exclude it; the licence KPI is only it. */
+/** The daily licence-accrual sku. Inside Gross and Net; the licence KPI is only it, informational. */
 export const LICENCE_SKU = 'copilot_for_business' satisfies BillingSku;
 
 /**

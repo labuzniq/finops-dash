@@ -6,9 +6,9 @@ import type { SeriesFormat } from '../../lib/metrics/usage.js';
 import { TrendChart } from '../usage/TrendChart.js';
 
 /**
- * Daily Gross / Discount / Net / Licence lines on the shared multi-series
- * chart. Net keeps the KPI's meaning — non-licence skus only — and Licence is
- * the daily accrual that already sits inside Gross.
+ * Daily Gross / Discount / Net lines on the shared multi-series chart. Net
+ * keeps the KPI's meaning — the real charged total, licences included.
+ * Licence money is informational only and never gets a series of its own.
  */
 
 const MONEY_FORMAT: SeriesFormat = {
@@ -33,7 +33,6 @@ export function SpendTrendCard({ trend, subtitle }: SpendTrendCardProps) {
             points: trend.map((day) => ({ date: day.date, value: day.discount })),
           },
           { name: 'Net', points: trend.map((day) => ({ date: day.date, value: day.net })) },
-          { name: 'Licence', points: trend.map((day) => ({ date: day.date, value: day.licence })) },
         ],
         MONEY_FORMAT,
       ),
