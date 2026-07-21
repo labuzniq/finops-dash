@@ -204,6 +204,13 @@ export const githubUsers = pgTable('github_users', {
   login: varchar('login', { length: 100 }).primaryKey(),
   /** May be blank in the export — stored as null, renders unmapped. */
   samlNameId: varchar('saml_name_id', { length: 40 }),
+  /**
+   * Sticky activity flag: set the first time the login appears in a billing
+   * report import and never cleared. Rows are never deleted — the user filter
+   * shows active logins only, while the full org roster (and every synced
+   * JIRA person) stays in the database.
+   */
+  active: boolean('active').notNull().default(false),
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
