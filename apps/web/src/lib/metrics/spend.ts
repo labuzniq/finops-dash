@@ -1,148 +1,198 @@
-import { rangeDayCount } from '@dash/shared';
-import type { DateRange, SpendPoint } from '@dash/shared';
+import { LICENCE_SKU } from '@dash/shared';
+import type { BillingRow, ModelSpendRow, SpendPerson } from '@dash/shared';
 
 /**
- * Spend derivations over the selected range.
+ * Spend derivations over the billing-report rows.
  *
- * The series the API returns is org-wide. When a filter narrows the seat list,
- * the series is scaled by the surviving fraction of seats, so the chart tracks
- * the subset the rest of the page is describing.
+ * `billingRows` (Report 2) is the sole money authority; `modelRows` (Report 1)
+ * only ever contributes per-model statistics and credit counts — it is never
+ * summed into money totals. Net always means non-licence skus only: what the
+ * org paid for usage beyond the enterprise pool. Licence money is its own
+ * value, part of Gross but never added to it a second time.
+ *
+ * All functions are pure and memo-friendly; callers pass rows already narrowed
+ * by `applySpendFilter`, so every derivation recomputes under the filters.
  */
 
-export interface ScaledSpendPoint {
-  date: Date;
-  license: number;
-  premiumOverage: number;
-  total: number;
+/** Four separate dollar values for the range — never summed with each other. */
+export interface SpendKpis {
+  gross: number;
+  discount: number;
+  /** Non-licence skus only. */
+  net: number;
+  /** Sum of the daily licence rows in range — included in Gross. */
+  licence: number;
 }
 
-export interface SpendSummary {
-  points: ScaledSpendPoint[];
-  total: number;
-  license: number;
-  premiumOverage: number;
-  /** Change against the previous equal-length window, in percent. */
-  deltaPercent: number;
+export interface SpendTrendDay {
+  date: string; // YYYY-MM-DD
+  gross: number;
+  discount: number;
+  net: number;
+  licence: number;
 }
 
-/** `2026-04-17` as a *local* midnight, so axis labels can't slip a day. */
-function parseIsoDate(iso: string): Date {
-  const [year, month, day] = iso.split('-');
-  return new Date(Number(year), Number(month) - 1, Number(day));
+export interface ModelBreakdownRow {
+  model: string;
+  credits: number;
+  gross: number;
+  /** Share of credit gross across all models, 0..1. */
+  share: number;
 }
 
-function scale(point: SpendPoint, ratio: number): ScaledSpendPoint {
-  const license = point.license * ratio;
-  const premiumOverage = point.premiumOverage * ratio;
-  return { date: parseIsoDate(point.date), license, premiumOverage, total: license + premiumOverage };
+export interface SpendUserRow {
+  login: string;
+  displayName: string;
+  mapped: boolean;
+  department: string | null;
+  b1Manager: string | null;
+  b2Manager: string | null;
+  credits: number;
+  gross: number;
+  discount: number;
+  net: number;
+  licence: number;
 }
 
-function sumTotal(points: readonly ScaledSpendPoint[]): number {
-  return points.reduce((total, point) => total + point.total, 0);
+/** Sortable numeric columns of the spend user table. */
+export type SpendSortKey = 'credits' | 'gross' | 'discount' | 'net';
+
+/** -1 = descending (the default on every column), 1 = ascending. */
+export type SpendSortDirection = -1 | 1;
+
+export function sortSpendUserRows(
+  rows: readonly SpendUserRow[],
+  key: SpendSortKey,
+  direction: SpendSortDirection,
+): SpendUserRow[] {
+  return [...rows].sort((a, b) => {
+    const left = a[key];
+    const right = b[key];
+    // Equal values fall back to login so paging stays deterministic.
+    if (left === right) return a.login.localeCompare(b.login);
+    return (left < right ? -1 : 1) * direction;
+  });
 }
 
-function mean(points: readonly ScaledSpendPoint[]): number {
-  return points.length === 0 ? 0 : sumTotal(points) / points.length;
+/** Every ISO date from `from` to `to` inclusive — the trend's zero-fill spine. */
+function isoDatesBetween(from: string, to: string): string[] {
+  const [year, month, day] = from.split('-');
+  const cursor = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  const dates: string[] = [];
+  for (let iso = from; iso <= to; ) {
+    dates.push(iso);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    iso = cursor.toISOString().slice(0, 10);
+  }
+  return dates;
 }
 
-/**
- * The last `rangeDays` calendar days of the series, scaled to the filtered
- * seat subset. Anchored on the last point's date so gaps (days GitHub answered
- * 204) can't stretch a preset past its calendar span.
- */
-export function sliceRange(
-  series: readonly SpendPoint[],
-  rangeDays: number,
-  ratio: number,
-): ScaledSpendPoint[] {
-  const last = series[series.length - 1];
-  if (last === undefined) return [];
-  return sliceDates(series, shiftIso(last.date, -(rangeDays - 1)), last.date, ratio);
-}
+export function spendKpis(rows: BillingRow[]): SpendKpis {
+  let gross = 0;
+  let discount = 0;
+  let net = 0;
+  let licence = 0;
 
-/** The points between two inclusive ISO dates, scaled like `sliceRange`. */
-export function sliceDates(
-  series: readonly SpendPoint[],
-  from: string,
-  to: string,
-  ratio: number,
-): ScaledSpendPoint[] {
-  return series
-    .filter((point) => point.date >= from && point.date <= to)
-    .map((point) => scale(point, ratio));
-}
-
-/** ISO date shifted by `days` (negative shifts backwards), in UTC. */
-function shiftIso(iso: string, days: number): string {
-  const [year, month, day] = iso.split('-');
-  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + days))
-    .toISOString()
-    .slice(0, 10);
-}
-
-/**
- * The preceding equal-length window, or null when the series doesn't reach
- * back far enough to contain all of it.
- */
-function previousWindow(
-  series: readonly SpendPoint[],
-  range: DateRange,
-  ratio: number,
-): ScaledSpendPoint[] | null {
-  if (range.kind === 'preset') {
-    const last = series[series.length - 1];
-    const first = series[0];
-    if (last === undefined || first === undefined) return null;
-    const previousFrom = shiftIso(last.date, -(range.days * 2 - 1));
-    if (first.date > previousFrom) return null;
-    return sliceDates(series, previousFrom, shiftIso(last.date, -range.days), ratio);
+  for (const row of rows) {
+    gross += row.gross;
+    discount += row.discount;
+    // Licence rows accrue with discount 0, so gross == net there; the split
+    // keeps the daily accrual out of the usage-beyond-pool Net.
+    if (row.sku === LICENCE_SKU) licence += row.gross;
+    else net += row.net;
   }
 
-  const days = rangeDayCount(range);
-  const previousFrom = shiftIso(range.from, -days);
-  const first = series[0];
-  if (first === undefined || first.date > previousFrom) return null;
-  return sliceDates(series, previousFrom, shiftIso(range.from, -1), ratio);
+  return { gross, discount, net, licence };
+}
+
+/** Daily totals, zero-filled across every calendar day in the range. */
+export function spendTrend(rows: BillingRow[], from: string, to: string): SpendTrendDay[] {
+  const byDate = new Map<string, SpendTrendDay>();
+  for (const iso of isoDatesBetween(from, to)) {
+    byDate.set(iso, { date: iso, gross: 0, discount: 0, net: 0, licence: 0 });
+  }
+
+  for (const row of rows) {
+    const day = byDate.get(row.date);
+    if (day === undefined) continue;
+    day.gross += row.gross;
+    day.discount += row.discount;
+    if (row.sku === LICENCE_SKU) day.licence += row.gross;
+    else day.net += row.net;
+  }
+
+  return [...byDate.values()];
+}
+
+/** AI-credit spend by model — statistics from Report 1, biggest gross first. */
+export function modelBreakdown(rows: ModelSpendRow[]): ModelBreakdownRow[] {
+  const byModel = new Map<string, { credits: number; gross: number }>();
+  let totalGross = 0;
+
+  for (const row of rows) {
+    const acc = byModel.get(row.model) ?? { credits: 0, gross: 0 };
+    acc.credits += row.credits;
+    acc.gross += row.gross;
+    byModel.set(row.model, acc);
+    totalGross += row.gross;
+  }
+
+  return [...byModel.entries()]
+    .map(([model, { credits, gross }]) => ({
+      model,
+      credits,
+      gross,
+      share: totalGross > 0 ? gross / totalGross : 0,
+    }))
+    .sort((a, b) => b.gross - a.gross || a.model.localeCompare(b.model));
 }
 
 /**
- * Percent change vs the preceding window.
- *
- * When history runs out — at 90d, where there is no earlier 90d to compare —
- * fall back to comparing the window's own first half against its second.
+ * Per-user totals joined with identity. One row per login appearing in either
+ * report; a login without a `SpendPerson` entry renders as itself, unmapped.
+ * Credits come from Report 1; every dollar comes from Report 2.
  */
-function deltaPercent(
-  previous: readonly ScaledSpendPoint[] | null,
-  window: readonly ScaledSpendPoint[],
-): number {
-  const current = sumTotal(window);
+export function spendUserRows(
+  billing: BillingRow[],
+  models: ModelSpendRow[],
+  people: SpendPerson[],
+): SpendUserRow[] {
+  const personByLogin = new Map(people.map((person) => [person.login, person]));
+  const byLogin = new Map<string, SpendUserRow>();
 
-  if (previous !== null) {
-    const previousTotal = sumTotal(previous);
-    return previousTotal > 0 ? ((current - previousTotal) / previousTotal) * 100 : 0;
-  }
+  const rowFor = (login: string): SpendUserRow => {
+    const existing = byLogin.get(login);
+    if (existing !== undefined) return existing;
 
-  const midpoint = Math.floor(window.length / 2);
-  const first = mean(window.slice(0, midpoint));
-  const second = mean(window.slice(midpoint));
-  return first > 0 ? ((second - first) / first) * 100 : 0;
-}
-
-export function summariseSpend(
-  series: readonly SpendPoint[],
-  range: DateRange,
-  ratio: number,
-): SpendSummary {
-  const points =
-    range.kind === 'preset'
-      ? sliceRange(series, range.days, ratio)
-      : sliceDates(series, range.from, range.to, ratio);
-
-  return {
-    points,
-    total: sumTotal(points),
-    license: points.reduce((sum, point) => sum + point.license, 0),
-    premiumOverage: points.reduce((sum, point) => sum + point.premiumOverage, 0),
-    deltaPercent: deltaPercent(previousWindow(series, range, ratio), points),
+    const person = personByLogin.get(login);
+    const row: SpendUserRow = {
+      login,
+      displayName: person?.displayName ?? login,
+      mapped: person?.mapped ?? false,
+      department: person?.department ?? null,
+      b1Manager: person?.b1Manager ?? null,
+      b2Manager: person?.b2Manager ?? null,
+      credits: 0,
+      gross: 0,
+      discount: 0,
+      net: 0,
+      licence: 0,
+    };
+    byLogin.set(login, row);
+    return row;
   };
+
+  for (const row of billing) {
+    const user = rowFor(row.login);
+    user.gross += row.gross;
+    user.discount += row.discount;
+    if (row.sku === LICENCE_SKU) user.licence += row.gross;
+    else user.net += row.net;
+  }
+
+  for (const row of models) {
+    rowFor(row.login).credits += row.credits;
+  }
+
+  return [...byLogin.values()].sort((a, b) => b.gross - a.gross || a.login.localeCompare(b.login));
 }

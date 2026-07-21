@@ -161,20 +161,16 @@ export interface ModelUsage {
   acceptanceRate: number | null;
 }
 
-/** One day of org spend, split by the two things GitHub bills for. */
-export interface SpendPoint {
-  /** ISO calendar date, `YYYY-MM-DD`. */
-  date: string;
-  license: number;
-  premiumOverage: number;
-}
-
 export const REFRESH_STATUSES = ['pending', 'running', 'succeeded', 'failed'] as const;
 export type RefreshStatus = (typeof REFRESH_STATUSES)[number];
 
-/** An on-demand sync of the Copilot APIs into Postgres. */
+export const REFRESH_KINDS = ['copilot', 'jira'] as const;
+export type RefreshKind = (typeof REFRESH_KINDS)[number];
+
+/** An on-demand sync of an external source (Copilot APIs or JIRA Insight) into Postgres. */
 export interface RefreshJob {
   id: string;
+  kind: RefreshKind;
   status: RefreshStatus;
   /** ISO timestamp. */
   startedAt: string;

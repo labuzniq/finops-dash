@@ -22,7 +22,7 @@
 /* One grid template drives the header strip and every row, so columns line up. */
 .columns {
   display: grid;
-  grid-template-columns: 1.9fr 0.75fr 0.85fr 1fr 0.8fr 0.8fr 0.95fr 0.85fr;
+  grid-template-columns: 1.9fr 0.75fr 0.85fr 1fr 0.8fr 0.8fr 0.95fr;
   padding: 8px 20px;
   gap: 6px;
   align-items: center;
@@ -77,11 +77,6 @@
   color: var(--text);
 }
 
-.right {
-  text-align: right;
-  justify-content: flex-end;
-}
-
 .row {
   align-items: center;
   border-bottom: 1px solid var(--border2);
@@ -125,11 +120,6 @@
 
 .muted {
   color: var(--muted);
-}
-
-.cost {
-  font-weight: 600;
-  text-align: right;
 }
 
 .empty {

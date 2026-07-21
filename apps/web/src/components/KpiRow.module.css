@@ -27,17 +27,9 @@
   margin-top: 5px;
 }
 
-/* Spend going up is bad news, so the delta borrows the semantic colours. */
-.subDelta {
-  font-weight: 500;
-}
-
+/* Idle seats climbing is bad news, so the figure borrows the semantic colour. */
 .negative {
   color: var(--neg);
-}
-
-.positive {
-  color: var(--pos);
 }
 
 @media (max-width: 1100px) {

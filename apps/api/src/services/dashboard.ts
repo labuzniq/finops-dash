@@ -7,7 +7,6 @@ import type {
   Editor,
   ModelUsage,
   OrgDailyPoint,
-  SpendPoint,
   UsageDimension,
   UsageHistory,
 } from '@dash/shared';
@@ -17,7 +16,6 @@ import {
   copilotSeats,
   modelDaily,
   orgDaily,
-  spendDaily,
   usageBreakdownDaily,
 } from '../db/schema.js';
 import type {
@@ -25,7 +23,6 @@ import type {
   ModelDailyRow,
   OrgDailyRow,
   SeatRow,
-  SpendRow,
   UsageBreakdownRow,
 } from '../db/schema.js';
 
@@ -64,14 +61,6 @@ function toSeat(row: SeatRow, now: Date): CopilotSeat {
   };
 }
 
-function toSpendPoint(row: SpendRow): SpendPoint {
-  return {
-    date: row.date,
-    license: row.licenseCents / 100,
-    premiumOverage: row.premiumOverageCents / 100,
-  };
-}
-
 /** ISO date `days` days before now, computed in UTC to match the ISO render. */
 function earliestDate(days: number): string {
   const earliest = new Date();
@@ -90,17 +79,6 @@ export async function listSeats(): Promise<CopilotSeat[]> {
   const rows = await db.select().from(copilotSeats).orderBy(asc(copilotSeats.login));
   const now = new Date();
   return rows.map((row) => toSeat(row, now));
-}
-
-/** Daily spend for the last `days` days, oldest first. */
-export async function listSpend(days: number): Promise<SpendPoint[]> {
-  const rows = await db
-    .select()
-    .from(spendDaily)
-    .where(gte(spendDaily.date, earliestDate(days)))
-    .orderBy(asc(spendDaily.date));
-
-  return rows.map(toSpendPoint);
 }
 
 function toOrgDailyPoint(row: OrgDailyRow): OrgDailyPoint {

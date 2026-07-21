@@ -7,7 +7,6 @@ import type {
   CopilotClient,
   CopilotSnapshot,
   ModelDailySnapshot,
-  OffRosterPremium,
   OrgDailySnapshot,
   SeatSnapshot,
 } from './types.js';
@@ -371,16 +370,6 @@ export class GithubCopilotClient implements CopilotClient {
       return metrics ? { ...seat, ...metrics } : seat;
     });
 
-    // Users in the 28-day report but no longer on the roster were offboarded
-    // mid-window; their premium usage is still billed, so carry it through.
-    const onRoster = new Set(roster.map((seat) => seat.login));
-    const offRosterPremiumRequests: OffRosterPremium[] = [];
-    for (const [login, metrics] of userMetrics) {
-      if (onRoster.has(login)) continue;
-      const requests = metrics.premiumRequests28d;
-      if (requests != null) offRosterPremiumRequests.push({ login, premiumRequests28d: requests });
-    }
-
     const daily = await this.fetchDailyHistory(historyDays);
 
     log.info(
@@ -390,14 +379,13 @@ export class GithubCopilotClient implements CopilotClient {
         'event.duration': eventDuration(startedAt),
         dash: {
           seats: seats.length,
-          offRosterUsers: offRosterPremiumRequests.length,
           orgDays: daily.orgDaily.length,
         },
       },
       'github snapshot fetched',
     );
 
-    return { seats, offRosterPremiumRequests, ...daily };
+    return { seats, ...daily };
   }
 
   /** Paginate the seats endpoint into roster rows (no metrics yet). */
@@ -460,7 +448,7 @@ export class GithubCopilotClient implements CopilotClient {
    */
   private async fetchDailyHistory(
     historyDays: number,
-  ): Promise<Omit<CopilotSnapshot, 'seats' | 'offRosterPremiumRequests'>> {
+  ): Promise<Omit<CopilotSnapshot, 'seats'>> {
     const anchor = await this.newestReportDay();
     const days = Array.from({ length: historyDays }, (_, i) => addDays(anchor, -i));
     log.debug(

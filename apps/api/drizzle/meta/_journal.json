@@ -5,36 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1784144906144,
-      "tag": "0000_sad_moira_mactaggert",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1784204197023,
-      "tag": "0001_clammy_havok",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1784237825342,
-      "tag": "0002_slim_wolfsbane",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1784583090454,
-      "tag": "0003_common_quicksilver",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1784586115103,
-      "tag": "0004_nervous_spectrum",
+      "when": 1784649745886,
+      "tag": "0000_ordinary_prism",
       "breakpoints": true
     }
   ]

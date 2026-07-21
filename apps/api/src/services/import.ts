@@ -4,6 +4,7 @@ import type { Editor, ImportResult, Plan } from '@dash/shared';
 import { db } from '../db/client.js';
 import { copilotSeats } from '../db/schema.js';
 import type { SeatInsert } from '../db/schema.js';
+import { parseCsvRows } from '../lib/csv.js';
 import { eventDuration, moduleLogger } from '../log.js';
 
 const log = moduleLogger('services.import');
@@ -175,49 +176,12 @@ function parseRecords(content: string): Record<string, unknown>[] {
   return parseCsv(trimmed);
 }
 
-/** Minimal RFC 4180 CSV parser: quoted fields, escaped quotes, CRLF-tolerant. */
+/** CSV → loose records via the shared RFC 4180 parser (lib/csv.ts). */
 function parseCsv(text: string): Record<string, unknown>[] {
-  const rows: string[][] = [];
-  let field = '';
-  let row: string[] = [];
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i]!;
-    if (inQuotes) {
-      if (char === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += char;
-      }
-    } else if (char === '"') {
-      inQuotes = true;
-    } else if (char === ',') {
-      row.push(field);
-      field = '';
-    } else if (char === '\n' || char === '\r') {
-      if (char === '\r' && text[i + 1] === '\n') i++;
-      row.push(field);
-      rows.push(row);
-      field = '';
-      row = [];
-    } else {
-      field += char;
-    }
-  }
-  if (field !== '' || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-
+  const rows = parseCsvRows(text);
   if (rows.length === 0) return [];
-  const headers = rows[0]!.map((h) => h.trim().toLowerCase());
-  return rows.slice(1).map((cells) => {
+  const headers = rows[0]!.cells.map((h) => h.trim().toLowerCase());
+  return rows.slice(1).map(({ cells }) => {
     const record: Record<string, unknown> = {};
     headers.forEach((header, index) => {
       record[header] = cells[index];

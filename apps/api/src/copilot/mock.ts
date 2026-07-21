@@ -1,4 +1,5 @@
-import type { Editor } from '@dash/shared';
+import { LICENCE_SKU } from '@dash/shared';
+import type { BillingSku, Editor } from '@dash/shared';
 import { moduleLogger } from '../log.js';
 import type {
   AdoptionPhaseDailySnapshot,
@@ -344,6 +345,218 @@ function buildAdoptionDaily(
   return rows;
 }
 
+// --- Mock spend dataset (billing reports + identity) -------------------------
+//
+// Deterministic stand-ins for the real billing CSVs and the JIRA Insight sync,
+// so local dev shows the spend section without either. Distinct Lehmer seeds
+// keep these streams independent of the snapshot stream — regenerating one
+// never reshuffles the other. Money is bigint nano-dollars end-to-end, the same
+// unit the importer parses real CSVs into.
+
+const IDENTITY_SEED = 123_456_789;
+const BILLING_SEED = 456_789_123;
+/** Real billing reports are month-scoped; the mock one covers the last 30 days. */
+const BILLING_DAYS = 30;
+
+const NANO = 1_000_000_000n;
+/** $19 / month licence accrual, in nano-dollars. */
+const LICENCE_MONTHLY_NANO = 19n * NANO;
+
+const DEPARTMENTS = [
+  'Platform Engineering',
+  'Payments IT',
+  'Retail Banking IT',
+  'Mobile Engineering',
+  'Data & Analytics',
+  'Infrastructure Services',
+] as const;
+
+export interface MockGithubUser {
+  login: string;
+  /** Null mirrors blank saml_name_id cells in the real export — renders unmapped. */
+  samlNameId: string | null;
+}
+
+export interface MockJiraPerson {
+  /** Uppercase, as jira_people stores it. */
+  samlNameId: string;
+  firstName: string;
+  lastName: string;
+  department: string;
+  b1Manager: string;
+  b2Manager: string;
+  jiraUserId: string;
+}
+
+export interface MockIdentity {
+  users: MockGithubUser[];
+  people: MockJiraPerson[];
+}
+
+export interface MockBillingRow {
+  date: string;
+  login: string;
+  sku: BillingSku;
+  quantityNano: bigint;
+  grossNano: bigint;
+  discountNano: bigint;
+  netNano: bigint;
+}
+
+export interface MockModelSpendRow {
+  date: string;
+  login: string;
+  model: string;
+  creditsNano: bigint;
+  grossNano: bigint;
+  discountNano: bigint;
+  netNano: bigint;
+}
+
+export interface MockBillingReport {
+  /** Report 2 shape — the money authority, licences included. */
+  billingRows: MockBillingRow[];
+  /** Report 1 shape — per-model AI-credit stats; sums match Report 2's ai-credit rows. */
+  modelRows: MockModelSpendRow[];
+}
+
+/** The seeded roster, identical to the one `fetchSnapshot` returns. */
+function mockRoster(): SeatSnapshot[] {
+  return buildSeats(createRandom(SEED), new Date());
+}
+
+/**
+ * Deterministic login → saml → person mapping over the mock roster. A slice of
+ * logins has no saml id and a slice of saml ids has no JIRA hit, so the
+ * unmapped states of the real pipeline show up in local dev too.
+ */
+export function buildMockIdentity(): MockIdentity {
+  const roster = mockRoster();
+  const random = createRandom(IDENTITY_SEED);
+
+  // A small pool of managers, reusing the roster name lists.
+  const managers: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    const first = pick(random, FIRST_NAMES).toUpperCase();
+    const last = pick(random, LAST_NAMES).toUpperCase();
+    managers.push(`${first} ${last} cza8${String(1000 + Math.floor(random() * 9000))}`);
+  }
+
+  const users: MockGithubUser[] = [];
+  const people: MockJiraPerson[] = [];
+
+  roster.forEach((seat, index) => {
+    // ~5% of logins were never SAML-linked in the org export.
+    if (random() < 0.05) {
+      users.push({ login: seat.login, samlNameId: null });
+      return;
+    }
+
+    const samlNameId = `ICZA${String(index).padStart(5, '0')}`;
+    users.push({ login: seat.login, samlNameId });
+
+    // ~4% of saml ids have no Active JIRA person — left absent, renders unmapped.
+    if (random() < 0.04) return;
+
+    const [first = seat.login, last = ''] = seat.name.split(' ');
+    people.push({
+      samlNameId,
+      firstName: first.toUpperCase(),
+      lastName: last.toUpperCase(),
+      department: pick(random, DEPARTMENTS),
+      b1Manager: pick(random, managers),
+      b2Manager: pick(random, managers),
+      jiraUserId: `cza1${String(index).padStart(4, '0')}`,
+    });
+  });
+
+  return { users, people };
+}
+
+function daysInMonth(date: Date): number {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/**
+ * The last 30 days of billing, Report 1 + Report 2 shaped. Every seat accrues
+ * a daily licence fraction (never `19 × users` — month lengths differ); active
+ * seats add per-model AI-credit rows whose per-day sums become the Report 2
+ * `copilot_ai_credit` rows, so the two reports agree the way the real ones do.
+ */
+export function buildMockBillingReport(today = new Date()): MockBillingReport {
+  const roster = mockRoster();
+  const random = createRandom(BILLING_SEED);
+
+  const billingRows: MockBillingRow[] = [];
+  const modelRows: MockModelSpendRow[] = [];
+
+  for (const seat of roster) {
+    // Per-seat appetite: how often the seat burns credits on a given day.
+    const activity = random() * 0.85;
+
+    for (let offset = BILLING_DAYS - 1; offset >= 0; offset--) {
+      const day = daysAgo(today, offset);
+      const date = isoDate(day);
+      const dim = BigInt(daysInMonth(day));
+
+      // Daily licence accrual — one fraction of a user-month at $19.
+      const licenceNano = LICENCE_MONTHLY_NANO / dim;
+      billingRows.push({
+        date,
+        login: seat.login,
+        sku: LICENCE_SKU,
+        quantityNano: NANO / dim,
+        grossNano: licenceNano,
+        discountNano: 0n,
+        netNano: licenceNano,
+      });
+
+      const weekday = day.getDay();
+      const weekend = weekday === 0 || weekday === 6;
+      if (random() > activity * (weekend ? 0.3 : 1)) continue;
+
+      // Split the day's credit burn across models; the enterprise pool covers
+      // a *daily* share of the gross, so net stays exact per row.
+      const coverage = BigInt(20 + Math.floor(random() * 80)); // percent
+      let dayCreditsNano = 0n;
+      let dayGrossNano = 0n;
+      let dayDiscountNano = 0n;
+
+      for (const [model, weight] of MODEL_WEIGHTS) {
+        if (random() > weight * 1.6) continue;
+        const creditsNano = BigInt(Math.round((0.5 + random() * 45) * 1e9));
+        const grossNano = creditsNano / 100n; // credits × $0.01
+        const discountNano = (grossNano * coverage) / 100n;
+        modelRows.push({
+          date,
+          login: seat.login,
+          model,
+          creditsNano,
+          grossNano,
+          discountNano,
+          netNano: grossNano - discountNano,
+        });
+        dayCreditsNano += creditsNano;
+        dayGrossNano += grossNano;
+        dayDiscountNano += discountNano;
+      }
+
+      if (dayGrossNano === 0n) continue;
+      billingRows.push({
+        date,
+        login: seat.login,
+        sku: 'copilot_ai_credit',
+        quantityNano: dayCreditsNano,
+        grossNano: dayGrossNano,
+        discountNano: dayDiscountNano,
+        netNano: dayGrossNano - dayDiscountNano,
+      });
+    }
+  }
+
+  return { billingRows, modelRows };
+}
+
 export class MockCopilotClient implements CopilotClient {
   readonly name = 'mock';
 
@@ -359,7 +572,6 @@ export class MockCopilotClient implements CopilotClient {
       { dash: { seats: seats.length, orgDays: orgDaily.length, historyDays } },
       'generated mock snapshot',
     );
-    // The mock roster is self-contained: every user with usage holds a seat.
-    return { seats, offRosterPremiumRequests: [], orgDaily, modelDaily, breakdownDaily, adoptionDaily };
+    return { seats, orgDaily, modelDaily, breakdownDaily, adoptionDaily };
   }
 }

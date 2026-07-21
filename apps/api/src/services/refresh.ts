@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, desc, eq, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { PLAN_PRICE, BILLING_MONTH_DAYS, PREMIUM_WINDOW_DAYS, premiumOverage } from '@dash/shared';
-import type { RefreshJob } from '@dash/shared';
+import type { RefreshJob, RefreshKind } from '@dash/shared';
 import { db } from '../db/client.js';
 import {
   adoptionPhaseDaily,
@@ -10,12 +9,11 @@ import {
   modelDaily,
   orgDaily,
   refreshJobs,
-  spendDaily,
   usageBreakdownDaily,
 } from '../db/schema.js';
-import type { RefreshJobRow, SpendInsert } from '../db/schema.js';
+import type { RefreshJobRow } from '../db/schema.js';
 import { createCopilotClient } from '../copilot/index.js';
-import type { CopilotSnapshot, SeatSnapshot } from '../copilot/index.js';
+import type { CopilotSnapshot } from '../copilot/index.js';
 import { eventDuration, moduleLogger } from '../log.js';
 
 const log = moduleLogger('services.refresh');
@@ -32,9 +30,10 @@ const ACTIVE_STATUSES = ['pending', 'running'] as const;
  */
 const STALE_JOB_MS = 5 * 60_000;
 
-function toJob(row: RefreshJobRow): RefreshJob {
+export function toJob(row: RefreshJobRow): RefreshJob {
   return {
     id: row.id,
+    kind: row.kind,
     status: row.status,
     startedAt: row.startedAt.toISOString(),
     finishedAt: row.finishedAt?.toISOString() ?? null,
@@ -55,71 +54,6 @@ function isUniqueViolation(error: unknown): boolean {
     'code' in error &&
     (error as { code?: unknown }).code === '23505'
   );
-}
-
-function toCents(dollars: number): number {
-  return Math.round(dollars * 100);
-}
-
-/** A derived spend point, tagged with whether it falls in the premium window. */
-type DerivedSpend = SpendInsert & { inPremiumWindow: boolean };
-
-/**
- * Derive the daily spend series. GitHub exposes no dollar billing to this org
- * (usage endpoint 404s), so money comes entirely from the cost model:
- *
- *   • License is the current roster × plan price ÷ 30. We only know today's
- *     roster, not each past day's, so license history is append-only: this value
- *     seeds days new to the series and past days keep what they already recorded
- *     (see persistSnapshot) rather than being rewritten to today's headcount.
- *   • Premium overage is the modelled 28-day total, distributed across the last
- *     28 report days in proportion to that day's code-generation activity, so
- *     the trend has real shape without inventing dollars outside the window.
- *     Off-roster users (offboarded mid-window) hold no seat but still carry
- *     billed usage, so their overage is added at the lower 'Business' rate.
- *
- * Only points inside that window carry a meaningful overage figure. Older days
- * are flagged `inPremiumWindow: false` with `premiumOverageCents: 0`; the caller
- * uses the flag to preserve whatever overage those days recorded on the refresh
- * when they were still in-window, rather than clobbering settled history to $0.
- *
- * Documented in docs/github-integration.md.
- */
-export function deriveSpend(
-  seats: readonly SeatSnapshot[],
-  offRosterPremiumRequests: CopilotSnapshot['offRosterPremiumRequests'],
-  org: CopilotSnapshot['orgDaily'],
-): DerivedSpend[] {
-  if (org.length === 0) return [];
-
-  const licenseDollarsPerDay =
-    seats.reduce((total, seat) => total + PLAN_PRICE[seat.plan], 0) / BILLING_MONTH_DAYS;
-  const licenseCents = toCents(licenseDollarsPerDay);
-
-  const overageTotalCents = toCents(
-    seats.reduce((total, seat) => total + premiumOverage(seat.plan, seat.premiumRequests28d), 0) +
-      offRosterPremiumRequests.reduce(
-        (total, user) => total + premiumOverage('Business', user.premiumRequests28d),
-        0,
-      ),
-  );
-
-  // The premium window is the newest PREMIUM_WINDOW_DAYS report days.
-  const recent = [...org].sort((a, b) => b.date.localeCompare(a.date)).slice(0, PREMIUM_WINDOW_DAYS);
-  const windowDates = new Set(recent.map((d) => d.date));
-  const genTotal = recent.reduce((sum, d) => sum + d.generations, 0);
-
-  return org.map((day) => {
-    const inPremiumWindow = windowDates.has(day.date);
-    let premiumOverageCents = 0;
-    if (inPremiumWindow) {
-      premiumOverageCents =
-        genTotal > 0
-          ? Math.round((overageTotalCents * day.generations) / genTotal)
-          : Math.round(overageTotalCents / recent.length);
-    }
-    return { date: day.date, licenseCents, premiumOverageCents, inPremiumWindow };
-  });
 }
 
 /** `excluded.<col>` — the value the failed insert would have written. */
@@ -147,20 +81,16 @@ function keepIfNull(col: AnyPgColumn) {
  * metric columns only overwrite when the incoming value is non-null — so
  * CSV-imported enrichment survives a sync that reports those metrics as null.
  * The daily tables are upserted, since past days are settled and only the most
- * recent ones move. License spend is append-only: a day already in spend_daily
- * keeps its recorded licenseCents, since we only know today's roster and must
- * not rewrite past headcount — only new days take the current derived value.
+ * recent ones move. Spend is not derived here — real money comes from the
+ * billing report import (billing_daily), never from seat data.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
-  const { seats, offRosterPremiumRequests, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
-  const spend = deriveSpend(seats, offRosterPremiumRequests, org);
+  const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
 
   log.debug(
     {
       dash: {
         seats: seats.length,
-        offRosterUsers: offRosterPremiumRequests.length,
-        spendPoints: spend.length,
         orgDays: org.length,
         modelRows: models.length,
         breakdownRows: breakdownDaily.length,
@@ -217,22 +147,6 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         seats.map((seat) => seat.login),
       ),
     );
-
-    // In-window days settle their overage; licenseCents is deliberately never
-    // updated (see persistSnapshot doc). Days that fell out of the 28-day
-    // window are settled history — both columns keep what they recorded while
-    // current, so ageing out doesn't erase premium spend from the 90-day chart.
-    for (const { inPremiumWindow, ...point } of spend) {
-      const insert = tx.insert(spendDaily).values(point);
-      if (inPremiumWindow) {
-        await insert.onConflictDoUpdate({
-          target: spendDaily.date,
-          set: { premiumOverageCents: point.premiumOverageCents },
-        });
-      } else {
-        await insert.onConflictDoNothing({ target: spendDaily.date });
-      }
-    }
 
     for (const day of org) {
       await tx
@@ -303,31 +217,39 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
   log.debug('snapshot persisted');
 }
 
-/** Runs the sync and records the outcome on the job row. Never throws. */
-async function run(jobId: string): Promise<void> {
-  const client = createCopilotClient();
+/** What one job runs: an ECS action name plus the work, returning a synced count. */
+export interface JobRunner {
+  /** ECS `event.action`, e.g. `copilot-refresh` / `jira-sync`. */
+  action: string;
+  /** Extra `dash.*` context for the job's log lines. */
+  context?: Record<string, unknown>;
+  /** Does the sync; the count lands in the job row's `seats_synced` column. */
+  run(): Promise<number>;
+}
+
+/** Wraps the runner with status transitions and outcome logging. Never throws. */
+async function runJob(jobId: string, runner: JobRunner): Promise<void> {
   const startedAt = Date.now();
   // Everything about the job rides in one `dash` object per line — pino does
   // not merge duplicate keys between child bindings and call payloads.
-  const job = { jobId, copilotSource: client.name };
-  const jobLog = log.child({ 'event.action': 'copilot-refresh' });
+  const job = { jobId, ...runner.context };
+  const jobLog = log.child({ 'event.action': runner.action });
 
   try {
     await db.update(refreshJobs).set({ status: 'running' }).where(eq(refreshJobs.id, jobId));
-    jobLog.info({ dash: { ...job, historyDays: SERIES_DAYS } }, 'refresh job running');
+    jobLog.info({ dash: job }, 'refresh job running');
 
-    const snapshot = await client.fetchSnapshot(SERIES_DAYS);
-    await persistSnapshot(snapshot);
+    const synced = await runner.run();
 
     await db
       .update(refreshJobs)
-      .set({ status: 'succeeded', finishedAt: new Date(), seatsSynced: snapshot.seats.length })
+      .set({ status: 'succeeded', finishedAt: new Date(), seatsSynced: synced })
       .where(eq(refreshJobs.id, jobId));
     jobLog.info(
       {
         'event.outcome': 'success',
         'event.duration': eventDuration(startedAt),
-        dash: { ...job, seatsSynced: snapshot.seats.length },
+        dash: { ...job, synced },
       },
       'refresh job succeeded',
     );
@@ -348,31 +270,32 @@ async function run(jobId: string): Promise<void> {
   }
 }
 
+/** Active jobs of one kind — reap, dedup, and the loser's re-select all use this. */
+function activeOfKind(kind: RefreshKind) {
+  return and(eq(refreshJobs.kind, kind), inArray(refreshJobs.status, [...ACTIVE_STATUSES]));
+}
+
 /**
- * Starts a refresh and returns immediately with the job to poll.
+ * Starts a job of the given kind and returns immediately with the row to poll.
  *
- * If one is already in flight its job is returned instead, so a double-click
- * on "Refresh" cannot start two concurrent syncs of the same table. Single-flight
- * is enforced by a partial unique index on `refresh_jobs` (one active row max),
- * so two concurrent callers race safely: the loser's insert hits the index and
- * is answered with the winner's in-flight job, never a second sync.
+ * If one of the same kind is already in flight its job is returned instead, so
+ * a double-click on "Refresh" cannot start two concurrent syncs of the same
+ * tables — while a Copilot refresh and a JIRA sync run side by side freely.
+ * Single-flight is enforced by a partial unique index on `refresh_jobs` (one
+ * active row per kind), so two concurrent callers race safely: the loser's
+ * insert hits the index and is answered with the winner's in-flight job.
  */
-export async function startRefresh(): Promise<RefreshJob> {
-  // Fail any job left running past the stale threshold before we dedup, so a
-  // crashed process can't block refreshes indefinitely.
+export async function startJob(kind: RefreshKind, runner: JobRunner): Promise<RefreshJob> {
+  // Fail any job of this kind left running past the stale threshold before we
+  // dedup, so a crashed process can't block future syncs indefinitely.
   const reaped = await db
     .update(refreshJobs)
     .set({ status: 'failed', finishedAt: new Date(), error: 'abandoned (stale)' })
-    .where(
-      and(
-        inArray(refreshJobs.status, [...ACTIVE_STATUSES]),
-        lt(refreshJobs.startedAt, new Date(Date.now() - STALE_JOB_MS)),
-      ),
-    )
+    .where(and(activeOfKind(kind), lt(refreshJobs.startedAt, new Date(Date.now() - STALE_JOB_MS))))
     .returning({ id: refreshJobs.id });
   if (reaped.length > 0) {
     log.warn(
-      { dash: { jobIds: reaped.map((row) => row.id) } },
+      { dash: { kind, jobIds: reaped.map((row) => row.id) } },
       'reaped stale refresh jobs left behind by a dead process',
     );
   }
@@ -380,27 +303,30 @@ export async function startRefresh(): Promise<RefreshJob> {
   const [existing] = await db
     .select()
     .from(refreshJobs)
-    .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
+    .where(activeOfKind(kind))
     .orderBy(desc(refreshJobs.startedAt))
     .limit(1);
 
   if (existing) {
-    log.debug({ dash: { jobId: existing.id } }, 'refresh already in flight — returning existing job');
+    log.debug(
+      { dash: { kind, jobId: existing.id } },
+      'refresh already in flight — returning existing job',
+    );
     return toJob(existing);
   }
 
   let job: RefreshJobRow | undefined;
   try {
-    [job] = await db.insert(refreshJobs).values({ id: randomUUID() }).returning();
+    [job] = await db.insert(refreshJobs).values({ id: randomUUID(), kind }).returning();
   } catch (error) {
-    // Lost the race to the single-flight index: another caller's job is now
-    // active. Return it rather than surfacing the constraint violation.
+    // Lost the race to the single-flight index: another caller's job of this
+    // kind is now active. Return it rather than surfacing the violation.
     if (isUniqueViolation(error)) {
-      log.debug('lost the single-flight race — returning the winning job');
+      log.debug({ dash: { kind } }, 'lost the single-flight race — returning the winning job');
       const [inFlight] = await db
         .select()
         .from(refreshJobs)
-        .where(inArray(refreshJobs.status, [...ACTIVE_STATUSES]))
+        .where(activeOfKind(kind))
         .orderBy(desc(refreshJobs.startedAt))
         .limit(1);
       if (inFlight) return toJob(inFlight);
@@ -409,12 +335,26 @@ export async function startRefresh(): Promise<RefreshJob> {
   }
   if (!job) throw new Error('failed to create refresh job');
 
-  log.info({ 'event.action': 'copilot-refresh', dash: { jobId: job.id } }, 'refresh job created');
+  log.info({ 'event.action': runner.action, dash: { kind, jobId: job.id } }, 'refresh job created');
 
   // Deliberately not awaited — the request returns 202 while this runs.
-  void run(job.id);
+  void runJob(job.id, runner);
 
   return toJob(job);
+}
+
+/** Starts a Copilot refresh (kind `copilot`) and returns the job to poll. */
+export async function startRefresh(): Promise<RefreshJob> {
+  const client = createCopilotClient();
+  return startJob('copilot', {
+    action: 'copilot-refresh',
+    context: { copilotSource: client.name, historyDays: SERIES_DAYS },
+    run: async () => {
+      const snapshot = await client.fetchSnapshot(SERIES_DAYS);
+      await persistSnapshot(snapshot);
+      return snapshot.seats.length;
+    },
+  });
 }
 
 export async function getRefreshJob(id: string): Promise<RefreshJob | null> {
@@ -422,8 +362,16 @@ export async function getRefreshJob(id: string): Promise<RefreshJob | null> {
   return row ? toJob(row) : null;
 }
 
-/** The most recent job, whatever its state — drives the "synced 2h ago" note. */
-export async function getLatestRefreshJob(): Promise<RefreshJob | null> {
-  const [row] = await db.select().from(refreshJobs).orderBy(desc(refreshJobs.startedAt)).limit(1);
+/**
+ * The most recent job of one kind, whatever its state — drives the header's
+ * "synced 2h ago" note (`copilot`) and the JIRA sync status.
+ */
+export async function getLatestRefreshJob(kind: RefreshKind = 'copilot'): Promise<RefreshJob | null> {
+  const [row] = await db
+    .select()
+    .from(refreshJobs)
+    .where(eq(refreshJobs.kind, kind))
+    .orderBy(desc(refreshJobs.startedAt))
+    .limit(1);
   return row ? toJob(row) : null;
 }

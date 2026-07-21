@@ -1,7 +1,7 @@
 import { TELEMETRY_METRICS } from '@dash/shared';
 import type { DateRange, TelemetryRollupRow } from '@dash/shared';
 import { ALL } from './filter.js';
-import type { ScaledSpendPoint } from './spend.js';
+import type { ChartSeriesPoint } from './chart.js';
 
 /**
  * Claude Code telemetry derivations. One pass over the rollup rows produces
@@ -68,7 +68,7 @@ export interface TelemetrySummary {
   sessions: number;
   activeUsers: number;
   /** Daily cost, zero-filled across the whole range so the chart has a spine. */
-  points: ScaledSpendPoint[];
+  points: ChartSeriesPoint[];
   /** Daily token volumes by kind, zero-filled across the whole range. */
   dailyTokens: DailyTokenPoint[];
   /** Top users by total tokens in range — the leaderboard card. */
@@ -251,9 +251,9 @@ export function deriveTelemetry(
 
   const spine = isoDatesBetween(startIso, endIso);
 
-  const points: ScaledSpendPoint[] = spine.map((iso) => {
+  const points: ChartSeriesPoint[] = spine.map((iso) => {
     const cost = costByDate.get(iso) ?? 0;
-    return { date: parseIsoDate(iso), license: cost, premiumOverage: 0, total: cost };
+    return { date: parseIsoDate(iso), total: cost };
   });
 
   const dailyTokens: DailyTokenPoint[] = spine.map((iso) => {

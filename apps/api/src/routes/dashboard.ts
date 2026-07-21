@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { getUsageHistory, listModels, listSeats, listSpend } from '../services/dashboard.js';
+import { getUsageHistory, listModels, listSeats } from '../services/dashboard.js';
 
 const daysQuery = z.object({
   days: z.coerce.number().int().min(1).max(90).default(90),
@@ -15,14 +15,6 @@ const dateWindowQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/seats', async () => {
     return { seats: await listSeats() };
-  });
-
-  app.get('/api/spend', async (request, reply) => {
-    const parsed = daysQuery.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
-    }
-    return { spend: await listSpend(parsed.data.days) };
   });
 
   app.get('/api/usage', async (request, reply) => {

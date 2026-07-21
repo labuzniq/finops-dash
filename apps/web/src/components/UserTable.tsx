@@ -1,6 +1,5 @@
-import { seatPeriodCost } from '@dash/shared';
 import type { CopilotSeat } from '@dash/shared';
-import { EMPTY, lastActiveLabel, optionalCount, optionalPercent, usd } from '../lib/format.js';
+import { EMPTY, lastActiveLabel, optionalCount, optionalPercent } from '../lib/format.js';
 import type { Page, SortDirection, SortKey } from '../lib/metrics/table.js';
 import { Avatar } from './Avatar.js';
 import { Card } from './Card.js';
@@ -9,14 +8,12 @@ import styles from './UserTable.module.css';
 interface SortableColumn {
   key: SortKey;
   label: string;
-  alignRight?: boolean;
 }
 
 const SORTABLE_COLUMNS: SortableColumn[] = [
   { key: 'premiumRequests', label: 'AI CREDITS' },
   { key: 'acceptance', label: 'ACCEPT' },
   { key: 'lastActive', label: 'LAST ACTIVE' },
-  { key: 'cost', label: 'COST', alignRight: true },
 ];
 
 /** Hover text spelling out the agent/chat flags next to the model. */
@@ -29,22 +26,13 @@ function modelTitle(seat: CopilotSeat): string | undefined {
 
 interface UserTableProps {
   page: Page<CopilotSeat>;
-  /** Day count of the selected range — presets directly, custom ranges inclusive. */
-  rangeDays: number;
   sortKey: SortKey;
   sortDirection: SortDirection;
   onSort: (key: SortKey) => void;
   onPageChange: (page: number) => void;
 }
 
-export function UserTable({
-  page,
-  rangeDays,
-  sortKey,
-  sortDirection,
-  onSort,
-  onPageChange,
-}: UserTableProps) {
+export function UserTable({ page, sortKey, sortDirection, onSort, onPageChange }: UserTableProps) {
   const arrowFor = (key: SortKey): string => {
     if (key !== sortKey) return '';
     return sortDirection === -1 ? ' ▾' : ' ▴';
@@ -53,7 +41,7 @@ export function UserTable({
   return (
     <Card padded={false} className={styles.card}>
       <div className={styles.header}>
-        <div className={styles.title}>Per-user usage &amp; cost</div>
+        <div className={styles.title}>Per-user usage</div>
         <div className={styles.pageLabel}>{page.label}</div>
       </div>
 
@@ -63,7 +51,7 @@ export function UserTable({
         <div>EDITOR</div>
         <div>MODEL</div>
         {SORTABLE_COLUMNS.map((column) => (
-          <div key={column.key} className={column.alignRight ? styles.right : undefined}>
+          <div key={column.key}>
             <button
               type="button"
               className={styles.sortButton}
@@ -105,7 +93,6 @@ export function UserTable({
             <div>{optionalCount(seat.premiumRequests28d)}</div>
             <div>{optionalPercent(seat.acceptanceRate)}</div>
             <div className={styles.muted}>{lastActiveLabel(seat.lastActivityDays)}</div>
-            <div className={styles.cost}>{usd(seatPeriodCost(seat, rangeDays), 2)}</div>
           </div>
         ))
       )}

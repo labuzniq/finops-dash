@@ -1,6 +1,9 @@
 import type { DateRange } from '@dash/shared';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
+import type { SpendSortDirection, SpendSortKey } from '../lib/metrics/spend.js';
+import { EMPTY_SPEND_FILTERS } from '../lib/metrics/spendFilter.js';
+import type { SpendFilters } from '../lib/metrics/spendFilter.js';
 import type { SortDirection, SortKey } from '../lib/metrics/table.js';
 
 /**
@@ -19,6 +22,13 @@ export interface DashboardState {
   sortKey: SortKey;
   sortDirection: SortDirection;
   page: number;
+  /** The spend section's own window — billing data trails usage data. */
+  spendRange: DateRange;
+  /** Org-structure filters over the spend section; recompute everything. */
+  spendFilters: SpendFilters;
+  spendSortKey: SpendSortKey;
+  spendSortDirection: SpendSortDirection;
+  spendPage: number;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
   /**
@@ -36,9 +46,14 @@ export const initialDashboardState: DashboardState = {
   editor: ALL,
   language: ALL,
   search: '',
-  sortKey: 'cost',
+  sortKey: 'premiumRequests',
   sortDirection: -1,
   page: 0,
+  spendRange: { kind: 'preset', days: 28 },
+  spendFilters: EMPTY_SPEND_FILTERS,
+  spendSortKey: 'gross',
+  spendSortDirection: -1,
+  spendPage: 0,
   tableView: 'users',
   usageMetric: {},
   modalOpen: false,
@@ -52,6 +67,10 @@ export type DashboardAction =
   | { type: 'setSearch'; search: string }
   | { type: 'toggleSort'; key: SortKey }
   | { type: 'setPage'; page: number }
+  | { type: 'setSpendRange'; range: DateRange }
+  | { type: 'setSpendFilters'; filters: Partial<SpendFilters> }
+  | { type: 'toggleSpendSort'; key: SpendSortKey }
+  | { type: 'setSpendPage'; page: number }
   | { type: 'setTableView'; view: TableView }
   | { type: 'setUsageMetric'; section: string; metric: string }
   | { type: 'openModal' }
@@ -79,6 +98,22 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
 
     case 'setPage':
       return { ...state, page: action.page };
+
+    // Spend window/filter changes reset the spend table's paging too.
+    case 'setSpendRange':
+      return { ...state, spendRange: action.range, spendPage: 0 };
+    // Partial patches compose — a single filter change keeps the others.
+    case 'setSpendFilters':
+      return { ...state, spendFilters: { ...state.spendFilters, ...action.filters }, spendPage: 0 };
+
+    case 'toggleSpendSort':
+      return state.spendSortKey === action.key
+        ? { ...state, spendSortDirection: state.spendSortDirection === -1 ? 1 : -1 }
+        : { ...state, spendSortKey: action.key, spendSortDirection: -1, spendPage: 0 };
+
+    case 'setSpendPage':
+      return { ...state, spendPage: action.page };
+
     case 'setTableView':
       return { ...state, tableView: action.view };
     case 'setUsageMetric':

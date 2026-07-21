@@ -47,10 +47,25 @@ const schema = z
      * ingest is open — acceptable on localhost, not beyond it.
      */
     OTLP_INGEST_TOKEN: z.string().optional(),
+    /**
+     * JIRA Insight (identity sync). Both optional — `POST /api/jira/sync`
+     * answers 503 while they are unset (mock source excepted, which generates
+     * people locally). Empty strings, as commented-out .env lines leave them,
+     * count as unset.
+     */
+    JIRA_BASE_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().url().optional(),
+    ),
+    JIRA_TOKEN: z.preprocess((value) => (value === '' ? undefined : value), z.string().optional()),
   })
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',
     path: ['COPILOT_SOURCE'],
+  })
+  .refine((env) => Boolean(env.JIRA_BASE_URL) === Boolean(env.JIRA_TOKEN), {
+    message: 'JIRA_BASE_URL and JIRA_TOKEN must be set together (or both left unset)',
+    path: ['JIRA_BASE_URL'],
   });
 
 export type Env = z.infer<typeof schema>;

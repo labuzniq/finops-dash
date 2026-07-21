@@ -39,7 +39,7 @@ export interface SeriesChartInput {
 /**
  * Rows within the selected window. Presets take the trailing N *distinct
  * dates* (rows can repeat a date), customs an inclusive calendar window —
- * the same semantics `summariseSpend` gives the spend series.
+ * the same windowing the spend page applies before `spendTrend`/`spendKpis`.
  */
 export function sliceByRange<T extends { date: string }>(
   rows: readonly T[],

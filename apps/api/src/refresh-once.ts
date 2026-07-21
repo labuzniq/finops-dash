@@ -7,7 +7,7 @@ import { createCopilotClient } from './copilot/index.js';
 import { eventDuration, moduleLogger } from './log.js';
 import { persistSnapshot } from './services/refresh.js';
 import { db } from './db/client.js';
-import { copilotSeats, modelDaily, orgDaily, spendDaily } from './db/schema.js';
+import { copilotSeats, modelDaily, orgDaily } from './db/schema.js';
 
 const log = moduleLogger('refresh-once');
 
@@ -21,7 +21,6 @@ await persistSnapshot(snapshot);
 
 const countExpr = { n: sql<number>`count(*)::int` };
 const [seatsN] = await db.select(countExpr).from(copilotSeats);
-const [spendN] = await db.select(countExpr).from(spendDaily);
 const [orgN] = await db.select(countExpr).from(orgDaily);
 const [modelN] = await db.select(countExpr).from(modelDaily);
 
@@ -32,7 +31,6 @@ log.info(
     'event.duration': eventDuration(startedAt),
     dash: {
       seats: seatsN?.n ?? 0,
-      spendDays: spendN?.n ?? 0,
       orgDays: orgN?.n ?? 0,
       modelRows: modelN?.n ?? 0,
     },

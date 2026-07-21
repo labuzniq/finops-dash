@@ -10,12 +10,12 @@ import {
   useModels,
   useRefresh,
   useSeats,
-  useSpend,
   useUsage,
 } from './hooks/useCopilotData.js';
 import { useDashboardMetrics } from './hooks/useDashboardMetrics.js';
 import { useTheme } from './hooks/useTheme.js';
 import { seatLanguages } from './lib/metrics/filter.js';
+import { dateAxis } from './lib/metrics/usage.js';
 import { dashboardReducer, initialDashboardState } from './state/dashboardState.js';
 import { FilterBar } from './components/FilterBar.js';
 import { KpiRow } from './components/KpiRow.js';
@@ -23,11 +23,10 @@ import { ModelTable } from './components/ModelTable.js';
 import { Sidebar } from './components/Sidebar.js';
 import type { AppView } from './components/Sidebar.js';
 import { ClaudeCodePage } from './components/claude/ClaudeCodePage.js';
-import { SpendTrendChart } from './components/SpendTrendChart.js';
+import { SpendSection } from './components/spend/SpendSection.js';
 import { TopBar } from './components/TopBar.js';
 import { UserTable } from './components/UserTable.js';
 import { UtilizationDonut } from './components/UtilizationDonut.js';
-import { WastedSpendPanel } from './components/WastedSpendPanel.js';
 import { UsageSections } from './components/usage/UsageSections.js';
 import { AddDataModal } from './components/modal/AddDataModal.js';
 import styles from './App.module.css';
@@ -36,7 +35,6 @@ import styles from './App.module.css';
 const ACCENT_CLASS = 'acc-blurple';
 
 const EMPTY_SEATS = [] as const;
-const EMPTY_SERIES = [] as const;
 const EMPTY_MODELS = [] as const;
 
 export function App() {
@@ -45,46 +43,45 @@ export function App() {
   const { isDark, toggle } = useTheme();
 
   const seatsQuery = useSeats();
-  const spendQuery = useSpend();
   const usageQuery = useUsage();
   const modelsQuery = useModels(state.range);
   const latestJobQuery = useLatestRefreshJob();
   const { refresh, isRunning, error: refreshError } = useRefresh();
   const importState = useImport();
 
-  const metrics = useDashboardMetrics(
-    seatsQuery.data ?? EMPTY_SEATS,
-    spendQuery.data ?? EMPTY_SERIES,
-    state,
+  const metrics = useDashboardMetrics(seatsQuery.data ?? EMPTY_SEATS, state);
+
+  /** Distinct dates the usage history covers — the usage range's data extent. */
+  const usageDates = useMemo(
+    () => dateAxis(usageQuery.data?.orgDaily ?? []),
+    [usageQuery.data],
   );
 
   // Range options are capped to the history the API actually returned; the
   // smallest range is always offered even with sparse data.
   const availableRanges = useMemo<RangeDays[]>(() => {
-    const days = spendQuery.data?.length ?? 0;
-    const options = RANGE_DAYS.filter((r) => r <= Math.max(days, RANGE_DAYS[0]));
+    const options = RANGE_DAYS.filter((r) => r <= Math.max(usageDates.length, RANGE_DAYS[0]));
     return options.length > 0 ? options : [RANGE_DAYS[0]];
-  }, [spendQuery.data]);
+  }, [usageDates]);
 
-  // The custom picker can only reach dates the fetched series covers; before
-  // data lands, fall back to the 90 days the series request asks for.
+  // The custom picker can only reach dates the fetched history covers; before
+  // data lands, fall back to the 90 days the usage request asks for.
   const seriesBounds = useMemo(() => {
-    const series = spendQuery.data;
-    const first = series?.[0];
-    const last = series?.[series.length - 1];
-    if (first !== undefined && last !== undefined) return { min: first.date, max: last.date };
+    const first = usageDates[0];
+    const last = usageDates[usageDates.length - 1];
+    if (first !== undefined && last !== undefined) return { min: first, max: last };
 
     const today = new Date();
     const earliest = new Date(today.getTime() - 89 * 86_400_000);
     return { min: earliest.toISOString().slice(0, 10), max: today.toISOString().slice(0, 10) };
-  }, [spendQuery.data]);
+  }, [usageDates]);
 
   const rangeDays = rangeDayCount(state.range);
 
   const languages = useMemo(() => seatLanguages(seatsQuery.data ?? EMPTY_SEATS), [seatsQuery.data]);
 
-  const isLoading = seatsQuery.isPending || spendQuery.isPending;
-  const loadError = seatsQuery.error ?? spendQuery.error;
+  const isLoading = seatsQuery.isPending || usageQuery.isPending;
+  const loadError = seatsQuery.error ?? usageQuery.error;
 
   return (
     <div className={cx('theme', ACCENT_CLASS, isDark && 'dark', styles.shell)}>
@@ -105,6 +102,8 @@ export function App() {
           onAddData={() => dispatch({ type: 'openModal' })}
           onExportCsv={() => downloadSeatsCsv(metrics.filteredSeats, rangeDays)}
         />
+
+        <SpendSection state={state} dispatch={dispatch} />
 
         <FilterBar
           range={state.range}
@@ -136,16 +135,6 @@ export function App() {
             <KpiRow metrics={metrics} rangeDays={rangeDays} />
 
             <div className={styles.split}>
-              <SpendTrendChart
-                chart={metrics.chart}
-                license={metrics.spend.license}
-                premiumOverage={metrics.spend.premiumOverage}
-                premiumRequestsUsed={metrics.premiumRequestsUsed}
-              />
-              <UtilizationDonut utilization={metrics.utilization} />
-            </div>
-
-            <div className={styles.split}>
               <div className={styles.tableColumn}>
                 <div className={styles.viewToggle} role="group" aria-label="Table view">
                   <button
@@ -169,7 +158,6 @@ export function App() {
                 {state.tableView === 'users' ? (
                   <UserTable
                     page={metrics.page}
-                    rangeDays={rangeDays}
                     sortKey={state.sortKey}
                     sortDirection={state.sortDirection}
                     onSort={(key) => dispatch({ type: 'toggleSort', key })}
@@ -180,14 +168,7 @@ export function App() {
                 )}
               </div>
 
-              <WastedSpendPanel
-                wastedMonthly={metrics.wastedMonthly}
-                idleCount={metrics.idleCount}
-                candidates={metrics.reclaim}
-                // Idle seats are the ones never used or dormant 30d+ — surface
-                // them by sorting the table to put the stalest first.
-                onReviewIdleSeats={() => dispatch({ type: 'toggleSort', key: 'lastActive' })}
-              />
+              <UtilizationDonut utilization={metrics.utilization} />
             </div>
 
             <UsageSections

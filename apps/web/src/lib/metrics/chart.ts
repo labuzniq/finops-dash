@@ -1,14 +1,21 @@
 import { dateLabel, usd, usdCompact } from '../format.js';
 import type { ChartHoverPoint } from './hover.js';
-import type { ScaledSpendPoint } from './spend.js';
 
 /**
- * Spend-trend geometry.
+ * Dollar-trend geometry.
  *
  * The SVG uses preserveAspectRatio="none" and non-scaling strokes, so paths
  * are computed in a fixed 900×240 space and stretched to whatever width the
  * card gets. Only the maths lives here; the markup lives in the component.
  */
+
+/** One day on the chart: the primary line plus an optional secondary one. */
+export interface ChartSeriesPoint {
+  date: Date;
+  total: number;
+  /** Drawn as the second (dashed) line; omit it for single-series charts. */
+  secondary?: number;
+}
 
 const VIEWBOX_WIDTH = 900;
 const VIEWBOX_HEIGHT = 240;
@@ -60,13 +67,13 @@ const SPEND_HOVER: ChartHoverOptions = {
   premiumLabel: 'Premium overage',
 };
 
-function polyline(points: readonly ScaledSpendPoint[], value: (p: ScaledSpendPoint) => number, x: (i: number) => number, y: (v: number) => number): string {
+function polyline(points: readonly ChartSeriesPoint[], value: (p: ChartSeriesPoint) => number, x: (i: number) => number, y: (v: number) => number): string {
   const steps = points.map((point, index) => `${x(index).toFixed(1)} ${y(value(point)).toFixed(1)}`);
   return `M${steps.join(' L')}`;
 }
 
 export function buildChartGeometry(
-  points: readonly ScaledSpendPoint[],
+  points: readonly ChartSeriesPoint[],
   hover: ChartHoverOptions = SPEND_HOVER,
 ): ChartGeometry {
   // A single point has no line to draw and would divide by zero below.
@@ -83,7 +90,7 @@ export function buildChartGeometry(
     linePath,
     // Close the line down to the floor and back to make the fill.
     areaPath: `${linePath} L${VIEWBOX_WIDTH} ${VIEWBOX_HEIGHT} L0 ${VIEWBOX_HEIGHT} Z`,
-    premiumPath: polyline(points, (p) => p.premiumOverage, x, y),
+    premiumPath: polyline(points, (p) => p.secondary ?? 0, x, y),
     gridLines: GRID_FRACTIONS.map((fraction) => ({
       topPercent: `${((y(peak * fraction) / VIEWBOX_HEIGHT) * 100).toFixed(1)}%`,
       label: usdCompact(peak * fraction),
@@ -108,9 +115,9 @@ export function buildChartGeometry(
           : [
               {
                 label: hover.premiumLabel,
-                value: usd(point.premiumOverage, hover.decimals ?? 0),
+                value: usd(point.secondary ?? 0, hover.decimals ?? 0),
                 color: 'var(--faint)',
-                yPercent: (y(point.premiumOverage) / VIEWBOX_HEIGHT) * 100,
+                yPercent: (y(point.secondary ?? 0) / VIEWBOX_HEIGHT) * 100,
               },
             ]),
       ],
