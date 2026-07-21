@@ -129,7 +129,10 @@ arrive in any order.
 
 ## Import pipeline
 
-`POST /api/import/billing` — CSV body (multipart or `text/csv`).
+`POST /api/import/billing` — CSV body (raw `text/csv`, or the pre-existing
+`/api/import` JSON wrapper `{ content: string }`). *[impl amendment: multipart
+is not supported — a raw `text/csv` body covers the curl/upload need without a
+multipart dependency.]*
 
 1. Strip UTF-8 BOM; parse header.
 2. Detect report type by header set: `model` column ⇒ Report 1

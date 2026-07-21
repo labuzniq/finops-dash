@@ -52,7 +52,12 @@ export async function startJiraSync(): Promise<RefreshJob> {
         .sort();
 
       log.debug({ dash: { samlIds: samlIds.length } }, 'resolving saml ids against JIRA');
-      const people = await client.fetchPeople(samlIds);
+      const fetched = await client.fetchPeople(samlIds);
+      // github_users saml ids are matched case-insensitively, so case variants
+      // ("iczah062" / "ICZAH062") each resolve to a person keyed by the same
+      // uppercased PK. Dedupe (last wins) — one upsert statement touching the
+      // same conflict target twice is a Postgres error (SQLSTATE 21000).
+      const people = [...new Map(fetched.map((person) => [person.samlNameId, person])).values()];
 
       for (const batch of chunk(people, CHUNK_SIZE)) {
         await db

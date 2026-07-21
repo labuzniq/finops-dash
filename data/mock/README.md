@@ -27,14 +27,14 @@ imports can report `unknownLogins` correctly:
 
 ```bash
 curl -X POST http://localhost:4000/api/import/users \
-  -H 'content-type: application/json' \
-  --data "$(jq -Rs '{content: .}' < data/mock/user-export.csv)"
+  -H 'content-type: text/csv' \
+  --data-binary @data/mock/user-export.csv
 curl -X POST http://localhost:4000/api/import/billing \
-  -H 'content-type: application/json' \
-  --data "$(jq -Rs '{content: .}' < data/mock/AIUsageReport_1.csv)"
+  -H 'content-type: text/csv' \
+  --data-binary @data/mock/AIUsageReport_1.csv
 curl -X POST http://localhost:4000/api/import/billing \
-  -H 'content-type: application/json' \
-  --data "$(jq -Rs '{content: .}' < data/mock/AIUsageReport_2.csv)"
+  -H 'content-type: text/csv' \
+  --data-binary @data/mock/AIUsageReport_2.csv
 ```
 
 **JIRA people** have no CSV — with `COPILOT_SOURCE=mock` the sync generates the

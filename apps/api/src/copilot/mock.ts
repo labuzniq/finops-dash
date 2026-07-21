@@ -572,7 +572,6 @@ export class MockCopilotClient implements CopilotClient {
       { dash: { seats: seats.length, orgDays: orgDaily.length, historyDays } },
       'generated mock snapshot',
     );
-    // The mock roster is self-contained: every user with usage holds a seat.
-    return { seats, offRosterPremiumRequests: [], orgDaily, modelDaily, breakdownDaily, adoptionDaily };
+    return { seats, orgDaily, modelDaily, breakdownDaily, adoptionDaily };
   }
 }

@@ -1,5 +1,5 @@
 import { inArray, sql } from 'drizzle-orm';
-import { BILLING_SKUS } from '@dash/shared';
+import { AI_CREDIT_SKU, BILLING_SKUS } from '@dash/shared';
 import type { BillingSku } from '@dash/shared';
 import { db } from '../db/client.js';
 import { billingDaily, githubUsers, modelSpendDaily } from '../db/schema.js';
@@ -15,7 +15,9 @@ const log = moduleLogger('services.billing-import');
  * Billing report CSV import (spec §Import pipeline).
  *
  * Report 1 (`AIUsageReport_1.csv`, has a `model` column) → `model_spend_daily`,
- * per-model AI-credit statistics — never summed into money totals.
+ * per-model AI-credit statistics — never summed into money totals. Only
+ * `copilot_ai_credit` rows land; other skus (request counts, not credits) are
+ * skipped and counted, never merged.
  * Report 2 (`AIUsageReport_2.csv`, has a `workflow_path` column) →
  * `billing_daily`, the sole money authority, licences included.
  *
@@ -50,6 +52,12 @@ export interface ParsedBillingReport {
   dateRange: { from: string; to: string };
   /** Distinct logins appearing in the file. */
   logins: string[];
+  /**
+   * Report 1 rows skipped because their sku is not `copilot_ai_credit` —
+   * `copilot_premium_request` quantities are request counts, not credits, and
+   * must never sum into the credit statistics. Always 0 for Report 2.
+   */
+  skippedNonCreditRows: number;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -158,6 +166,7 @@ export function parseBillingReport(csv: string): ParsedBillingReport {
   const logins = new Set<string>();
   let from = '';
   let to = '';
+  let skippedNonCreditRows = 0;
 
   for (const row of rows.slice(1)) {
     if (isEmptyRow(row)) continue;
@@ -165,6 +174,14 @@ export function parseBillingReport(csv: string): ParsedBillingReport {
 
     let third: string = parsed.sku;
     if (reportType === 'model') {
+      // model_spend_daily stores AI-credit quantities. Report 1 also carries
+      // `copilot_premium_request` rows whose quantity is a *request* count at a
+      // different unit price — summing those into credits_nano would silently
+      // mix units, so any non-credit sku is skipped explicitly.
+      if (parsed.sku !== AI_CREDIT_SKU) {
+        skippedNonCreditRows += 1;
+        continue;
+      }
       third = cellAt(row, columns.get('model')).trim();
       if (third === '') throw new CsvImportError(`line ${row.line}: missing model`);
     }
@@ -190,7 +207,13 @@ export function parseBillingReport(csv: string): ParsedBillingReport {
     if (to === '' || parsed.date > to) to = parsed.date;
   }
 
-  if (aggregated.size === 0) throw new CsvImportError('CSV contains no data rows');
+  if (aggregated.size === 0) {
+    throw new CsvImportError(
+      skippedNonCreditRows > 0
+        ? `CSV contains no ${AI_CREDIT_SKU} rows`
+        : 'CSV contains no data rows',
+    );
+  }
 
   const billingRows: BillingDailyInsert[] = [];
   const modelRows: ModelSpendDailyInsert[] = [];
@@ -211,7 +234,14 @@ export function parseBillingReport(csv: string): ParsedBillingReport {
     }
   }
 
-  return { reportType, billingRows, modelRows, dateRange: { from, to }, logins: [...logins] };
+  return {
+    reportType,
+    billingRows,
+    modelRows,
+    dateRange: { from, to },
+    logins: [...logins],
+    skippedNonCreditRows,
+  };
 }
 
 /** Parse user-export.csv → github_users rows. Blank saml_name_id becomes null. */
@@ -304,6 +334,7 @@ export async function importBillingCsv(csv: string): Promise<ImportResult> {
         reportType: parsed.reportType,
         rowsUpserted,
         unknownLogins: unknownLogins.length,
+        skippedNonCreditRows: parsed.skippedNonCreditRows,
         ...parsed.dateRange,
       },
     },

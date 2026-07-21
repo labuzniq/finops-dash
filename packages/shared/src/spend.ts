@@ -18,6 +18,13 @@ export type BillingSku = (typeof BILLING_SKUS)[number];
 /** The daily licence-accrual sku. Net KPIs exclude it; the licence KPI is only it. */
 export const LICENCE_SKU = 'copilot_for_business' satisfies BillingSku;
 
+/**
+ * The AI-credit sku — the only sku whose Report-1 quantity is an AI-credit
+ * count. Report 1 also carries `copilot_premium_request` rows (unit: requests),
+ * which must never sum into credit statistics.
+ */
+export const AI_CREDIT_SKU = 'copilot_ai_credit' satisfies BillingSku;
+
 /** Credits included in a $19 licence per month (`total_monthly_quota`, constant in the CSV). */
 export const MONTHLY_CREDIT_QUOTA = 1900;
 
