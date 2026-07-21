@@ -1,54 +1,57 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import styles from './UserCombobox.module.css';
+import styles from './FilterCombobox.module.css';
 
 /**
- * The user filter of the spend section: a searchable single-select over the
- * roster. A native `<select>` over ~1,000 people is unusable, so this is the
- * ARIA combobox pattern — type to narrow by display name or login, arrow keys
- * to move, Enter to pick.
+ * The spend section's searchable single-select, shared by every org-structure
+ * filter — user, department, B-1 and B-2 manager. A native `<select>` over a
+ * long roster is unusable, so this is the ARIA combobox pattern — type to
+ * narrow, arrow keys to move, Enter to pick.
  *
- * It owns nothing but its own UI state; the selection lives in
- * `SpendFilters.login`, exactly as the select it replaced.
+ * It owns nothing but its own UI state; the selection lives in `SpendFilters`,
+ * exactly as the selects it replaced.
  */
 
 /** Rendered rows per query. The roster is ~1,000 — painting it all is waste. */
 const MAX_VISIBLE = 50;
 
-interface UserComboboxProps {
-  /** Candidates, already narrowed by the other active filters. */
-  people: readonly SpendPerson[];
-  /** The selected login, or null for everyone. */
-  value: string | null;
-  onChange: (login: string | null) => void;
+export interface FilterOption {
+  value: string;
+  label: string;
+  /** Extra strings the search matches besides the label (e.g. a login). */
+  keywords?: readonly string[];
 }
 
-/** Unmapped people have no display name, so the login stands alone. */
-function label(person: SpendPerson): string {
-  return person.mapped ? `${person.displayName} (${person.login})` : person.login;
+interface FilterComboboxProps {
+  /** Candidates, already narrowed and sorted by the caller. */
+  options: readonly FilterOption[];
+  /** The selected value, or null for "all". */
+  value: string | null;
+  onChange: (value: string | null) => void;
+  /** Singular noun ("user", "department", "B-1 manager") — all the visible and
+   * ARIA copy derives from it, so every filter phrases itself the same way. */
+  noun: string;
 }
 
 /**
- * Case-insensitive substring match over display name and login, with prefix
+ * Case-insensitive substring match over label and keywords, with prefix
  * matches first — typing "mar" should surface "Marta" above "Rosemary".
  */
-function search(people: readonly SpendPerson[], query: string): SpendPerson[] {
+function search(options: readonly FilterOption[], query: string): FilterOption[] {
   const needle = query.trim().toLowerCase();
-  if (needle === '') return [...people];
+  if (needle === '') return [...options];
 
-  const prefix: SpendPerson[] = [];
-  const contains: SpendPerson[] = [];
-  for (const person of people) {
-    const name = person.displayName.toLowerCase();
-    const login = person.login.toLowerCase();
-    if (name.startsWith(needle) || login.startsWith(needle)) prefix.push(person);
-    else if (name.includes(needle) || login.includes(needle)) contains.push(person);
+  const prefix: FilterOption[] = [];
+  const contains: FilterOption[] = [];
+  for (const option of options) {
+    const haystacks = [option.label, ...(option.keywords ?? [])].map((s) => s.toLowerCase());
+    if (haystacks.some((s) => s.startsWith(needle))) prefix.push(option);
+    else if (haystacks.some((s) => s.includes(needle))) contains.push(option);
   }
   return [...prefix, ...contains];
 }
 
-export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
+export function FilterCombobox({ options, value, onChange, noun }: FilterComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -56,20 +59,14 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
 
-  const sorted = useMemo(
-    () =>
-      [...people].sort(
-        (a, b) => a.displayName.localeCompare(b.displayName) || a.login.localeCompare(b.login),
-      ),
-    [people],
-  );
-  const matches = useMemo(() => search(sorted, query), [sorted, query]);
+  const plural = `${noun}s`;
+  const matches = useMemo(() => search(options, query), [options, query]);
   const visible = matches.slice(0, MAX_VISIBLE);
   const hidden = matches.length - visible.length;
 
   const selected = useMemo(
-    () => (value === null ? null : (people.find((person) => person.login === value) ?? null)),
-    [people, value],
+    () => (value === null ? null : (options.find((option) => option.value === value) ?? null)),
+    [options, value],
   );
 
   // Close on Escape or a click outside; both revert the in-flight query so the
@@ -99,8 +96,8 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
     };
   }, [open]);
 
-  const select = (person: SpendPerson) => {
-    onChange(person.login);
+  const select = (option: FilterOption) => {
+    onChange(option.value);
     setOpen(false);
     setQuery('');
   };
@@ -121,10 +118,10 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
       return;
     }
     if (event.key === 'Enter') {
-      const person = visible[activeIndex];
-      if (open && person) {
+      const option = visible[activeIndex];
+      if (open && option) {
         event.preventDefault();
-        select(person);
+        select(option);
       }
       return;
     }
@@ -132,7 +129,7 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
   };
 
   // Closed, the input reads as the current selection; open, it is the query.
-  const inputValue = open ? query : (selected === null ? '' : label(selected));
+  const inputValue = open ? query : (selected === null ? '' : selected.label);
 
   return (
     <div ref={rootRef} className={styles.root}>
@@ -141,14 +138,14 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
         type="text"
         role="combobox"
         className={styles.input}
-        aria-label="Filter by user"
+        aria-label={`Filter by ${noun}`}
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
         aria-activedescendant={
-          open && visible[activeIndex] ? `${listId}-${visible[activeIndex].login}` : undefined
+          open && visible[activeIndex] ? `${listId}-${visible[activeIndex].value}` : undefined
         }
-        placeholder="All users"
+        placeholder={`All ${plural}`}
         value={inputValue}
         onChange={(event) => {
           setQuery(event.target.value);
@@ -167,7 +164,7 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
         <button
           type="button"
           className={styles.clear}
-          aria-label="Clear user filter"
+          aria-label={`Clear ${noun} filter`}
           onClick={() => onChange(null)}
         >
           ×
@@ -175,23 +172,32 @@ export function UserCombobox({ people, value, onChange }: UserComboboxProps) {
       )}
 
       {open && (
-        <ul id={listId} role="listbox" className={styles.list} aria-label="Users">
-          {visible.length === 0 && <li className={styles.empty}>No users match “{query.trim()}”</li>}
-          {visible.map((person, index) => (
+        <ul
+          id={listId}
+          role="listbox"
+          className={styles.list}
+          aria-label={plural.charAt(0).toUpperCase() + plural.slice(1)}
+        >
+          {visible.length === 0 && (
+            <li className={styles.empty}>
+              No {plural} match “{query.trim()}”
+            </li>
+          )}
+          {visible.map((option, index) => (
             <li
-              key={person.login}
-              id={`${listId}-${person.login}`}
+              key={option.value}
+              id={`${listId}-${option.value}`}
               role="option"
-              aria-selected={person.login === value}
+              aria-selected={option.value === value}
               className={cx(styles.option, index === activeIndex && styles.optionActive)}
               onMouseEnter={() => setActiveIndex(index)}
               // pointerdown, not click: the outside-click listener fires first otherwise.
               onPointerDown={(event) => {
                 event.preventDefault();
-                select(person);
+                select(option);
               }}
             >
-              {label(person)}
+              {option.label}
             </li>
           ))}
           {hidden > 0 && <li className={styles.more}>{hidden} more — keep typing</li>}

@@ -3,7 +3,7 @@
   display: flex;
 }
 
-/* Sized to match the filter bar's native selects it sits beside. */
+/* Sized to match the filter bar's other 34px controls it sits beside. */
 .input {
   width: 220px;
   height: 34px;
