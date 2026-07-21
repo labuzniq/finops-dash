@@ -3,6 +3,9 @@ import { and, desc, inArray, isNotNull } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { otlpLogRecords, otlpMetricPoints } from '../db/schema.js';
 import type { OtlpLogRecordInsert, OtlpMetricPointInsert } from '../db/schema.js';
+import { moduleLogger } from '../log.js';
+
+const log = moduleLogger('otlp.ingest');
 
 /**
  * OTLP/HTTP JSON ingest.
@@ -237,7 +240,12 @@ async function insertPoints(rows: OtlpMetricPointInsert[]): Promise<void> {
 
 export async function ingestMetrics(body: unknown): Promise<IngestResult> {
   const { points, rejected } = parseMetrics(body);
-  if (points.length === 0) return { accepted: 0, rejected };
+  if (points.length === 0) {
+    if (rejected > 0) {
+      log.warn({ dash: { accepted: 0, rejected } }, 'otlp metrics batch had malformed datapoints');
+    }
+    return { accepted: 0, rejected };
+  }
 
   const cumulative = points.filter((point) => point.temporality === 'cumulative');
   const lastRaw = await lastRawBySeries([...new Set(cumulative.map((p) => p.insert.seriesKey))]);
@@ -269,6 +277,14 @@ export async function ingestMetrics(body: unknown): Promise<IngestResult> {
   }
 
   await insertPoints(rows);
+  if (rejected > 0) {
+    log.warn({ dash: { accepted: points.length, rejected } }, 'otlp metrics batch had malformed datapoints');
+  } else {
+    log.debug(
+      { dash: { accepted: points.length, cumulativeSeries: bySeries.size } },
+      'otlp metrics batch ingested',
+    );
+  }
   return { accepted: points.length, rejected };
 }
 
@@ -324,6 +340,11 @@ export async function ingestLogs(body: unknown): Promise<IngestResult> {
   const { records, rejected } = parseLogs(body);
   for (let i = 0; i < records.length; i += INSERT_CHUNK) {
     await db.insert(otlpLogRecords).values(records.slice(i, i + INSERT_CHUNK));
+  }
+  if (rejected > 0) {
+    log.warn({ dash: { accepted: records.length, rejected } }, 'otlp logs batch had malformed records');
+  } else {
+    log.debug({ dash: { accepted: records.length } }, 'otlp logs batch ingested');
   }
   return { accepted: records.length, rejected };
 }

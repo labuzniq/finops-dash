@@ -4,6 +4,9 @@ import type { Editor, ImportResult, Plan } from '@dash/shared';
 import { db } from '../db/client.js';
 import { copilotSeats } from '../db/schema.js';
 import type { SeatInsert } from '../db/schema.js';
+import { eventDuration, moduleLogger } from '../log.js';
+
+const log = moduleLogger('services.import');
 
 /**
  * Manual CSV / JSON / NDJSON import — the fallback path for seats or fields the
@@ -232,13 +235,20 @@ function isEmptyRecord(record: Record<string, unknown>): boolean {
 
 /** Parse and upsert an import payload. Never throws for row-level problems. */
 export async function importSeats(content: string): Promise<ImportResult> {
+  const startedAt = Date.now();
   const result: ImportResult = { imported: 0, updated: 0, skipped: 0, errors: [] };
+
+  log.debug({ dash: { payloadBytes: content.length } }, 'parsing import payload');
 
   let records: Record<string, unknown>[];
   try {
     records = parseRecords(content);
   } catch (error) {
     result.errors.push(`could not parse payload: ${(error as Error).message}`);
+    log.warn(
+      { 'event.action': 'seat-import', 'event.outcome': 'failure', err: error },
+      'import payload could not be parsed',
+    );
     return result;
   }
 
@@ -255,7 +265,13 @@ export async function importSeats(content: string): Promise<ImportResult> {
     }
   });
 
-  if (parsed.length === 0) return result;
+  if (parsed.length === 0) {
+    log.info(
+      { 'event.action': 'seat-import', dash: { records: records.length, skipped: result.skipped } },
+      'import carried no usable rows',
+    );
+    return result;
+  }
 
   // Classify insert vs update against the current roster.
   const logins = parsed.map((r) => r.login);
@@ -294,6 +310,21 @@ export async function importSeats(content: string): Promise<ImportResult> {
       else result.imported++;
     }
   });
+
+  log.info(
+    {
+      'event.action': 'seat-import',
+      'event.outcome': 'success',
+      'event.duration': eventDuration(startedAt),
+      dash: {
+        imported: result.imported,
+        updated: result.updated,
+        skipped: result.skipped,
+        rowErrors: result.errors.length,
+      },
+    },
+    'seat import finished',
+  );
 
   return result;
 }

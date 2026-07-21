@@ -7,11 +7,20 @@
  * downloads every shard, and yields parsed rows. See docs/github-integration.md.
  */
 
+import { moduleLogger } from '../log.js';
+
 const API_ROOT = 'https://api.github.com';
 
 /** Network to api.github.com is occasionally flaky; retry transient failures. */
 const MAX_ATTEMPTS = 3;
 const RETRY_BASE_MS = 500;
+
+const log = moduleLogger('copilot.github.api');
+
+/** Presigned shard links carry auth in the query string — never log it. */
+function safeUrl(url: string): string {
+  return url.split('?')[0] ?? url;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,13 +36,27 @@ async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
     try {
       const response = await fetch(url, init);
       if ((response.status >= 500 || response.status === 429) && attempt < MAX_ATTEMPTS) {
+        log.warn(
+          {
+            'url.full': safeUrl(url),
+            'http.response.status_code': response.status,
+            dash: { attempt, maxAttempts: MAX_ATTEMPTS },
+          },
+          'transient github response — retrying',
+        );
         await sleep(RETRY_BASE_MS * attempt);
         continue;
       }
       return response;
     } catch (error) {
       lastError = error;
-      if (attempt < MAX_ATTEMPTS) await sleep(RETRY_BASE_MS * attempt);
+      if (attempt < MAX_ATTEMPTS) {
+        log.warn(
+          { 'url.full': safeUrl(url), err: error, dash: { attempt, maxAttempts: MAX_ATTEMPTS } },
+          'github request failed — retrying',
+        );
+        await sleep(RETRY_BASE_MS * attempt);
+      }
     }
   }
   throw lastError;
@@ -79,6 +102,10 @@ export class GithubApi {
       throw new Error(`GitHub ${response.status} on ${path}: ${describe(response, body)}`);
     }
 
+    log.trace(
+      { 'url.path': path, 'http.response.status_code': response.status },
+      'github api response',
+    );
     return (await response.json()) as T;
   }
 
@@ -99,7 +126,10 @@ export class GithubApi {
       },
     });
 
-    if (response.status === 204) return null;
+    if (response.status === 204) {
+      log.trace({ dash: { report: reportPath } }, 'report not available (204) — skipping');
+      return null;
+    }
 
     if (!response.ok) {
       const body = await response.text();
@@ -118,6 +148,10 @@ export class GithubApi {
       rows.push(...(await downloadNdjson<T>(link)));
     }
 
+    log.debug(
+      { dash: { report: reportPath, shards: links.length, rows: rows.length } },
+      'report downloaded',
+    );
     return { envelope, rows };
   }
 }

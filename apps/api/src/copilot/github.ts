@@ -1,4 +1,5 @@
 import type { Editor, Plan, UsageDimension } from '@dash/shared';
+import { eventDuration, moduleLogger } from '../log.js';
 import { GithubApi } from './reports.js';
 import type {
   AdoptionPhaseDailySnapshot,
@@ -31,6 +32,8 @@ const SEATS_PER_PAGE = 100;
 const BACKFILL_CONCURRENCY = 6;
 /** Report models/languages GitHub buckets as noise — excluded from "dominant" picks. */
 const NOISE_LABELS = new Set(['others', 'unknown', 'none', '']);
+
+const log = moduleLogger('copilot.github');
 
 // --- Raw report record shapes (only the fields we read) ---------------------
 
@@ -350,11 +353,18 @@ export class GithubCopilotClient implements CopilotClient {
   }
 
   async fetchSnapshot(historyDays: number): Promise<CopilotSnapshot> {
+    const startedAt = Date.now();
+    log.debug({ dash: { historyDays } }, 'fetching snapshot from github');
+
     // Roster and per-user metrics are independent; fetch them together.
     const [roster, userMetrics] = await Promise.all([
       this.fetchRoster(),
       this.fetchUserMetrics(),
     ]);
+    log.debug(
+      { dash: { rosterSeats: roster.length, reportedUsers: userMetrics.size } },
+      'roster and user metrics fetched',
+    );
 
     const seats = roster.map((seat) => {
       const metrics = userMetrics.get(seat.login);
@@ -372,6 +382,20 @@ export class GithubCopilotClient implements CopilotClient {
     }
 
     const daily = await this.fetchDailyHistory(historyDays);
+
+    log.info(
+      {
+        'event.action': 'github-snapshot',
+        'event.outcome': 'success',
+        'event.duration': eventDuration(startedAt),
+        dash: {
+          seats: seats.length,
+          offRosterUsers: offRosterPremiumRequests.length,
+          orgDays: daily.orgDaily.length,
+        },
+      },
+      'github snapshot fetched',
+    );
 
     return { seats, offRosterPremiumRequests, ...daily };
   }
@@ -439,6 +463,10 @@ export class GithubCopilotClient implements CopilotClient {
   ): Promise<Omit<CopilotSnapshot, 'seats' | 'offRosterPremiumRequests'>> {
     const anchor = await this.newestReportDay();
     const days = Array.from({ length: historyDays }, (_, i) => addDays(anchor, -i));
+    log.debug(
+      { dash: { anchorDay: anchor, daysRequested: days.length } },
+      'backfilling daily org reports',
+    );
 
     const reports = await mapLimit(days, BACKFILL_CONCURRENCY, async (day) => {
       const report = await this.api.fetchReport<OrgReportRow>(
@@ -446,6 +474,10 @@ export class GithubCopilotClient implements CopilotClient {
       );
       return report?.rows[0] ?? null;
     });
+    log.debug(
+      { dash: { daysRequested: days.length, daysWithReports: reports.filter(Boolean).length } },
+      'daily org reports downloaded',
+    );
 
     const orgDaily: OrgDailySnapshot[] = [];
     const modelDaily: ModelDailySnapshot[] = [];

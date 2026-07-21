@@ -1,4 +1,5 @@
 import type { Editor } from '@dash/shared';
+import { moduleLogger } from '../log.js';
 import type {
   AdoptionPhaseDailySnapshot,
   BreakdownDailySnapshot,
@@ -354,6 +355,10 @@ export class MockCopilotClient implements CopilotClient {
     const modelDaily = buildModelDaily(orgDaily, random);
     const breakdownDaily = buildBreakdownDaily(orgDaily, random);
     const adoptionDaily = buildAdoptionDaily(orgDaily, random);
+    moduleLogger('copilot.mock').debug(
+      { dash: { seats: seats.length, orgDays: orgDaily.length, historyDays } },
+      'generated mock snapshot',
+    );
     // The mock roster is self-contained: every user with usage holds a seat.
     return { seats, offRosterPremiumRequests: [], orgDaily, modelDaily, breakdownDaily, adoptionDaily };
   }

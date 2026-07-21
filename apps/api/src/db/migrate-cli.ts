@@ -1,10 +1,9 @@
 import { runMigrations } from './migrate.js';
 
 try {
+  // runMigrations logs its own outcome in ECS form; nothing to add here.
   await runMigrations();
-  console.log('migrations applied');
   process.exit(0);
-} catch (error) {
-  console.error('migration failed', error);
+} catch {
   process.exit(1);
 }

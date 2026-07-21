@@ -12,9 +12,17 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Expected { token }' });
     }
     if (parsed.data.token !== env.STATIC_LOGIN_TOKEN) {
+      request.log.warn(
+        { 'event.category': ['authentication'], 'event.outcome': 'failure' },
+        'login rejected: invalid token',
+      );
       return reply.code(401).send({ error: 'Invalid token' });
     }
     setSessionCookie(reply);
+    request.log.info(
+      { 'event.category': ['authentication'], 'event.outcome': 'success' },
+      'login accepted',
+    );
     return { ok: true };
   });
 
