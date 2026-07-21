@@ -10,7 +10,12 @@ import styles from './ModelSpendChart.module.css';
  *
  * Bars scale to the largest model rather than to the total, so the leader always
  * fills the track and the differences between the smaller models stay legible.
+ * Each row takes the next hue of the categorical ramp and tints its own track,
+ * so a model keeps one colour across the bar and its unfilled remainder.
  */
+
+/** Length of the `--chart-N` ramp in tokens.css; rows past it cycle. */
+const CHART_HUES = 8;
 
 interface ModelSpendChartProps {
   rows: readonly ModelBreakdownRow[];
@@ -30,8 +35,12 @@ export function ModelSpendChart({ rows }: ModelSpendChartProps) {
         <div className={styles.empty}>No model spend in this range.</div>
       ) : (
         <div className={styles.rows}>
-          {rows.map((row) => (
-            <div key={row.model} className={styles.row}>
+          {rows.map((row, index) => (
+            <div
+              key={row.model}
+              className={styles.row}
+              style={{ ['--row-color' as string]: `var(--chart-${(index % CHART_HUES) + 1})` }}
+            >
               <div className={styles.model} title={row.model}>
                 {row.model}
               </div>

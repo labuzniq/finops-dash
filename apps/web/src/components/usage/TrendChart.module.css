@@ -66,8 +66,8 @@
 }
 
 .swatch {
-  width: 10px;
-  height: 3px;
+  width: 12px;
+  height: 4px;
   border-radius: 2px;
 }
 
@@ -118,9 +118,13 @@
   overflow: visible;
 }
 
+.area {
+  stroke: none;
+}
+
 .line {
   fill: none;
-  stroke-width: 1.75;
+  stroke-width: 2;
 }
 
 .xLabels {

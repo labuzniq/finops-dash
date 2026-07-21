@@ -28,14 +28,18 @@
   /* Categorical series ramp for multi-line charts. --chart-1 tracks the
      accent; the rest are Nocturne-weight hues spaced for adjacency. */
   --chart-1: var(--accent);
-  --chart-2: #2c7a7b;
-  --chart-3: #b7791f;
-  --chart-4: #b83280;
-  --chart-5: #3182ce;
-  --chart-6: #1a7f4e;
-  --chart-7: #c05621;
-  --chart-8: #4a5568;
+  --chart-2: #0d9488;
+  --chart-3: #d97706;
+  --chart-4: #db2777;
+  --chart-5: #2563eb;
+  --chart-6: #059669;
+  --chart-7: #ea580c;
+  --chart-8: #64748b;
   --chart-other: var(--faint);
+
+  /* Area fills under the lines. Light grounds tint less — the same alpha reads
+     heavier against a pale card. */
+  --chart-fill: 16%;
 
   font-variant-numeric: tabular-nums;
 }
@@ -55,13 +59,15 @@
 
   --accent: var(--acc-hi);
 
-  --chart-2: #4cc4b8;
-  --chart-3: #d69e2e;
-  --chart-4: #ed64a6;
-  --chart-5: #63b3ed;
-  --chart-6: #3fae76;
-  --chart-7: #ed8936;
-  --chart-8: #a0aec0;
+  --chart-2: #2dd4bf;
+  --chart-3: #fbbf24;
+  --chart-4: #f472b6;
+  --chart-5: #60a5fa;
+  --chart-6: #34d399;
+  --chart-7: #fb923c;
+  --chart-8: #cbd5e1;
+
+  --chart-fill: 24%;
 }
 
 /* Accent pairs: `--acc` for light grounds, `--acc-hi` for dark. */

@@ -51,13 +51,13 @@
 }
 
 .area {
-  fill: color-mix(in oklab, var(--accent) 13%, transparent);
+  fill: color-mix(in oklab, var(--accent) var(--chart-fill), transparent);
 }
 
 .line {
   fill: none;
   stroke: var(--accent);
-  stroke-width: 2;
+  stroke-width: 2.25;
 }
 
 .xLabels {
