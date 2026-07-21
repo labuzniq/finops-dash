@@ -54,12 +54,18 @@ impossible (user guidance #2, #3).
 - `gross_amount` — raw cost (credits × $0.01, or licence accrual).
 - `discount_amount` — covered by the shared enterprise pool (funded by licence
   payments); not an extra charge.
-- `net_amount` — actually paid (for credit rows: the charge beyond the pool,
-  usually 0; for licence rows: the licence payment itself).
-- Licence rows (`copilot_for_business`): daily accrual of 1/30 user-month at
-  $19; `discount_amount` = 0, so net = gross. Licence total is displayed
-  separately **and** is part of overall Gross — labelled as such, never added
-  to Gross a second time.
+- `net_amount` — the charge beyond the enterprise pool (gross − discount).
+- **The displayed Net KPI covers non-licence skus only** (`copilot_ai_credit`,
+  `copilot_premium_request`): it answers "what did we pay beyond the pool for
+  usage". Gross 10, Discount 10 ⇒ Net 0 — the daily licence accrual does not
+  leak into it. Licence money is its own KPI, never mixed into Net.
+- Licence rows (`copilot_for_business`): daily accrual of a fraction of a
+  user-month at $19; `discount_amount` = 0. The licence total for a range is
+  the **sum of the daily licence rows in that range** — never `19 × user
+  count`, because users joining mid-month accrue partial amounts and each day
+  carries its own individual payment. Licence total is displayed separately
+  **and** is part of overall Gross — labelled as such, never added to Gross a
+  second time.
 - `total_monthly_quota` = constant 1900 credits (= $19 licence) → shared const
   `MONTHLY_CREDIT_QUOTA`, not stored per row.
 - Ignored columns: `product`, `unit_type`, `applied_cost_per_quantity`,
@@ -205,11 +211,17 @@ New spend section replaces the fake one. All derivation client-side in
 `lib/metrics/`-style pure functions; page state joins the existing reducer.
 
 - **KPI row — four separate dollar values** for the selected range:
-  1. Gross, 2. Discount (enterprise pool), 3. Net (actually paid),
-  4. Licences (`copilot_for_business` gross; labelled "included in Gross").
+  1. Gross — all skus, licences included.
+  2. Discount — covered by the enterprise pool.
+  3. Net — **non-licence skus only** (usage paid beyond the pool; 0 when the
+     pool covers everything).
+  4. Licences — sum of the daily `copilot_for_business` rows in range
+     (prorated joins accrue partially; never `19 × users`); labelled
+     "included in Gross".
   Never summed with each other.
-- **Trend chart** — daily Gross / Discount / Net lines; existing hand-rolled
-  SVG chart component, tokens from `tokens.css`.
+- **Trend chart** — daily Gross / Discount / Net / Licence lines (Net uses the
+  same non-licence definition as the KPI); existing hand-rolled SVG chart
+  component, tokens from `tokens.css`.
 - **Model breakdown** — from `modelRows`: credits + gross per model, share of
   credit spend. Labelled "AI credit spend by model" (licences excluded by
   nature of Report 1).
