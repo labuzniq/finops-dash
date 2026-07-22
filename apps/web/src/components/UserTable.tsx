@@ -71,10 +71,12 @@ export function UserTable({ page, sortKey, sortDirection, onSort, onPageChange }
         page.items.map((seat) => (
           <div key={seat.login} className={`${styles.columns} ${styles.row}`}>
             <div className={styles.user}>
-              <Avatar name={seat.name} login={seat.login} size={28} fontSize={10} />
+              <Avatar name={seat.displayName} login={seat.login} size={28} fontSize={10} />
               <div className={styles.identity}>
-                <div className={styles.name}>{seat.name}</div>
-                <div className={styles.login}>{seat.login}</div>
+                <div className={styles.name}>{seat.displayName}</div>
+                {seat.displayName !== seat.login && (
+                  <div className={styles.login}>{seat.login}</div>
+                )}
               </div>
             </div>
             <div>

@@ -29,6 +29,17 @@ export interface CopilotSeat {
   /** GitHub login — the seat's stable identity. */
   login: string;
   name: string;
+  /**
+   * Identity resolved at read time via `github_users` (login → saml_name_id)
+   * and `jira_people` — the same join the spend page uses. `displayName`
+   * falls back to the login and `mapped` is false when either hop misses.
+   */
+  samlNameId: string | null;
+  displayName: string;
+  department: string | null;
+  b1Manager: string | null;
+  b2Manager: string | null;
+  mapped: boolean;
   plan: Plan;
   /** Dominant IDE from `totals_by_ide`; null when the seat has never been used. */
   editor: Editor | null;

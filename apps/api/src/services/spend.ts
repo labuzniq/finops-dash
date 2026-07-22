@@ -1,61 +1,25 @@
-import { and, asc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, gte, lte } from 'drizzle-orm';
 import { BILLING_SKUS } from '@dash/shared';
 import type { BillingRow, ModelSpendRow, SpendPayload, SpendPerson } from '@dash/shared';
 import { db } from '../db/client.js';
-import { billingDaily, githubUsers, jiraPeople, modelSpendDaily } from '../db/schema.js';
-import type { JiraPersonRow } from '../db/schema.js';
+import { billingDaily, modelSpendDaily } from '../db/schema.js';
+import { loadIdentity } from './identity.js';
 import { nanoToDollars } from '../lib/nano.js';
 
 /**
  * The spend read model: everything `GET /api/spend` returns in one payload,
  * fetch-once like the rest of the app. Money and quantities leave their exact
  * bigint nano representation here — via `nanoToDollars`, nowhere else.
+ *
+ * The identity join lives in `identity.ts` (shared with the seats read path).
+ * The people list carries one entry per *active* login in `github_users` (ever
+ * seen in a billing report — the flag is sticky, so once active a user stays
+ * listed even when the selected range carries no rows for them) plus any login
+ * in the fetched billing/model rows. Org members who never appear in a report
+ * are excluded from the list but never deleted. Logins without a saml id or
+ * without a JIRA hit come back `mapped: false` with null org fields — they
+ * still count in every total.
  */
-
-/** "First Last" when the JIRA join hit, the raw login otherwise. */
-function displayName(person: JiraPersonRow | undefined, login: string): string {
-  const name = [person?.firstName, person?.lastName].filter(Boolean).join(' ');
-  return name === '' ? login : name;
-}
-
-/**
- * The code-side identity join: one entry per *active* login in `github_users`
- * (ever seen in a billing report — the flag is sticky, so once active a user
- * stays listed even when the selected range carries no rows for them) plus any
- * login in the fetched billing/model rows. Org members who never appear in a
- * report are excluded from the list but never deleted. SAML ids match
- * `jira_people` case-insensitively (the PK is stored uppercase). Logins without
- * a saml id or without a JIRA hit come back `mapped: false` with null org
- * fields — they still count in every total.
- */
-function joinPeople(
-  users: { login: string; samlNameId: string | null }[],
-  jiraRows: JiraPersonRow[],
-  billingLogins: Iterable<string>,
-): SpendPerson[] {
-  const jiraBySaml = new Map(jiraRows.map((row) => [row.samlNameId.toUpperCase(), row]));
-  const samlByLogin = new Map(users.map((user) => [user.login, user.samlNameId]));
-
-  const logins = new Set<string>(samlByLogin.keys());
-  for (const login of billingLogins) logins.add(login);
-
-  const people: SpendPerson[] = [];
-  for (const login of [...logins].sort()) {
-    const samlNameId = samlByLogin.get(login) ?? null;
-    const person =
-      samlNameId === null ? undefined : jiraBySaml.get(samlNameId.toUpperCase());
-    people.push({
-      login,
-      samlNameId,
-      displayName: displayName(person, login),
-      department: person?.department ?? null,
-      b1Manager: person?.b1Manager ?? null,
-      b2Manager: person?.b2Manager ?? null,
-      mapped: person !== undefined,
-    });
-  }
-  return people;
-}
 
 /**
  * Billing rows, model rows and the identity join for an inclusive date range.
@@ -63,7 +27,7 @@ function joinPeople(
  * carries per-model stats and is never summed into money totals client-side.
  */
 export async function getSpend(from: string, to: string): Promise<SpendPayload> {
-  const [billing, models, users, jira] = await Promise.all([
+  const [billing, models, identity] = await Promise.all([
     db
       .select()
       .from(billingDaily)
@@ -74,11 +38,7 @@ export async function getSpend(from: string, to: string): Promise<SpendPayload> 
       .from(modelSpendDaily)
       .where(and(gte(modelSpendDaily.date, from), lte(modelSpendDaily.date, to)))
       .orderBy(asc(modelSpendDaily.date), asc(modelSpendDaily.login), asc(modelSpendDaily.model)),
-    db
-      .select({ login: githubUsers.login, samlNameId: githubUsers.samlNameId })
-      .from(githubUsers)
-      .where(eq(githubUsers.active, true)),
-    db.select().from(jiraPeople),
+    loadIdentity(),
   ]);
 
   const billingRows: BillingRow[] = [];
@@ -108,9 +68,13 @@ export async function getSpend(from: string, to: string): Promise<SpendPayload> 
     net: nanoToDollars(row.netNano),
   }));
 
-  const billingLogins = new Set<string>();
-  for (const row of billingRows) billingLogins.add(row.login);
-  for (const row of modelRows) billingLogins.add(row.login);
+  const logins = new Set<string>(identity.activeLogins);
+  for (const row of billingRows) logins.add(row.login);
+  for (const row of modelRows) logins.add(row.login);
 
-  return { billingRows, modelRows, people: joinPeople(users, jira, billingLogins) };
+  const people: SpendPerson[] = [...logins]
+    .sort()
+    .map((login) => ({ login, ...identity.resolve(login) }));
+
+  return { billingRows, modelRows, people };
 }
