@@ -7,6 +7,7 @@ import { rangeLabel } from '../../lib/format.js';
 import { useModels, useSeats, useUsage } from '../../hooks/useCopilotData.js';
 import type { DashboardMetrics } from '../../hooks/useDashboardMetrics.js';
 import { ALL, seatLanguages } from '../../lib/metrics/filter.js';
+import { scopeActive } from '../../lib/metrics/spendFilter.js';
 import { dateAxis } from '../../lib/metrics/usage.js';
 import type { DashboardAction, DashboardState } from '../../state/dashboardState.js';
 import { FilterBar } from '../FilterBar.js';
@@ -81,7 +82,10 @@ export function CopilotAnalyticsPage({
   // Null when no seat filter is active — the usage charts then show the exact
   // org-report aggregates instead of a sum over every seat's daily rows.
   const filterActive =
-    state.editor !== ALL || state.language !== ALL || state.search.trim() !== '';
+    state.editor !== ALL ||
+    state.language !== ALL ||
+    state.search.trim() !== '' ||
+    scopeActive(state.seatScope);
   const filteredLogins = useMemo(
     () => (filterActive ? new Set(metrics.filteredSeats.map((seat) => seat.login)) : null),
     [filterActive, metrics.filteredSeats],
@@ -101,12 +105,15 @@ export function CopilotAnalyticsPage({
         language={state.language}
         languages={languages}
         search={state.search}
+        seats={seatsQuery.data ?? EMPTY_SEATS}
+        scope={state.seatScope}
         latestJob={latestJob}
         isRefreshing={isRefreshing}
         onRangeChange={(range) => dispatch({ type: 'setRange', range })}
         onEditorChange={(editor) => dispatch({ type: 'setEditor', editor })}
         onLanguageChange={(language) => dispatch({ type: 'setLanguage', language })}
         onSearchChange={(search) => dispatch({ type: 'setSearch', search })}
+        onScopeChange={(filters) => dispatch({ type: 'setSeatScope', filters })}
       />
 
       {loadError && (
