@@ -1,4 +1,6 @@
 import type { CopilotSeat, Editor } from '@dash/shared';
+import { personMatches } from './spendFilter.js';
+import type { SpendFilters } from './spendFilter.js';
 
 /** The "no filter" sentinel shared by the editor and language selects. */
 export const ALL = 'All';
@@ -21,12 +23,22 @@ export interface SeatFilters {
   editor: EditorFilter;
   language: LanguageFilter;
   search: string;
+  /**
+   * Org-structure scope (department, managers, single user, unmapped) — the
+   * same shape and semantics as the spend page's filters. Seats carry the
+   * resolved identity fields, so `personMatches` applies to them directly.
+   */
+  scope: SpendFilters;
 }
 
-/** Case-insensitive match on either display name or login. */
+/** Case-insensitive match on login, roster name, or saml-mapped display name. */
 function matchesSearch(seat: CopilotSeat, query: string): boolean {
   if (query === '') return true;
-  return seat.login.includes(query) || seat.name.toLowerCase().includes(query);
+  return (
+    seat.login.includes(query) ||
+    seat.name.toLowerCase().includes(query) ||
+    seat.displayName.toLowerCase().includes(query)
+  );
 }
 
 export function filterSeats(seats: readonly CopilotSeat[], filters: SeatFilters): CopilotSeat[] {
@@ -36,6 +48,7 @@ export function filterSeats(seats: readonly CopilotSeat[], filters: SeatFilters)
     (seat) =>
       (filters.editor === ALL || seat.editor === filters.editor) &&
       (filters.language === ALL || seat.language === filters.language) &&
+      personMatches(seat, filters.scope) &&
       matchesSearch(seat, query),
   );
 }

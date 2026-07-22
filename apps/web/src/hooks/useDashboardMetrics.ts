@@ -36,8 +36,14 @@ export function useDashboardMetrics(
   state: DashboardState,
 ): DashboardMetrics {
   const filteredSeats = useMemo(
-    () => filterSeats(seats, { editor: state.editor, language: state.language, search: state.search }),
-    [seats, state.editor, state.language, state.search],
+    () =>
+      filterSeats(seats, {
+        editor: state.editor,
+        language: state.language,
+        search: state.search,
+        scope: state.seatScope,
+      }),
+    [seats, state.editor, state.language, state.search, state.seatScope],
   );
 
   const utilization = useMemo(() => buildUtilization(filteredSeats), [filteredSeats]);

@@ -19,6 +19,8 @@ export interface DashboardState {
   editor: EditorFilter;
   language: LanguageFilter;
   search: string;
+  /** Org-structure scope over the seats — spend-page semantics on analytics. */
+  seatScope: SpendFilters;
   sortKey: SortKey;
   sortDirection: SortDirection;
   page: number;
@@ -46,6 +48,7 @@ export const initialDashboardState: DashboardState = {
   editor: ALL,
   language: ALL,
   search: '',
+  seatScope: EMPTY_SPEND_FILTERS,
   sortKey: 'premiumRequests',
   sortDirection: -1,
   page: 0,
@@ -65,6 +68,7 @@ export type DashboardAction =
   | { type: 'setEditor'; editor: EditorFilter }
   | { type: 'setLanguage'; language: LanguageFilter }
   | { type: 'setSearch'; search: string }
+  | { type: 'setSeatScope'; filters: Partial<SpendFilters> }
   | { type: 'toggleSort'; key: SortKey }
   | { type: 'setPage'; page: number }
   | { type: 'setSpendRange'; range: DateRange }
@@ -89,6 +93,9 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
       return { ...state, language: action.language, page: 0 };
     case 'setSearch':
       return { ...state, search: action.search, page: 0 };
+    // Partial patches compose, same as the spend filters below.
+    case 'setSeatScope':
+      return { ...state, seatScope: { ...state.seatScope, ...action.filters }, page: 0 };
 
     // Re-clicking the active column flips direction; a new column starts descending.
     case 'toggleSort':
