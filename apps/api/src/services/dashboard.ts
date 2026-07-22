@@ -28,6 +28,8 @@ import type {
   UsageBreakdownRow,
   UserDailyRow,
 } from '../db/schema.js';
+import { loadIdentity } from './identity.js';
+import type { ResolvedIdentity } from './identity.js';
 
 const MS_PER_DAY = 86_400_000;
 
@@ -47,10 +49,11 @@ function daysSince(timestamp: Date | null, now: Date): number | null {
   return Math.max(0, Math.floor((now.getTime() - timestamp.getTime()) / MS_PER_DAY));
 }
 
-function toSeat(row: SeatRow, now: Date): CopilotSeat {
+function toSeat(row: SeatRow, now: Date, identity: ResolvedIdentity): CopilotSeat {
   return {
     login: row.login,
     name: row.name,
+    ...identity,
     plan: row.plan,
     editor: narrow<Editor>(EDITORS, row.editor),
     language: row.language,
@@ -79,9 +82,12 @@ function earliestDate(days: number): string {
  * KPIs per request for no benefit.
  */
 export async function listSeats(): Promise<CopilotSeat[]> {
-  const rows = await db.select().from(copilotSeats).orderBy(asc(copilotSeats.login));
+  const [rows, { resolve }] = await Promise.all([
+    db.select().from(copilotSeats).orderBy(asc(copilotSeats.login)),
+    loadIdentity(),
+  ]);
   const now = new Date();
-  return rows.map((row) => toSeat(row, now));
+  return rows.map((row) => toSeat(row, now, resolve(row.login)));
 }
 
 function toOrgDailyPoint(row: OrgDailyRow): OrgDailyPoint {
