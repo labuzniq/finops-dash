@@ -9,6 +9,7 @@ import type {
   OrgDailyPoint,
   UsageDimension,
   UsageHistory,
+  UserDailyPoint,
 } from '@dash/shared';
 import { db } from '../db/client.js';
 import {
@@ -17,6 +18,7 @@ import {
   modelDaily,
   orgDaily,
   usageBreakdownDaily,
+  userDaily,
 } from '../db/schema.js';
 import type {
   AdoptionPhaseRow,
@@ -24,6 +26,7 @@ import type {
   OrgDailyRow,
   SeatRow,
   UsageBreakdownRow,
+  UserDailyRow,
 } from '../db/schema.js';
 
 const MS_PER_DAY = 86_400_000;
@@ -98,6 +101,11 @@ function toAdoptionPoint(row: AdoptionPhaseRow): AdoptionPhasePoint {
   return point;
 }
 
+function toUserDailyPoint(row: UserDailyRow): UserDailyPoint {
+  const { syncedAt: _syncedAt, ...point } = row;
+  return point;
+}
+
 /**
  * The full usage history in one payload — org days, breakdown rows, adoption
  * phases. The web app fetches it once and slices by range client-side, the
@@ -106,7 +114,7 @@ function toAdoptionPoint(row: AdoptionPhaseRow): AdoptionPhasePoint {
 export async function getUsageHistory(days: number): Promise<UsageHistory> {
   const floor = earliestDate(days);
 
-  const [orgRows, breakdownRows, adoptionRows] = await Promise.all([
+  const [orgRows, breakdownRows, adoptionRows, userRows] = await Promise.all([
     db.select().from(orgDaily).where(gte(orgDaily.date, floor)).orderBy(asc(orgDaily.date)),
     db
       .select()
@@ -122,6 +130,11 @@ export async function getUsageHistory(days: number): Promise<UsageHistory> {
       .from(adoptionPhaseDaily)
       .where(gte(adoptionPhaseDaily.date, floor))
       .orderBy(asc(adoptionPhaseDaily.date), asc(adoptionPhaseDaily.phaseNumber)),
+    db
+      .select()
+      .from(userDaily)
+      .where(gte(userDaily.date, floor))
+      .orderBy(asc(userDaily.date), asc(userDaily.login)),
   ]);
 
   return {
@@ -130,6 +143,7 @@ export async function getUsageHistory(days: number): Promise<UsageHistory> {
       .map(toBreakdownPoint)
       .filter((point): point is BreakdownPoint => point !== null),
     adoption: adoptionRows.map(toAdoptionPoint),
+    userDaily: userRows.map(toUserDailyPoint),
   };
 }
 

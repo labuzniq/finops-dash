@@ -129,6 +129,30 @@ export const adoptionPhaseDaily = pgTable(
 );
 
 /**
+ * Per-day, per-user activity — what lets the usage charts follow the seat
+ * filters. The mock source fills the full history; live GitHub only covers the
+ * users report's trailing 28-day window, so older days simply have no rows.
+ * Days with no activity for a login have no row (zero, not unknown — the org
+ * reports cover every day, so absence here means "did nothing that day").
+ */
+export const userDaily = pgTable(
+  'user_daily',
+  {
+    date: date('date').notNull(),
+    login: varchar('login', { length: 100 }).notNull(),
+    interactions: integer('interactions').notNull(),
+    generations: integer('generations').notNull(),
+    acceptances: integer('acceptances').notNull(),
+    locAdded: integer('loc_added').notNull(),
+    locDeleted: integer('loc_deleted').notNull(),
+    locSuggestedAdd: integer('loc_suggested_add').notNull(),
+    locSuggestedDelete: integer('loc_suggested_delete').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.date, table.login] })],
+);
+
+/**
  * Per-day, per-model activity from a daily report's `totals_by_language_model`,
  * summed across languages. Keyed by (date, model). Feeds the per-model view.
  */
@@ -336,6 +360,8 @@ export type OrgDailyRow = typeof orgDaily.$inferSelect;
 export type OrgDailyInsert = typeof orgDaily.$inferInsert;
 export type ModelDailyRow = typeof modelDaily.$inferSelect;
 export type ModelDailyInsert = typeof modelDaily.$inferInsert;
+export type UserDailyRow = typeof userDaily.$inferSelect;
+export type UserDailyInsert = typeof userDaily.$inferInsert;
 export type UsageBreakdownRow = typeof usageBreakdownDaily.$inferSelect;
 export type UsageBreakdownInsert = typeof usageBreakdownDaily.$inferInsert;
 export type AdoptionPhaseRow = typeof adoptionPhaseDaily.$inferSelect;
