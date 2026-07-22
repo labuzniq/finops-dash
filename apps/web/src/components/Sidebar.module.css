@@ -74,6 +74,17 @@
   color: var(--text);
 }
 
+/* Indent lines a child label up with its parent's label (icon + gap). */
+.child {
+  padding-left: 35px;
+}
+
+.chevron {
+  margin-left: auto;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+
 .itemActive,
 .itemActive:hover {
   background: color-mix(in oklab, var(--accent) 10%, transparent);
