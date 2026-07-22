@@ -12,8 +12,13 @@ import { moduleLogger } from '../log.js';
 const API_ROOT = 'https://api.github.com';
 
 /** Network to api.github.com is occasionally flaky; retry transient failures. */
-const MAX_ATTEMPTS = 3;
-const RETRY_BASE_MS = 500;
+const RETRY_DELAYS_MS = [500, 1000];
+/**
+ * The presigned shard host sits behind a WAF that rate-limits bursts with 403,
+ * and a block can persist for around a minute — escalate far past the default
+ * schedule. The links stay valid ~1h, so waiting this long is safe.
+ */
+const FORBIDDEN_RETRY_DELAYS_MS = [1_000, 5_000, 15_000, 30_000, 60_000];
 
 const log = moduleLogger('copilot.github.api');
 
@@ -48,50 +53,62 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * fetch with retry on network errors and 5xx/429. 4xx (including 204 handled by
- * callers) are returned as-is — they are not transient.
+ * callers) are returned as-is — they are not transient. Exception: callers that
+ * talk to the presigned shard host pass `retryForbidden`, because its WAF
+ * answers 403 for throttling, not auth (see downloadNdjson).
  */
-async function fetchRetry(url: string, init?: RequestInit): Promise<Response> {
+async function fetchRetry(
+  url: string,
+  init?: RequestInit,
+  opts?: { retryForbidden?: boolean },
+): Promise<Response> {
+  const delays = opts?.retryForbidden ? FORBIDDEN_RETRY_DELAYS_MS : RETRY_DELAYS_MS;
+  const maxAttempts = delays.length + 1;
   let lastError: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     log.debug(
       {
         'http.request.method': init?.method ?? 'GET',
         'url.full': safeUrl(url),
-        dash: { attempt, maxAttempts: MAX_ATTEMPTS },
+        dash: { attempt, maxAttempts },
       },
       'github request',
     );
     try {
       const response = await fetch(url, init);
-      if ((response.status >= 500 || response.status === 429) && attempt < MAX_ATTEMPTS) {
+      const transient =
+        response.status >= 500 ||
+        response.status === 429 ||
+        (response.status === 403 && opts?.retryForbidden === true);
+      if (transient && attempt < maxAttempts) {
         log.warn(
           {
             'url.full': safeUrl(url),
             'http.response.status_code': response.status,
-            dash: { attempt, maxAttempts: MAX_ATTEMPTS },
+            dash: { attempt, maxAttempts },
           },
           'transient github response — retrying',
         );
-        await sleep(RETRY_BASE_MS * attempt);
+        await sleep(delays[attempt - 1]!);
         continue;
       }
       return response;
     } catch (error) {
       lastError = error;
       const clues = errorClues(error);
-      if (attempt < MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         log.warn(
-          { 'url.full': safeUrl(url), err: error, dash: { attempt, maxAttempts: MAX_ATTEMPTS, ...clues } },
+          { 'url.full': safeUrl(url), err: error, dash: { attempt, maxAttempts, ...clues } },
           'github request failed — retrying',
         );
-        await sleep(RETRY_BASE_MS * attempt);
+        await sleep(delays[attempt - 1]!);
       } else {
         log.error(
           {
             'event.outcome': 'failure',
             'url.full': safeUrl(url),
             err: error,
-            dash: { attempts: MAX_ATTEMPTS, ...clues },
+            dash: { attempts: maxAttempts, ...clues },
           },
           'github request failed on every attempt — likely proxy/egress/TLS if the code is a connect or certificate error',
         );
@@ -113,6 +130,22 @@ export interface ReportEnvelope {
 export interface ReportResult<T> {
   envelope: ReportEnvelope;
   rows: T[];
+}
+
+/**
+ * A presigned shard answered an error status through every retry. Carries the
+ * status so callers can tell a persistent WAF block (403 — the WAF sometimes
+ * false-positives on a specific signature, and the envelope serves that same
+ * signature until it expires ~1h later) from anything else.
+ */
+export class ShardDownloadError extends Error {
+  constructor(
+    readonly status: number,
+    readonly host: string,
+  ) {
+    super(`report shard download failed: ${status} (host ${host})`);
+    this.name = 'ShardDownloadError';
+  }
 }
 
 export class GithubApi {
@@ -229,7 +262,10 @@ async function downloadNdjson<T>(link: string): Promise<T[]> {
   // that allowlists only api.github.com fails exactly here, so name the host.
   const host = new URL(link).hostname;
   // Presigned URL carries its own auth in the query string — no headers.
-  const response = await fetchRetry(link);
+  // The shard host fronts Azure and its WAF sporadically rejects bursty
+  // downloads with 403 ("Request blocked by WAF") — transient, so retry it;
+  // the link outlives the retries (~1h validity, see docs/github-integration.md).
+  const response = await fetchRetry(link, undefined, { retryForbidden: true });
   if (!response.ok) {
     log.error(
       {
@@ -239,7 +275,7 @@ async function downloadNdjson<T>(link: string): Promise<T[]> {
       },
       'report shard download rejected — check egress to this host',
     );
-    throw new Error(`report shard download failed: ${response.status} (host ${host})`);
+    throw new ShardDownloadError(response.status, host);
   }
 
   const text = await response.text();

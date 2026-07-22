@@ -1,6 +1,6 @@
 import type { Editor, Plan, UsageDimension } from '@dash/shared';
 import { eventDuration, moduleLogger } from '../log.js';
-import { GithubApi } from './reports.js';
+import { GithubApi, ShardDownloadError } from './reports.js';
 import type {
   AdoptionPhaseDailySnapshot,
   BreakdownDailySnapshot,
@@ -30,6 +30,14 @@ import type {
 const SEATS_PER_PAGE = 100;
 /** Concurrent daily-report downloads during backfill. Well under the 5k/hr limit. */
 const BACKFILL_CONCURRENCY = 6;
+/**
+ * Days whose shard stays 403 through every retry are skipped like a 204 — the
+ * shard host's WAF can false-positive on one day's presigned signature for up
+ * to ~1h, and the next refresh backfills it. More than this many blocked days
+ * is no longer a signature fluke but an egress/WAF problem — fail the refresh
+ * so existing data is kept instead of silently thinning the history.
+ */
+const MAX_BLOCKED_DAYS = 5;
 /** Report models/languages GitHub buckets as noise — excluded from "dominant" picks. */
 const NOISE_LABELS = new Set(['others', 'unknown', 'none', '']);
 
@@ -511,14 +519,32 @@ export class GithubCopilotClient implements CopilotClient {
       'backfilling daily org reports',
     );
 
+    const blockedDays: string[] = [];
     const reports = await mapLimit(days, BACKFILL_CONCURRENCY, async (day) => {
-      const report = await this.api.fetchReport<OrgReportRow>(
-        `organization-1-day?day=${day}`,
-      );
-      return report?.rows[0] ?? null;
+      try {
+        const report = await this.api.fetchReport<OrgReportRow>(
+          `organization-1-day?day=${day}`,
+        );
+        return report?.rows[0] ?? null;
+      } catch (error) {
+        if (error instanceof ShardDownloadError && error.status === 403) {
+          blockedDays.push(day);
+          log.warn(
+            { dash: { day, host: error.host } },
+            'daily report shard blocked by WAF — skipping this day, next refresh will backfill it',
+          );
+          return null;
+        }
+        throw error;
+      }
     });
+    if (blockedDays.length > MAX_BLOCKED_DAYS) {
+      throw new Error(
+        `${blockedDays.length} daily report shards blocked (403) — egress or WAF problem, not a single bad signature (days: ${blockedDays.slice(0, 8).join(', ')}…)`,
+      );
+    }
     log.debug(
-      { dash: { daysRequested: days.length, daysWithReports: reports.filter(Boolean).length } },
+      { dash: { daysRequested: days.length, daysWithReports: reports.filter(Boolean).length, blockedDays } },
       'daily org reports downloaded',
     );
 
