@@ -5,6 +5,7 @@ import type {
   DateRange,
   OrgDailyPoint,
   UsageDimension,
+  UserDailyPoint,
 } from '@dash/shared';
 import { isoDateLabel } from '../format.js';
 import type { GridLine } from './chart.js';
@@ -110,10 +111,10 @@ export function pivotBreakdown(
   return series;
 }
 
-/** Named org-daily fields as chart series — one line per field. */
-export function orgSeries(
-  rows: readonly OrgDailyPoint[],
-  fields: ReadonlyArray<{ field: keyof OrgDailyPoint & string; name: string }>,
+/** Named daily fields as chart series — one line per field. */
+export function orgSeries<T extends { date: string }>(
+  rows: readonly T[],
+  fields: ReadonlyArray<{ field: keyof T & string; name: string }>,
 ): SeriesChartInput[] {
   return fields.map(({ field, name }) => ({
     name,
@@ -122,7 +123,9 @@ export function orgSeries(
 }
 
 /** Daily acceptances ÷ generations as a percentage; null on idle days. */
-export function acceptanceRateSeries(rows: readonly OrgDailyPoint[]): SeriesChartInput[] {
+export function acceptanceRateSeries(
+  rows: ReadonlyArray<{ date: string; generations: number; acceptances: number }>,
+): SeriesChartInput[] {
   return [
     {
       name: 'Acceptance rate',
@@ -165,6 +168,64 @@ export function prAllZero(rows: readonly OrgDailyPoint[]): boolean {
       row.prCopilotSuggestions === 0 &&
       row.prCopilotAppliedSuggestions === 0,
   );
+}
+
+/** One day of activity summed across a filtered seat cohort. */
+export interface FilteredActivityDay {
+  date: string;
+  /** Distinct filtered seats with any activity that day. */
+  activeUsers: number;
+  interactions: number;
+  generations: number;
+  acceptances: number;
+  locAdded: number;
+  locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+}
+
+/**
+ * Sum the per-user daily rows of the seats in `logins` onto the given date
+ * axis. Days without a row are genuine zeros — the org reports cover every
+ * day, so absence means "did nothing", unlike the nullable seat metrics.
+ */
+export function filteredActivity(
+  rows: readonly UserDailyPoint[],
+  logins: ReadonlySet<string>,
+  dates: readonly string[],
+): FilteredActivityDay[] {
+  const byDate = new Map<string, FilteredActivityDay>(
+    dates.map((date) => [
+      date,
+      {
+        date,
+        activeUsers: 0,
+        interactions: 0,
+        generations: 0,
+        acceptances: 0,
+        locAdded: 0,
+        locDeleted: 0,
+        locSuggestedAdd: 0,
+        locSuggestedDelete: 0,
+      },
+    ]),
+  );
+
+  for (const row of rows) {
+    if (!logins.has(row.login)) continue;
+    const day = byDate.get(row.date);
+    if (day === undefined) continue;
+    day.activeUsers += 1;
+    day.interactions += row.interactions;
+    day.generations += row.generations;
+    day.acceptances += row.acceptances;
+    day.locAdded += row.locAdded;
+    day.locDeleted += row.locDeleted;
+    day.locSuggestedAdd += row.locSuggestedAdd;
+    day.locSuggestedDelete += row.locSuggestedDelete;
+  }
+
+  return [...byDate.values()];
 }
 
 export interface TeamStat {

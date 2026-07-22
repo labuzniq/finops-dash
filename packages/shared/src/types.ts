@@ -131,11 +131,32 @@ export interface AdoptionPhasePoint {
   avgPrReviewed: number;
 }
 
+/**
+ * One day of one seat's activity. The mock source fills the full history; live
+ * GitHub only covers what the users report exposes (per-user-per-day rows for
+ * its trailing 28-day window), so older days simply have no rows.
+ */
+export interface UserDailyPoint {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  /** GitHub login — joins against `CopilotSeat.login`. */
+  login: string;
+  interactions: number;
+  generations: number;
+  acceptances: number;
+  locAdded: number;
+  locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+}
+
 /** Everything `/api/usage` returns — full stored history, sliced client-side. */
 export interface UsageHistory {
   orgDaily: OrgDailyPoint[];
   breakdowns: BreakdownPoint[];
   adoption: AdoptionPhasePoint[];
+  /** Per-seat daily activity — lets the usage charts follow the seat filters. */
+  userDaily: UserDailyPoint[];
 }
 
 /** One day of per-model activity, from a daily report's `totals_by_language_model`. */

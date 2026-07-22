@@ -10,6 +10,7 @@ import {
   orgDaily,
   refreshJobs,
   usageBreakdownDaily,
+  userDaily,
 } from '../db/schema.js';
 import type { RefreshJobRow } from '../db/schema.js';
 import { createCopilotClient } from '../copilot/index.js';
@@ -85,7 +86,14 @@ function keepIfNull(col: AnyPgColumn) {
  * billing report import (billing_daily), never from seat data.
  */
 export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> {
-  const { seats, orgDaily: org, modelDaily: models, breakdownDaily, adoptionDaily } = snapshot;
+  const {
+    seats,
+    orgDaily: org,
+    modelDaily: models,
+    breakdownDaily,
+    adoptionDaily,
+    userDaily: userRows,
+  } = snapshot;
 
   log.debug(
     {
@@ -95,6 +103,7 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
         modelRows: models.length,
         breakdownRows: breakdownDaily.length,
         adoptionRows: adoptionDaily.length,
+        userDailyRows: userRows.length,
       },
     },
     'persisting snapshot',
@@ -202,6 +211,26 @@ export async function persistSnapshot(snapshot: CopilotSnapshot): Promise<void> 
       await tx.delete(adoptionPhaseDaily).where(inArray(adoptionPhaseDaily.date, adoptionDates));
       await tx.insert(adoptionPhaseDaily).values(adoptionDaily);
     }
+
+    // user_daily gets the per-day replacement treatment too, plus a purge of
+    // logins that vanished from the roster (the seat delete above has no FK
+    // here). Inserts are chunked: at ~1,000 seats a 90-day snapshot is tens of
+    // thousands of rows, and one INSERT would blow Postgres's 65,535-parameter
+    // cap.
+    const userDates = [...new Set(userRows.map((row) => row.date))];
+    if (userDates.length > 0) {
+      await tx.delete(userDaily).where(inArray(userDaily.date, userDates));
+      const CHUNK = 5_000;
+      for (let i = 0; i < userRows.length; i += CHUNK) {
+        await tx.insert(userDaily).values(userRows.slice(i, i + CHUNK));
+      }
+    }
+    await tx.delete(userDaily).where(
+      notInArray(
+        userDaily.login,
+        seats.map((seat) => seat.login),
+      ),
+    );
 
     // model_daily gets the same per-day replacement treatment: the set of models
     // reported for a day can shrink or re-bucket between refreshes, and a stale

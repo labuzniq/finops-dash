@@ -9,6 +9,7 @@ import type {
   ModelDailySnapshot,
   OrgDailySnapshot,
   SeatSnapshot,
+  UserDailySnapshot,
 } from './types.js';
 
 /**
@@ -315,6 +316,70 @@ function buildBreakdownDaily(
   return rows;
 }
 
+/**
+ * Per-seat daily activity, distributing each org day's totals across the seats
+ * that could have been active then (last activity on or after the date). Which
+ * seats participate on a day tracks the day's DAU, and heavier premium users
+ * pull a larger share — so summing any filtered subset stays consistent with
+ * the org-level curves and with each seat's "last active" date.
+ */
+function buildUserDaily(
+  seats: readonly SeatSnapshot[],
+  org: readonly OrgDailySnapshot[],
+  random: () => number,
+): UserDailySnapshot[] {
+  const candidates: Array<{ login: string; lastActive: string; weight: number }> = [];
+  for (const seat of seats) {
+    if (seat.lastActivityAt === null) continue;
+    candidates.push({
+      login: seat.login,
+      lastActive: isoDate(seat.lastActivityAt),
+      weight: 1 + (seat.premiumRequests28d ?? 0),
+    });
+  }
+
+  const rows: UserDailySnapshot[] = [];
+
+  for (const day of org) {
+    const eligible = candidates.filter((seat) => day.date <= seat.lastActive);
+    if (eligible.length === 0) continue;
+
+    const participation = Math.min(1, day.dailyActiveUsers / eligible.length);
+    const active = eligible
+      .filter(() => random() < participation)
+      .map((seat) => ({ login: seat.login, share: seat.weight * (0.5 + random()) }));
+    if (active.length === 0) continue;
+
+    const total = active.reduce((sum, seat) => sum + seat.share, 0);
+    for (const seat of active) {
+      const share = seat.share / total;
+      const generations = Math.round(day.generations * share);
+      const row: UserDailySnapshot = {
+        date: day.date,
+        login: seat.login,
+        interactions: Math.round(day.interactions * share),
+        generations,
+        acceptances: Math.min(generations, Math.round(day.acceptances * share)),
+        locAdded: Math.round(day.locAdded * share),
+        locDeleted: Math.round(day.locDeleted * share),
+        locSuggestedAdd: Math.round(day.locSuggestedAdd * share),
+        locSuggestedDelete: Math.round(day.locSuggestedDelete * share),
+      };
+      const allZero =
+        row.interactions === 0 &&
+        row.generations === 0 &&
+        row.acceptances === 0 &&
+        row.locAdded === 0 &&
+        row.locDeleted === 0 &&
+        row.locSuggestedAdd === 0 &&
+        row.locSuggestedDelete === 0;
+      if (!allZero) rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
 /** Three adoption phases splitting each day's engaged users, later phases smaller. */
 function buildAdoptionDaily(
   org: readonly OrgDailySnapshot[],
@@ -568,10 +633,18 @@ export class MockCopilotClient implements CopilotClient {
     const modelDaily = buildModelDaily(orgDaily, random);
     const breakdownDaily = buildBreakdownDaily(orgDaily, random);
     const adoptionDaily = buildAdoptionDaily(orgDaily, random);
+    const userDaily = buildUserDaily(seats, orgDaily, random);
     moduleLogger('copilot.mock').debug(
-      { dash: { seats: seats.length, orgDays: orgDaily.length, historyDays } },
+      {
+        dash: {
+          seats: seats.length,
+          orgDays: orgDaily.length,
+          userDailyRows: userDaily.length,
+          historyDays,
+        },
+      },
       'generated mock snapshot',
     );
-    return { seats, orgDaily, modelDaily, breakdownDaily, adoptionDaily };
+    return { seats, orgDaily, modelDaily, breakdownDaily, adoptionDaily, userDaily };
   }
 }

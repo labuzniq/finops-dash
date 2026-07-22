@@ -88,6 +88,23 @@ export interface AdoptionPhaseDailySnapshot {
   avgPrReviewed: number;
 }
 
+/**
+ * One day of one user's activity. The users report is per-user-per-*day*, so a
+ * live org can fill its trailing 28-day window; the mock fills the full history.
+ */
+export interface UserDailySnapshot {
+  /** ISO calendar date, `YYYY-MM-DD`. */
+  date: string;
+  login: string;
+  interactions: number;
+  generations: number;
+  acceptances: number;
+  locAdded: number;
+  locDeleted: number;
+  locSuggestedAdd: number;
+  locSuggestedDelete: number;
+}
+
 /** One day of per-model activity, summed across languages. */
 export interface ModelDailySnapshot {
   /** ISO calendar date, `YYYY-MM-DD`. */
@@ -106,6 +123,7 @@ export interface CopilotSnapshot {
   modelDaily: ModelDailySnapshot[];
   breakdownDaily: BreakdownDailySnapshot[];
   adoptionDaily: AdoptionPhaseDailySnapshot[];
+  userDaily: UserDailySnapshot[];
 }
 
 /**

@@ -15,6 +15,13 @@
       "when": 1784657152105,
       "tag": "0001_swift_human_robot",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784717533095,
+      "tag": "0002_slippery_magus",
+      "breakpoints": true
     }
   ]
 }

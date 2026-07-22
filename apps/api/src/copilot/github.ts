@@ -9,6 +9,7 @@ import type {
   ModelDailySnapshot,
   OrgDailySnapshot,
   SeatSnapshot,
+  UserDailySnapshot,
 } from './types.js';
 
 /**
@@ -103,6 +104,8 @@ interface PullRequestTotals {
 
 interface UserReportRow {
   user_login: string;
+  /** The report is per-user-per-day; each row names its day. */
+  day?: string;
   ai_credits_used?: number;
   used_agent?: boolean;
   used_chat?: boolean;
@@ -308,6 +311,29 @@ function metricsFromUserRow(row: UserReportRow): Partial<SeatSnapshot> {
   };
 }
 
+/**
+ * One users-report row as a day of per-user activity. Generations and
+ * acceptances are top-level; interactions and LOC only exist inside the
+ * per-IDE totals, so they are summed across the row's IDE entries.
+ */
+function userDailyFromRow(row: UserReportRow): UserDailySnapshot | null {
+  if (!row.day || !row.user_login) return null;
+  const ide = row.totals_by_ide ?? [];
+  const sum = (field: keyof RawTotals): number =>
+    ide.reduce((total, item) => total + (item[field] ?? 0), 0);
+  return {
+    date: row.day,
+    login: row.user_login,
+    interactions: sum('user_initiated_interaction_count'),
+    generations: row.code_generation_activity_count ?? sum('code_generation_activity_count'),
+    acceptances: row.code_acceptance_activity_count ?? sum('code_acceptance_activity_count'),
+    locAdded: sum('loc_added_sum'),
+    locDeleted: sum('loc_deleted_sum'),
+    locSuggestedAdd: sum('loc_suggested_to_add_sum'),
+    locSuggestedDelete: sum('loc_suggested_to_delete_sum'),
+  };
+}
+
 // --- Date helpers (report days are plain YYYY-MM-DD) ------------------------
 
 function parseDay(day: string): Date {
@@ -356,17 +382,17 @@ export class GithubCopilotClient implements CopilotClient {
     log.debug({ dash: { historyDays } }, 'fetching snapshot from github');
 
     // Roster and per-user metrics are independent; fetch them together.
-    const [roster, userMetrics] = await Promise.all([
+    const [roster, users] = await Promise.all([
       this.fetchRoster(),
       this.fetchUserMetrics(),
     ]);
     log.debug(
-      { dash: { rosterSeats: roster.length, reportedUsers: userMetrics.size } },
+      { dash: { rosterSeats: roster.length, reportedUsers: users.metrics.size } },
       'roster and user metrics fetched',
     );
 
     const seats = roster.map((seat) => {
-      const metrics = userMetrics.get(seat.login);
+      const metrics = users.metrics.get(seat.login);
       return metrics ? { ...seat, ...metrics } : seat;
     });
 
@@ -380,12 +406,13 @@ export class GithubCopilotClient implements CopilotClient {
         dash: {
           seats: seats.length,
           orgDays: daily.orgDaily.length,
+          userDailyRows: users.userDaily.length,
         },
       },
       'github snapshot fetched',
     );
 
-    return { seats, ...daily };
+    return { seats, ...daily, userDaily: users.userDaily };
   }
 
   /** Paginate the seats endpoint into roster rows (no metrics yet). */
@@ -421,11 +448,17 @@ export class GithubCopilotClient implements CopilotClient {
     return seats;
   }
 
-  /** users-28-day report → metrics keyed by login. Empty map if no report yet. */
-  private async fetchUserMetrics(): Promise<Map<string, Partial<SeatSnapshot>>> {
+  /**
+   * users-28-day report → 28-day metrics keyed by login, plus the raw per-day
+   * rows as user-daily activity. Both empty if no report yet.
+   */
+  private async fetchUserMetrics(): Promise<{
+    metrics: Map<string, Partial<SeatSnapshot>>;
+    userDaily: UserDailySnapshot[];
+  }> {
     const report = await this.api.fetchReport<UserReportRow>('users-28-day/latest');
-    const map = new Map<string, Partial<SeatSnapshot>>();
-    if (!report) return map;
+    const metrics = new Map<string, Partial<SeatSnapshot>>();
+    if (!report) return { metrics, userDaily: [] };
 
     const byLogin = new Map<string, UserReportRow[]>();
     for (const row of report.rows) {
@@ -436,9 +469,31 @@ export class GithubCopilotClient implements CopilotClient {
     }
 
     for (const [login, rows] of byLogin) {
-      map.set(login, metricsFromUserRow(aggregateUserRows(rows)));
+      metrics.set(login, metricsFromUserRow(aggregateUserRows(rows)));
     }
-    return map;
+
+    // Defensive re-aggregation by (date, login) — one row per user per day is
+    // the observed shape, but a duplicate must sum rather than clobber.
+    const daily = new Map<string, UserDailySnapshot>();
+    for (const row of report.rows) {
+      const parsed = userDailyFromRow(row);
+      if (!parsed) continue;
+      const key = `${parsed.date}\n${parsed.login}`;
+      const existing = daily.get(key);
+      if (!existing) {
+        daily.set(key, parsed);
+        continue;
+      }
+      existing.interactions += parsed.interactions;
+      existing.generations += parsed.generations;
+      existing.acceptances += parsed.acceptances;
+      existing.locAdded += parsed.locAdded;
+      existing.locDeleted += parsed.locDeleted;
+      existing.locSuggestedAdd += parsed.locSuggestedAdd;
+      existing.locSuggestedDelete += parsed.locSuggestedDelete;
+    }
+
+    return { metrics, userDaily: [...daily.values()] };
   }
 
   /**
@@ -448,7 +503,7 @@ export class GithubCopilotClient implements CopilotClient {
    */
   private async fetchDailyHistory(
     historyDays: number,
-  ): Promise<Omit<CopilotSnapshot, 'seats'>> {
+  ): Promise<Omit<CopilotSnapshot, 'seats' | 'userDaily'>> {
     const anchor = await this.newestReportDay();
     const days = Array.from({ length: historyDays }, (_, i) => addDays(anchor, -i));
     log.debug(

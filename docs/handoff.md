@@ -230,3 +230,9 @@ the three `—` columns into real data for a live org.
   would mean recomputing KPIs per request for no benefit.
 - Three tables: `copilot_seats` (current snapshot, replaced per refresh), `spend_daily`
   (upserted — past days are settled), `refresh_jobs`.
+- **[impl 2026-07-22] Per-user daily activity (`user_daily`).** The analytics page's
+  activity charts follow the seat filters: with a filter active they switch from the
+  org-report aggregates to per-day sums over the filtered seats' `user_daily` rows
+  (sourced from the users report, which is per-user-per-*day*; the mock fills the full
+  history, live GitHub its trailing 28-day window). Breakdown, cohort, adoption and PR
+  series have no per-seat form and stay org-wide, labelled as such while a filter is on.

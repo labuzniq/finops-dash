@@ -6,7 +6,7 @@ import { cx } from '../../lib/cx.js';
 import { rangeLabel } from '../../lib/format.js';
 import { useModels, useSeats, useUsage } from '../../hooks/useCopilotData.js';
 import type { DashboardMetrics } from '../../hooks/useDashboardMetrics.js';
-import { seatLanguages } from '../../lib/metrics/filter.js';
+import { ALL, seatLanguages } from '../../lib/metrics/filter.js';
 import { dateAxis } from '../../lib/metrics/usage.js';
 import type { DashboardAction, DashboardState } from '../../state/dashboardState.js';
 import { FilterBar } from '../FilterBar.js';
@@ -77,6 +77,15 @@ export function CopilotAnalyticsPage({
   const rangeDays = rangeDayCount(state.range);
 
   const languages = useMemo(() => seatLanguages(seatsQuery.data ?? EMPTY_SEATS), [seatsQuery.data]);
+
+  // Null when no seat filter is active — the usage charts then show the exact
+  // org-report aggregates instead of a sum over every seat's daily rows.
+  const filterActive =
+    state.editor !== ALL || state.language !== ALL || state.search.trim() !== '';
+  const filteredLogins = useMemo(
+    () => (filterActive ? new Set(metrics.filteredSeats.map((seat) => seat.login)) : null),
+    [filterActive, metrics.filteredSeats],
+  );
 
   const isLoading = seatsQuery.isPending || usageQuery.isPending;
   const loadError = seatsQuery.error ?? usageQuery.error;
@@ -152,6 +161,7 @@ export function CopilotAnalyticsPage({
           <UsageSections
             usage={usageQuery.data}
             seats={metrics.filteredSeats}
+            filteredLogins={filteredLogins}
             range={state.range}
             usageMetric={state.usageMetric}
             onMetricChange={(section, metric) =>
