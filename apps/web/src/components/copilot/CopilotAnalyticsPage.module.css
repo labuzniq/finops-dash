@@ -1,0 +1,52 @@
+/*
+ * Chart and table rows: fluid panel beside a fixed 380px rail. Both are direct
+ * grid children so the row stretches them to a shared height — anything wrapped
+ * around one of them would break the alignment.
+ */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.viewToggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--border2);
+  align-self: flex-start;
+}
+
+.viewSegment {
+  border: 0;
+  background: transparent;
+  padding: 5px 14px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.viewSegmentActive {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.status {
+  padding: 40px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.error {
+  color: var(--neg);
+}

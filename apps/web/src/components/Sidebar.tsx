@@ -1,5 +1,8 @@
+import { useState } from 'react';
 import {
   Brain,
+  CaretDown,
+  CaretRight,
   Cloud,
   Database,
   GithubLogo,
@@ -20,12 +23,19 @@ import styles from './Sidebar.module.css';
  */
 
 /** The views the app can show; items without one are inert placeholders. */
-export type AppView = 'copilot' | 'claude-code';
+export type AppView = 'copilot-spend' | 'copilot-analytics' | 'claude-code';
+
+interface NavChild {
+  label: string;
+  view: AppView;
+}
 
 interface NavItem {
   label: string;
   icon: Icon;
   view?: AppView;
+  /** A parent with children collapses on click instead of navigating. */
+  children?: NavChild[];
 }
 
 interface NavGroup {
@@ -41,7 +51,14 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'SPEND',
     items: [
-      { label: 'GitHub Copilot', icon: GithubLogo, view: 'copilot' },
+      {
+        label: 'GitHub Copilot',
+        icon: GithubLogo,
+        children: [
+          { label: 'Spend', view: 'copilot-spend' },
+          { label: 'Analytics', view: 'copilot-analytics' },
+        ],
+      },
       { label: 'Claude Code', icon: TerminalWindow, view: 'claude-code' },
       { label: 'Cloud infrastructure', icon: Cloud },
       { label: 'LLM APIs', icon: Brain },
@@ -58,6 +75,7 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 const ICON_SIZE = 15;
+const CHEVRON_SIZE = 11;
 
 interface SidebarProps {
   activeView: AppView;
@@ -65,6 +83,18 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeView, onNavigate }: SidebarProps) {
+  // Labels of parents the user has closed; everything starts expanded.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+
+  const toggleCollapsed = (label: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  };
+
   return (
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
@@ -78,6 +108,44 @@ export function Sidebar({ activeView, onNavigate }: SidebarProps) {
         <div key={group.label}>
           <div className={styles.groupLabel}>{group.label}</div>
           {group.items.map((item) => {
+            if (item.children !== undefined) {
+              const open = !collapsed.has(item.label);
+              const childActive = item.children.some((child) => child.view === activeView);
+              return (
+                <div key={item.label}>
+                  <button
+                    type="button"
+                    className={styles.item}
+                    aria-expanded={open}
+                    onClick={() => toggleCollapsed(item.label)}
+                  >
+                    <item.icon size={ICON_SIZE} weight={childActive ? 'fill' : 'regular'} />
+                    {item.label}
+                    {open ? (
+                      <CaretDown size={CHEVRON_SIZE} className={styles.chevron} />
+                    ) : (
+                      <CaretRight size={CHEVRON_SIZE} className={styles.chevron} />
+                    )}
+                  </button>
+                  {open &&
+                    item.children.map((child) => {
+                      const active = child.view === activeView;
+                      return (
+                        <button
+                          key={child.label}
+                          type="button"
+                          className={`${styles.item} ${styles.child} ${active ? styles.itemActive : ''}`}
+                          aria-current={active ? 'page' : undefined}
+                          onClick={() => onNavigate(child.view)}
+                        >
+                          {child.label}
+                        </button>
+                      );
+                    })}
+                </div>
+              );
+            }
+
             const { view } = item;
             const active = view !== undefined && view === activeView;
             return (

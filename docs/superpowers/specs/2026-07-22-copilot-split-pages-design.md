@@ -31,7 +31,7 @@ Both pages render the existing `TopBar` (seat count, theme toggle, Add data, Exp
 - **Spend page** (`copilot-spend`): `TopBar` + `SpendSection`.
 - **Analytics page** (`copilot-analytics`): `TopBar` + `FilterBar`, KPI row, per-user/per-model table toggle, `UserTable`/`ModelTable`, `UtilizationDonut`, `UsageSections`, plus the existing loading/error status handling for seats/usage queries.
 
-To keep `App.tsx` lean, page bodies are extracted into `CopilotSpendPage` and `CopilotAnalyticsPage` components under `components/copilot/`. They receive the dashboard state/dispatch and query results as props.
+To keep `App.tsx` lean, `TopBar` is rendered once in `App` for both Copilot views; the Spend page renders the existing `SpendSection` directly (a `CopilotSpendPage` wrapper would add nothing), and the analytics body is extracted into `CopilotAnalyticsPage` under `components/copilot/`. The analytics page subscribes to the shared react-query hooks itself and receives only dashboard state/dispatch, the seat metrics, and refresh status as props.
 
 ### State & data
 
