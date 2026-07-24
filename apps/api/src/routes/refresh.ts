@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { REFRESH_KINDS } from '@dash/shared';
+import { BillingSyncUnavailableError, startBillingSync } from '../services/billing-sync.js';
 import { getLatestRefreshJob, getRefreshJob, startRefresh } from '../services/refresh.js';
 
 const jobParams = z.object({ id: z.string().uuid() });
@@ -13,6 +14,22 @@ export const refreshRoutes: FastifyPluginAsync = async (app) => {
   app.post('/api/refresh', async (_request, reply) => {
     const job = await startRefresh();
     return reply.code(202).send({ job });
+  });
+
+  /**
+   * Kick off an enterprise billing sync (kind `billing`) — the scheduled
+   * 07:00 run uses the same entry point. 503 while GITHUB_ENTERPRISE is unset.
+   */
+  app.post('/api/refresh/billing', async (_request, reply) => {
+    try {
+      const job = await startBillingSync();
+      return reply.code(202).send({ job });
+    } catch (error) {
+      if (error instanceof BillingSyncUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
   });
 
   /**

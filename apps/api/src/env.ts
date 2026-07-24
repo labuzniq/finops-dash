@@ -37,6 +37,25 @@ const schema = z
     /** Reports API needs a recent version; overridable if GitHub bumps it. */
     GITHUB_API_VERSION: z.string().default('2026-03-10'),
     /**
+     * Enterprise billing sync (real dollars). The org-level billing endpoint
+     * 404s for this tenant, but the enterprise-level `ai_credit/usage` endpoint
+     * works — see docs/github-integration.md. Setting the enterprise slug turns
+     * the daily billing sync on; leaving it unset keeps billing CSV-import-only.
+     */
+    GITHUB_ENTERPRISE: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
+    /**
+     * Token for the enterprise billing endpoints. Falls back to GITHUB_TOKEN.
+     * Kept separate because billing needs enterprise scope while the org token
+     * needs SAML SSO authorization — one PAT rarely has both.
+     */
+    GITHUB_BILLING_TOKEN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
+    /**
      * The one shared admin secret that unlocks the dashboard. Defaulted so a
      * fresh clone still boots; override it anywhere real. This is the entire
      * auth story — see auth/session.ts.
@@ -62,6 +81,10 @@ const schema = z
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',
     path: ['COPILOT_SOURCE'],
+  })
+  .refine((env) => !env.GITHUB_ENTERPRISE || env.GITHUB_BILLING_TOKEN || env.GITHUB_TOKEN, {
+    message: 'GITHUB_ENTERPRISE requires GITHUB_BILLING_TOKEN (or GITHUB_TOKEN) to be set',
+    path: ['GITHUB_ENTERPRISE'],
   })
   .refine((env) => Boolean(env.JIRA_BASE_URL) === Boolean(env.JIRA_TOKEN), {
     message: 'JIRA_BASE_URL and JIRA_TOKEN must be set together (or both left unset)',

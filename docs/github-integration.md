@@ -40,10 +40,32 @@ Ingestion rules baked into `copilot/reports.ts`:
    the URL); a day can be revised for ~1–3 days as late telemetry lands, then settles.
    We upsert keyed on the natural key and re-pull the trailing days each refresh.
 
-## Spend is derived, not fetched
+## Enterprise billing: real dollars, one login at a time
 
-Because the dollar billing endpoint 404s, all money on the dashboard comes from the
-cost model in `packages/shared/src/cost.ts`, not from GitHub:
+The **enterprise-level** billing endpoints do work for this tenant (validated live
+2026-07-24 against enterprise `raiffeisen`), even though the org-level one 404s:
+
+| Need | Endpoint | Notes |
+| --- | --- | --- |
+| Per-user AI-credit dollars | `GET /enterprises/{ent}/settings/billing/ai_credit/usage?year&month&day&user={login}` | Per-model rows with `grossQuantity` / `grossAmount` / `discountAmount` / `netAmount`. **Only** the `?user=` form carries a username — the aggregate response drops it, so per-user data costs one request per login per day. `404` = login unknown to the enterprise (left / renamed), treated as zero usage. |
+| Cost-center summary (licences) | `GET /enterprises/{ent}/settings/billing/usage/summary?year&month&day&cost_center_id=` | `copilot_for_business` user-months at $19 — real licence dollars, org-level only. Not ingested yet. |
+| Budgets | `GET /enterprises/{ent}/settings/billing/budgets?scope=organization` | Current state only, no history. Not ingested yet. |
+
+The daily **billing sync** (`services/billing-sync.ts`, kind `billing`) feeds
+`billing_daily` and `model_spend_daily` from the per-user endpoint — the same tables,
+keys, and nano-dollar encoding as the manual CSV import, so both sources interleave.
+Because of the one-request-per-login shape, each run covers only yesterday plus the
+day before (re-pulled for late-landing usage): **history bootstraps through the CSV
+import; the sync keeps it current.** Licence accrual has no per-user API and stays
+CSV-only. The sync runs at 07:00 Europe/Prague (`scheduler.ts`) and on
+`POST /api/refresh/billing`; both need `GITHUB_ENTERPRISE` (+ a token with enterprise
+billing read — org tokens usually lack it, hence the separate `GITHUB_BILLING_TOKEN`).
+
+## Spend is derived, not fetched (when billing is not configured)
+
+Without `GITHUB_ENTERPRISE` (and before the CSV import has supplied real rows), money
+on the dashboard comes from the cost model in `packages/shared/src/cost.ts`, not from
+GitHub:
 
 - **License** = assigned seats × plan price (Business $19 / Enterprise $39) ÷ 30 per day.
   The roster is real (seats endpoint); the price is the published list price.
