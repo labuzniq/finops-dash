@@ -196,10 +196,10 @@ export interface ModelUsage {
 export const REFRESH_STATUSES = ['pending', 'running', 'succeeded', 'failed'] as const;
 export type RefreshStatus = (typeof REFRESH_STATUSES)[number];
 
-export const REFRESH_KINDS = ['copilot', 'jira'] as const;
+export const REFRESH_KINDS = ['copilot', 'jira', 'billing'] as const;
 export type RefreshKind = (typeof REFRESH_KINDS)[number];
 
-/** An on-demand sync of an external source (Copilot APIs or JIRA Insight) into Postgres. */
+/** An on-demand sync of an external source (Copilot APIs, JIRA Insight, or enterprise billing) into Postgres. */
 export interface RefreshJob {
   id: string;
   kind: RefreshKind;

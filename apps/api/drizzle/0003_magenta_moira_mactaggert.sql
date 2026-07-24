@@ -1,0 +1,1 @@
+ALTER TYPE "refresh_kind" ADD VALUE 'billing';

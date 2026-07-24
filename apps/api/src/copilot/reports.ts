@@ -57,7 +57,7 @@ function sleep(ms: number): Promise<void> {
  * talk to the presigned shard host pass `retryForbidden`, because its WAF
  * answers 403 for throttling, not auth (see downloadNdjson).
  */
-async function fetchRetry(
+export async function fetchRetry(
   url: string,
   init?: RequestInit,
   opts?: { retryForbidden?: boolean },
