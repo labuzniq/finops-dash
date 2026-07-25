@@ -26,6 +26,9 @@ interface AddDataModalProps {
   latestJob: RefreshJob | null;
   isRefreshing: boolean;
   refreshError: string | null;
+  billingJob: RefreshJob | null;
+  isBillingSyncing: boolean;
+  billingError: string | null;
   jiraJob: RefreshJob | null;
   isJiraSyncing: boolean;
   jiraError: string | null;
@@ -33,6 +36,7 @@ interface AddDataModalProps {
   onTabChange: (tab: ModalTab) => void;
   onClose: () => void;
   onRefresh: () => void;
+  onBillingSync: () => void;
   onJiraSync: () => void;
 }
 
@@ -41,6 +45,9 @@ export function AddDataModal({
   latestJob,
   isRefreshing,
   refreshError,
+  billingJob,
+  isBillingSyncing,
+  billingError,
   jiraJob,
   isJiraSyncing,
   jiraError,
@@ -48,6 +55,7 @@ export function AddDataModal({
   onTabChange,
   onClose,
   onRefresh,
+  onBillingSync,
   onJiraSync,
 }: AddDataModalProps) {
   const [staged, setStaged] = useState<StagedFiles>({});
@@ -126,9 +134,13 @@ export function AddDataModal({
             <ConnectedSourcesTab
               latestJob={latestJob}
               isRefreshing={isRefreshing}
+              billingJob={billingJob}
+              isBillingSyncing={isBillingSyncing}
+              billingError={billingError}
               jiraJob={jiraJob}
               isJiraSyncing={isJiraSyncing}
               jiraError={jiraError}
+              onBillingSync={onBillingSync}
               onJiraSync={onJiraSync}
             />
           )}
