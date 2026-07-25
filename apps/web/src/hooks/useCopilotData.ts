@@ -16,6 +16,7 @@ import {
   fetchUsage,
   importBillingReport,
   importUserExport,
+  startBillingSync,
   startJiraSync,
   startRefresh,
 } from '../api/client.js';
@@ -151,6 +152,18 @@ export function useLatestJiraJob() {
   });
 }
 
+/**
+ * The last enterprise billing sync — the modal's billing row and the spend
+ * section's freshness note both read it. Covers the 07:00 scheduled run too:
+ * scheduler and on-demand syncs share the job table.
+ */
+export function useLatestBillingJob() {
+  return useQuery<RefreshJob | null>({
+    queryKey: ['refresh', 'latest', 'billing'],
+    queryFn: () => fetchLatestRefreshJob('billing'),
+  });
+}
+
 export interface UseRefresh {
   /** Kick off a sync; safe to call twice — the API returns the in-flight job. */
   refresh: () => void;
@@ -237,6 +250,51 @@ export function useJiraSync(): UseJiraSync {
     sync: () => start.mutate(),
     isRunning: jobId !== null || start.isPending,
     // A 503 from the start call never produces a job, so surface it directly.
+    error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),
+  };
+}
+
+export interface UseBillingSync {
+  sync: () => void;
+  isRunning: boolean;
+  /** A failed job's error, or the 503 message when GITHUB_ENTERPRISE is unset. */
+  error: string | null;
+}
+
+/**
+ * The enterprise billing sync (kind `billing`). Same job table and polling
+ * shape as the JIRA sync; on success only `spend` changes — the sync writes
+ * `billing_daily` and `model_spend_daily`, both served by the spend payload.
+ */
+export function useBillingSync(): UseBillingSync {
+  const queryClient = useQueryClient();
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const start = useMutation({
+    mutationFn: startBillingSync,
+    onSuccess: (job) => setJobId(job.id),
+  });
+
+  const { data: job } = useQuery<RefreshJob>({
+    queryKey: ['refresh', jobId],
+    queryFn: () => fetchRefreshJob(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: (query) => (isSettled(query.state.data) ? false : POLL_INTERVAL_MS),
+  });
+
+  useEffect(() => {
+    if (!isSettled(job)) return;
+
+    setJobId(null);
+    if (job?.status === 'succeeded') {
+      void queryClient.invalidateQueries({ queryKey: ['spend'] });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest', 'billing'] });
+  }, [job, queryClient]);
+
+  return {
+    sync: () => start.mutate(),
+    isRunning: jobId !== null || start.isPending,
     error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),
   };
 }

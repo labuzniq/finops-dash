@@ -4,12 +4,23 @@ import styles from './TopBar.module.css';
 interface TopBarProps {
   seatCount: number;
   isDark: boolean;
+  /** True while any query refetches — the reload button reflects it. */
+  isReloading: boolean;
   onToggleTheme: () => void;
   onAddData: () => void;
   onExportCsv: () => void;
+  onReload: () => void;
 }
 
-export function TopBar({ seatCount, isDark, onToggleTheme, onAddData, onExportCsv }: TopBarProps) {
+export function TopBar({
+  seatCount,
+  isDark,
+  isReloading,
+  onToggleTheme,
+  onAddData,
+  onExportCsv,
+  onReload,
+}: TopBarProps) {
   return (
     <div className={styles.topBar}>
       <div>
@@ -31,6 +42,15 @@ export function TopBar({ seatCount, isDark, onToggleTheme, onAddData, onExportCs
           <div className={styles.track}>
             <div className={`${styles.knob} ${isDark ? styles.knobDark : ''}`} />
           </div>
+        </button>
+
+        <button
+          type="button"
+          className={`${styles.button} ${styles.secondary}`}
+          onClick={onReload}
+          disabled={isReloading}
+        >
+          {isReloading ? 'Reloading…' : 'Reload'}
         </button>
 
         <button type="button" className={`${styles.button} ${styles.secondary}`} onClick={onExportCsv}>

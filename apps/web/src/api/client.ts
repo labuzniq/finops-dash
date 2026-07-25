@@ -145,3 +145,13 @@ export async function startJiraSync(): Promise<RefreshJob> {
   const { job } = await request<{ job: RefreshJob }>('/jira/sync', { method: 'POST' });
   return job;
 }
+
+/**
+ * Kick off an enterprise billing sync (kind `billing`) — polled through
+ * `fetchRefreshJob` like the others. A 503 (GITHUB_ENTERPRISE unset) surfaces
+ * the server's message via the shared error unwrapping.
+ */
+export async function startBillingSync(): Promise<RefreshJob> {
+  const { job } = await request<{ job: RefreshJob }>('/refresh/billing', { method: 'POST' });
+  return job;
+}

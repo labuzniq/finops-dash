@@ -4,11 +4,13 @@ import { cx } from '../../lib/cx.js';
 import styles from './tabs.module.css';
 
 /**
- * The wired sources. Status is live: one refresh syncs all three GitHub
+ * The wired sources. Status is live: one refresh syncs both Copilot
  * endpoints, so they share the last job's state.
  *
- * JIRA is its own job kind — identity (names, departments, managers) is synced
- * separately from Copilot usage, and either may run without the other.
+ * JIRA and enterprise billing are their own job kinds — identity, usage and
+ * money are synced separately, and any may run without the others. Each
+ * kinded row gets its own Sync button and shows its own last job, which is
+ * also how the 07:00 scheduled billing run surfaces here.
  */
 
 interface Source {
@@ -19,7 +21,6 @@ interface Source {
 const GITHUB_SOURCES: Source[] = [
   { name: 'Copilot usage metrics API', fields: 'enterprise · users-28-day · ai_credits_used' },
   { name: 'Copilot user management API', fields: 'seats · last_activity_at · plan_type' },
-  { name: 'GitHub billing API', fields: 'ai_credit usage · by model, SKU, cost center' },
 ];
 
 type SyncState = 'syncing' | 'connected' | 'failed' | 'idle';
@@ -64,22 +65,32 @@ function statusClassFor(state: SyncState): string {
 interface ConnectedSourcesTabProps {
   latestJob: RefreshJob | null;
   isRefreshing: boolean;
+  billingJob: RefreshJob | null;
+  isBillingSyncing: boolean;
+  /** A failed billing job, or the 503 sent when `GITHUB_ENTERPRISE` is unset. */
+  billingError: string | null;
   jiraJob: RefreshJob | null;
   isJiraSyncing: boolean;
   /** A failed JIRA job, or the 503 the API sends when `JIRA_*` env is unset. */
   jiraError: string | null;
+  onBillingSync: () => void;
   onJiraSync: () => void;
 }
 
 export function ConnectedSourcesTab({
   latestJob,
   isRefreshing,
+  billingJob,
+  isBillingSyncing,
+  billingError,
   jiraJob,
   isJiraSyncing,
   jiraError,
+  onBillingSync,
   onJiraSync,
 }: ConnectedSourcesTabProps) {
   const state = syncState(latestJob, isRefreshing);
+  const billingState = syncState(billingJob, isBillingSyncing);
   const jiraState = syncState(jiraJob, isJiraSyncing);
 
   return (
@@ -94,6 +105,24 @@ export function ConnectedSourcesTab({
           <div className={statusClassFor(state)}>{statusText(state, latestJob)}</div>
         </div>
       ))}
+
+      <div className={styles.source}>
+        <div className={dotClassFor(billingState)} />
+        <div className={styles.sourceBody}>
+          <div className={styles.sourceName}>GitHub billing API</div>
+          <div className={styles.sourceFields}>ai_credit usage · by model, SKU, cost center</div>
+          {billingError !== null && <div className={styles.slotError}>{billingError}</div>}
+        </div>
+        <div className={statusClassFor(billingState)}>{statusText(billingState, billingJob)}</div>
+        <button
+          type="button"
+          className={styles.connect}
+          onClick={onBillingSync}
+          disabled={isBillingSyncing}
+        >
+          {isBillingSyncing ? 'Syncing…' : 'Sync'}
+        </button>
+      </div>
 
       <div className={styles.source}>
         <div className={dotClassFor(jiraState)} />

@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import type { Dispatch } from 'react';
-import type { BillingRow, ModelSpendRow, SpendPerson } from '@dash/shared';
+import type { BillingRow, ModelSpendRow, RefreshJob, SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import { rangeLabel } from '../../lib/format.js';
+import { rangeLabel, relativeTime } from '../../lib/format.js';
+import { useLatestBillingJob } from '../../hooks/useCopilotData.js';
 import {
   modelBreakdown,
   sortSpendUserRows,
@@ -34,6 +35,18 @@ const EMPTY_BILLING: BillingRow[] = [];
 const EMPTY_MODELS: ModelSpendRow[] = [];
 const EMPTY_PEOPLE: SpendPerson[] = [];
 
+/**
+ * Data freshness for the header — the last billing sync of any status, which
+ * covers both the 07:00 scheduled run and the on-demand one. Before the first
+ * sync the data is CSV-only, and the note says so instead of a timestamp.
+ */
+function billingSyncLabel(job: RefreshJob | null): string {
+  if (job?.status === 'running' || job?.status === 'pending') return 'billing API · syncing…';
+  if (job?.status === 'failed') return 'billing API · sync failed';
+  if (job?.finishedAt) return `billing API · synced ${relativeTime(job.finishedAt)}`;
+  return 'billing API · not yet synced';
+}
+
 interface SpendSectionProps {
   state: DashboardState;
   dispatch: Dispatch<DashboardAction>;
@@ -42,6 +55,7 @@ interface SpendSectionProps {
 export function SpendSection({ state, dispatch }: SpendSectionProps) {
   const spendQuery = useSpendData(state.spendRange);
   const payload = spendQuery.data;
+  const billingJobQuery = useLatestBillingJob();
 
   // The same bounds the fetch used, so the trend's zero-fill spine and the
   // API response agree on the calendar days in play.
@@ -82,7 +96,9 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
     <section className={styles.section}>
       <div className={styles.sectionHeader}>
         <h2 className={styles.heading}>Spend</h2>
-        <div className={styles.note}>billing usage reports · licences from Report 2 only</div>
+        <div className={styles.note}>
+          {billingSyncLabel(billingJobQuery.data ?? null)} · licences from Report 2 only
+        </div>
       </div>
 
       <SpendFilterBar
