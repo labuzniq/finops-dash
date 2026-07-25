@@ -1,5 +1,5 @@
-import { gte, sql } from 'drizzle-orm';
-import type { TelemetryRollupRow } from '@dash/shared';
+import { gte, max, sql } from 'drizzle-orm';
+import type { TelemetryFreshness, TelemetryRollupRow } from '@dash/shared';
 import { db } from '../db/client.js';
 import { otlpMetricPoints } from '../db/schema.js';
 
@@ -34,4 +34,18 @@ export async function telemetryRollup(days: number): Promise<TelemetryRollupRow[
       otlpMetricPoints.type,
     )
     .orderBy(day);
+}
+
+/**
+ * When the last datapoint arrived — the Data sources page derives the Claude
+ * Code row's status from it, since telemetry is pushed and has no sync job to
+ * read. `received_at`, not `time`: the question is when we last heard from an
+ * exporter, not how old the reading it carried was. Null while nothing has
+ * ever been ingested (unknown, not "just now").
+ */
+export async function telemetryFreshness(): Promise<TelemetryFreshness> {
+  const [row] = await db
+    .select({ latestAt: max(otlpMetricPoints.receivedAt) })
+    .from(otlpMetricPoints);
+  return { latestAt: row?.latestAt?.toISOString() ?? null };
 }

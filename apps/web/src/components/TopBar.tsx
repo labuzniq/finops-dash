@@ -7,7 +7,6 @@ interface TopBarProps {
   /** True while any query refetches — the reload button reflects it. */
   isReloading: boolean;
   onToggleTheme: () => void;
-  onAddData: () => void;
   onExportCsv: () => void;
   onReload: () => void;
 }
@@ -17,7 +16,6 @@ export function TopBar({
   isDark,
   isReloading,
   onToggleTheme,
-  onAddData,
   onExportCsv,
   onReload,
 }: TopBarProps) {
@@ -55,10 +53,6 @@ export function TopBar({
 
         <button type="button" className={`${styles.button} ${styles.secondary}`} onClick={onExportCsv}>
           Export CSV
-        </button>
-
-        <button type="button" className={`${styles.button} ${styles.primary}`} onClick={onAddData}>
-          + Add data
         </button>
       </div>
     </div>

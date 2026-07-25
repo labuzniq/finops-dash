@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { telemetryRollup } from '../services/telemetry.js';
+import { telemetryFreshness, telemetryRollup } from '../services/telemetry.js';
 
 const daysQuery = z.object({
   days: z.coerce.number().int().min(1).max(90).default(90),
@@ -14,5 +14,10 @@ export const telemetryRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
     }
     return { rollup: await telemetryRollup(parsed.data.days) };
+  });
+
+  /** Newest ingested datapoint — the Data sources page's push-source status. */
+  app.get('/api/telemetry/freshness', async () => {
+    return telemetryFreshness();
   });
 };

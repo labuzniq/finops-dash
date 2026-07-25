@@ -81,16 +81,3 @@
 .secondary:hover {
   background: var(--card2);
 }
-
-/* Nocturne primaries are an accent outline — never a fill. */
-.primary {
-  padding: 0 16px;
-  border: 1px solid var(--accent);
-  background: transparent;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.primary:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}

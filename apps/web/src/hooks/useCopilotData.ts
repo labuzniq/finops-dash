@@ -4,11 +4,14 @@ import type {
   BillingImportResult,
   CopilotSeat,
   DateRange,
+  ImportLogEntry,
+  ImportSlot,
   ModelUsage,
   RefreshJob,
   UsageHistory,
 } from '@dash/shared';
 import {
+  fetchImportLogs,
   fetchLatestRefreshJob,
   fetchModels,
   fetchRefreshJob,
@@ -59,9 +62,6 @@ export function useModels(range: DateRange) {
   });
 }
 
-/** The three upload slots of the Add-data modal. */
-export type ImportSlot = 'model' | 'cost' | 'users';
-
 /** What one slot ended up doing — rendered next to the slot that produced it. */
 export type SlotOutcome =
   | { status: 'billing'; result: BillingImportResult }
@@ -70,6 +70,15 @@ export type SlotOutcome =
 
 export type SlotOutcomes = Partial<Record<ImportSlot, SlotOutcome>>;
 
+/** One staged file as the upload needs it: the text, and what to log it as. */
+export interface SlotUpload {
+  csv: string;
+  /** The file's own name — the only thing the import log can call the run. */
+  filename: string;
+}
+
+export type SlotUploads = Partial<Record<ImportSlot, SlotUpload>>;
+
 /**
  * Import order. The user export lands first so the billing imports can report
  * an accurate `unknownLogins` — that set is computed against `github_users`.
@@ -77,8 +86,8 @@ export type SlotOutcomes = Partial<Record<ImportSlot, SlotOutcome>>;
 const SLOT_ORDER: ImportSlot[] = ['users', 'cost', 'model'];
 
 export interface UseReportImports {
-  /** Import every staged slot, in `SLOT_ORDER`. Values are raw CSV text. */
-  runImport: (files: Partial<Record<ImportSlot, string>>) => void;
+  /** Import every staged slot, in `SLOT_ORDER`. */
+  runImport: (files: SlotUploads) => void;
   isImporting: boolean;
   outcomes: SlotOutcomes;
   reset: () => void;
@@ -96,19 +105,22 @@ export function useReportImports(): UseReportImports {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
-    mutationFn: async (files: Partial<Record<ImportSlot, string>>): Promise<SlotOutcomes> => {
+    mutationFn: async (files: SlotUploads): Promise<SlotOutcomes> => {
       const outcomes: SlotOutcomes = {};
 
       for (const slot of SLOT_ORDER) {
-        const csv = files[slot];
-        if (csv === undefined) continue;
+        const upload = files[slot];
+        if (upload === undefined) continue;
 
         try {
           if (slot === 'users') {
-            const { rowsUpserted } = await importUserExport(csv);
+            const { rowsUpserted } = await importUserExport(upload.csv, upload.filename);
             outcomes[slot] = { status: 'users', rowsUpserted };
           } else {
-            outcomes[slot] = { status: 'billing', result: await importBillingReport(csv) };
+            outcomes[slot] = {
+              status: 'billing',
+              result: await importBillingReport(upload.csv, upload.filename),
+            };
           }
         } catch (error) {
           outcomes[slot] = { status: 'error', message: (error as Error).message };
@@ -118,6 +130,9 @@ export function useReportImports(): UseReportImports {
       return outcomes;
     },
     onSuccess: (outcomes) => {
+      // Every run is logged, failures included, so the history always moves.
+      void queryClient.invalidateQueries({ queryKey: ['imports'] });
+
       const landed = Object.values(outcomes).some((outcome) => outcome.status !== 'error');
       if (!landed) return;
 
@@ -136,6 +151,14 @@ export function useReportImports(): UseReportImports {
   };
 }
 
+/**
+ * The persistent import history — the Imports page's log. Server-capped and
+ * ordered newest first; `useReportImports` invalidates it after every run.
+ */
+export function useImportLogs() {
+  return useQuery<ImportLogEntry[]>({ queryKey: ['imports'], queryFn: fetchImportLogs });
+}
+
 /** The last sync of any status — drives the "synced 2h ago" note. */
 export function useLatestRefreshJob() {
   return useQuery<RefreshJob | null>({
@@ -144,7 +167,7 @@ export function useLatestRefreshJob() {
   });
 }
 
-/** The last JIRA identity sync — the modal's JIRA row reads its status. */
+/** The last JIRA identity sync — the Data sources page reads its status. */
 export function useLatestJiraJob() {
   return useQuery<RefreshJob | null>({
     queryKey: ['refresh', 'latest', 'jira'],
@@ -153,8 +176,8 @@ export function useLatestJiraJob() {
 }
 
 /**
- * The last enterprise billing sync — the modal's billing row and the spend
- * section's freshness note both read it. Covers the 07:00 scheduled run too:
+ * The last enterprise billing sync — the Data sources page's billing row and
+ * the spend section's freshness note both read it. Covers the 07:00 run too:
  * scheduler and on-demand syncs share the job table.
  */
 export function useLatestBillingJob() {

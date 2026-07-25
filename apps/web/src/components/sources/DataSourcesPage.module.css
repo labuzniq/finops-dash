@@ -1,0 +1,182 @@
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* One block per provider; future sources join a group or add one. */
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.groupLabel {
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.08em;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.sourcePlaceholder {
+  border-style: dashed;
+  background: transparent;
+}
+
+/* The two Copilot endpoints share one job, so they share one bordered box:
+   two rows, then a footer carrying the single status and Sync button. */
+.shared {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.sharedRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.sharedRow + .sharedRow {
+  border-top: 1px solid var(--border2);
+}
+
+.sharedFooter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border2);
+  background: var(--card2);
+  border-radius: 0 0 10px 10px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dotConnected {
+  background: var(--pos);
+}
+
+.dotIdle {
+  background: var(--faint);
+}
+
+.dotFailed {
+  background: var(--neg);
+}
+
+.dotRunning {
+  background: var(--accent);
+}
+
+.sourceBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.sourceName {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sourceNameMuted {
+  color: var(--muted);
+}
+
+.sourceFields {
+  font: 400 11px ui-monospace, Menlo, monospace;
+  color: var(--faint);
+  margin-top: 2px;
+}
+
+/* In a row the note sits under the fields; in the shared footer it is the
+   text that pushes the status and button to the right. */
+.note {
+  flex: 1;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.sharedFooter .note {
+  margin-top: 0;
+}
+
+.error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--neg);
+  line-height: 1.5;
+}
+
+.status {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--pos);
+  white-space: nowrap;
+}
+
+.statusIdle {
+  color: var(--faint);
+}
+
+.statusFailed {
+  color: var(--neg);
+}
+
+.connect {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.connect:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.connect:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}

@@ -202,6 +202,11 @@ the three `—` columns into real data for a live org.
    source rows show live state (`syncing…` / `synced 2h ago` / `sync failed`) instead of
    the hardcoded "2h ago". A dedicated control may be warranted.
 
+   > **[impl 2026-07-25] It was.** The modal is retired. Its two tabs are now pages under
+   > the sidebar's DATA group: **Data sources** (every system the console reads from, one
+   > row each, grouped by provider, with a Sync button per job kind) and **Imports** (the
+   > three upload slots plus a persistent history). "+ Add data" is gone from the top bar.
+
 ## Deviations from the spec
 
 - **Nav icons are Phosphor**, per the spec's own instruction to replace the prototype's
@@ -230,6 +235,13 @@ the three `—` columns into real data for a live org.
   would mean recomputing KPIs per request for no benefit.
 - Three tables: `copilot_seats` (current snapshot, replaced per refresh), `spend_daily`
   (upserted — past days are settled), `refresh_jobs`.
+- **[impl 2026-07-25] `import_logs`.** Every CSV upload is recorded — slot, filename, row
+  count, status, error — whether it landed or was rejected, because a rejected file is the
+  thing you come back to look at. Append-only like `refresh_jobs`, served by
+  `GET /api/imports` (newest first, capped at 50). The uploads post bare CSV, so the
+  filename travels as `?filename=`; absent, the run is logged as `upload.csv`. Telemetry
+  is a push source with no job to read, so its row's status comes from
+  `GET /api/telemetry/freshness` — the newest ingested datapoint.
 - **[impl 2026-07-22] Per-user daily activity (`user_daily`).** The analytics page's
   activity charts follow the seat filters: with a filter active they switch from the
   org-report aggregates to per-day sums over the filtered seats' `user_daily` rows

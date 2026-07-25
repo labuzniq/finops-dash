@@ -29,6 +29,20 @@
       "when": 1784923389557,
       "tag": "0003_magenta_moira_mactaggert",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784974308366,
+      "tag": "0004_bent_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784975775364,
+      "tag": "0005_omniscient_grim_reaper",
+      "breakpoints": true
     }
   ]
 }

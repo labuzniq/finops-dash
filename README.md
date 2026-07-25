@@ -26,7 +26,7 @@ and the web app (`:5173`) in watch mode. Open **http://localhost:5173**.
 
 The API migrates on boot but never creates data — a fresh database starts empty.
 Populate it from the exported CSVs in `data/mock/` (see `data/mock/README.md`), via the
-UI's **+ Add data → Import**, or by triggering a sync (`POST /api/refresh`) against a
+UI's **Imports** page, or by triggering a sync (`POST /api/refresh`) against a
 configured source.
 
 > `pnpm dev` runs the API **locally** for watch mode. Don't also run the API container:
@@ -89,7 +89,9 @@ from compose. Both need `.env` to exist — copy it from `.env.example` first.
 | `POST /api/refresh` | start a sync → `202` + the job to poll |
 | `GET /api/refresh/:id` | one job's status |
 | `GET /api/refresh/latest` | last job of any status — drives the "synced 2h ago" note |
+| `GET /api/imports` | import history — the Imports page's log, newest first, capped at 50 |
 | `GET /api/telemetry/rollup?days=90` | Claude Code telemetry, rolled up per (day, user, model, metric, type) |
+| `GET /api/telemetry/freshness` | newest ingested datapoint — the push source's "connected" signal |
 | `POST /v1/metrics` / `POST /v1/logs` | **OTLP/HTTP ingest** (JSON encoding) — see below |
 
 ## OTLP ingest (Claude Code telemetry)
@@ -126,11 +128,12 @@ log, and the UI's status source.
 Two guarantees worth knowing:
 
 - **A refresh already in flight is returned rather than duplicated** — double-clicking
-  Import cannot start two concurrent syncs.
+  Sync cannot start two concurrent syncs.
 - **A failed fetch leaves existing data untouched.** Seats are replaced inside a
   transaction only after every upstream call has succeeded.
 
-In the UI the sync is triggered from **+ Add data → Connected sources → Import**.
+In the UI the sync is triggered from the **Data sources** page, which lists every system
+the console reads from and gives each synced one its own Sync button.
 
 ## Data sources
 

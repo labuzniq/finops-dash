@@ -1,8 +1,10 @@
 # Manual import format (CSV / JSON / NDJSON)
 
-The **Add data → Upload CSV** and **Manual entry** tabs post to `POST /api/import`,
-which upserts seat rows by `login`. Use it for seats or fields the GitHub sync can't
-provide — a partner org, an offline export, or a correction.
+`POST /api/import` upserts seat rows by `login`. Use it for seats or fields the GitHub
+sync can't provide — a partner org, an offline export, or a correction. It has no UI:
+the **Imports** page's three slots are the billing reports and the user export, which
+post to `/api/import/billing` and `/api/import/users` instead. Seat imports are an API
+and script path only, which is also why they are absent from the import history.
 
 ## How rows are applied
 
