@@ -250,3 +250,27 @@ export interface ImportResult {
   /** Human-readable reasons for the first rejected rows. */
   errors: string[];
 }
+
+/** The three upload slots on the Imports page — model usage, cost report, user export. */
+export const IMPORT_SLOTS = ['model', 'cost', 'users'] as const;
+export type ImportSlot = (typeof IMPORT_SLOTS)[number];
+
+export const IMPORT_LOG_STATUSES = ['succeeded', 'failed'] as const;
+export type ImportLogStatus = (typeof IMPORT_LOG_STATUSES)[number];
+
+/**
+ * One recorded CSV upload. Append-only, like `refresh_jobs` — it is both the
+ * audit log and the Imports page's history list.
+ */
+export interface ImportLogEntry {
+  id: string;
+  slot: ImportSlot;
+  filename: string;
+  /** Rows the importer accepted from the file. */
+  rowCount: number;
+  status: ImportLogStatus;
+  /** Human-readable reason; null when the import succeeded. */
+  error: string | null;
+  /** ISO timestamp. */
+  createdAt: string;
+}

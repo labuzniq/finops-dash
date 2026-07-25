@@ -17,7 +17,7 @@ and future) and **Imports** (CSV uploads plus a persistent import history).
 | Copilot user management API | synced (`copilot` job, shared) | on-demand refresh |
 | GitHub billing API | synced (`billing` job) | daily 07:00 schedule + on-demand |
 | JIRA Insight identity | synced (`jira` job) | on-demand |
-| Model usage / Cost report / User export CSVs | uploaded | `POST /api/import`, `POST /api/import/billing`, `POST /api/import/users` |
+| Model usage / Cost report / User export CSVs | uploaded | `POST /api/import/billing` (both reports, told apart by header), `POST /api/import/users` |
 | OTLP telemetry (Claude Code) | push | arrives on its own, no sync affordance |
 | Azure Cost Management | placeholder | disabled Connect row |
 

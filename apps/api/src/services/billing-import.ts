@@ -1,6 +1,6 @@
 import { and, inArray, isNotNull, sql } from 'drizzle-orm';
 import { AI_CREDIT_SKU, BILLING_SKUS } from '@dash/shared';
-import type { BillingImportResult, BillingSku } from '@dash/shared';
+import type { BillingImportResult, BillingSku, ImportSlot } from '@dash/shared';
 import { db } from '../db/client.js';
 import { billingDaily, githubUsers, modelSpendDaily } from '../db/schema.js';
 import type { BillingDailyInsert, GithubUserInsert, ModelSpendDailyInsert } from '../db/schema.js';
@@ -8,6 +8,7 @@ import { parseCsvRows, stripBom } from '../lib/csv.js';
 import type { CsvRow } from '../lib/csv.js';
 import { parseNano } from '../lib/nano.js';
 import { eventDuration, moduleLogger } from '../log.js';
+import { recordImport } from './import-log.js';
 
 const log = moduleLogger('services.billing-import');
 
@@ -259,6 +260,24 @@ export function parseUserExport(csv: string): GithubUserInsert[] {
 
 // --- Persistence -------------------------------------------------------------
 
+/** Report 1 is the Imports page's Model usage slot, Report 2 its Cost report slot. */
+const SLOT_BY_REPORT: Record<BillingReportType, ImportSlot> = { model: 'model', billing: 'cost' };
+
+/**
+ * Which slot a *rejected* file belongs to. The report type is only known once
+ * the file parses, so fall back to the same `model`-column test the parser
+ * uses; a header too broken even for that is filed under the cost report.
+ */
+function sniffSlot(csv: string): ImportSlot {
+  const [header] = parseCsvRows(stripBom(csv).split('\n', 1)[0] ?? '');
+  const hasModel = header?.cells.some((cell) => cell.trim().toLowerCase() === 'model') ?? false;
+  return hasModel ? 'model' : 'cost';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Rows per multi-row upsert statement — 7 columns each, well under the param cap. */
 const CHUNK_SIZE = 500;
 
@@ -272,11 +291,70 @@ function chunk<T>(items: T[], size: number): T[][] {
  * Import one billing report CSV. All-or-nothing: parse errors throw
  * `CsvImportError` before any write; the upsert runs in a single transaction.
  * Re-importing the same or an overlapping file is idempotent (upsert by PK).
+ *
+ * Both outcomes land in the import log — a rejected upload is exactly what the
+ * Imports page's history has to explain. `filename` is what the upload was
+ * called upstream; the request body itself is bare CSV and carries no name.
  */
-export async function importBillingCsv(csv: string): Promise<BillingImportResult> {
+export async function importBillingCsv(
+  csv: string,
+  filename?: string,
+): Promise<BillingImportResult> {
   const startedAt = Date.now();
-  const parsed = parseBillingReport(csv);
 
+  // Only the parse and the transaction can fail with nothing written, so only
+  // they are covered by the failure record. Past the commit the rows are in —
+  // logging a failure there would have the history deny an import that landed.
+  let parsed: ParsedBillingReport;
+  try {
+    parsed = parseBillingReport(csv);
+    await writeBillingReport(parsed);
+  } catch (error) {
+    await recordImport({
+      slot: sniffSlot(csv),
+      filename,
+      rowCount: 0,
+      status: 'failed',
+      error: errorMessage(error),
+    });
+    throw error;
+  }
+
+  const rowsUpserted =
+    parsed.reportType === 'billing' ? parsed.billingRows.length : parsed.modelRows.length;
+
+  // Recorded before the unknown-login lookup, which reads outside the
+  // transaction and is the one remaining thing that can still throw.
+  await recordImport({
+    slot: SLOT_BY_REPORT[parsed.reportType],
+    filename,
+    rowCount: rowsUpserted,
+    status: 'succeeded',
+    error: null,
+  });
+
+  const unknownLogins = await findUnknownLogins(parsed.logins);
+
+  log.info(
+    {
+      'event.action': 'billing-import',
+      'event.outcome': 'success',
+      'event.duration': eventDuration(startedAt),
+      dash: {
+        reportType: parsed.reportType,
+        rowsUpserted,
+        unknownLogins: unknownLogins.length,
+        skippedNonCreditRows: parsed.skippedNonCreditRows,
+        ...parsed.dateRange,
+      },
+    },
+    'billing report import finished',
+  );
+
+  return { reportType: parsed.reportType, rowsUpserted, dateRange: parsed.dateRange, unknownLogins };
+}
+
+async function writeBillingReport(parsed: ParsedBillingReport): Promise<void> {
   await db.transaction(async (tx) => {
     if (parsed.reportType === 'billing') {
       for (const rows of chunk(parsed.billingRows, CHUNK_SIZE)) {
@@ -326,28 +404,6 @@ export async function importBillingCsv(csv: string): Promise<BillingImportResult
         });
     }
   });
-
-  const unknownLogins = await findUnknownLogins(parsed.logins);
-  const rowsUpserted =
-    parsed.reportType === 'billing' ? parsed.billingRows.length : parsed.modelRows.length;
-
-  log.info(
-    {
-      'event.action': 'billing-import',
-      'event.outcome': 'success',
-      'event.duration': eventDuration(startedAt),
-      dash: {
-        reportType: parsed.reportType,
-        rowsUpserted,
-        unknownLogins: unknownLogins.length,
-        skippedNonCreditRows: parsed.skippedNonCreditRows,
-        ...parsed.dateRange,
-      },
-    },
-    'billing report import finished',
-  );
-
-  return { reportType: parsed.reportType, rowsUpserted, dateRange: parsed.dateRange, unknownLogins };
 }
 
 /**
@@ -369,8 +425,30 @@ async function findUnknownLogins(logins: string[]): Promise<string[]> {
 }
 
 /** Import user-export.csv into github_users. Upsert by login, idempotent. */
-export async function importUserExportCsv(csv: string): Promise<{ rowsUpserted: number }> {
+export async function importUserExportCsv(
+  csv: string,
+  filename?: string,
+): Promise<{ rowsUpserted: number }> {
   const startedAt = Date.now();
+  try {
+    return await runUserExportImport(csv, filename, startedAt);
+  } catch (error) {
+    await recordImport({
+      slot: 'users',
+      filename,
+      rowCount: 0,
+      status: 'failed',
+      error: errorMessage(error),
+    });
+    throw error;
+  }
+}
+
+async function runUserExportImport(
+  csv: string,
+  filename: string | undefined,
+  startedAt: number,
+): Promise<{ rowsUpserted: number }> {
   const users = parseUserExport(csv);
 
   await db.transaction(async (tx) => {
@@ -397,6 +475,14 @@ export async function importUserExportCsv(csv: string): Promise<{ rowsUpserted: 
     },
     'user export import finished',
   );
+
+  await recordImport({
+    slot: 'users',
+    filename,
+    rowCount: users.length,
+    status: 'succeeded',
+    error: null,
+  });
 
   return { rowsUpserted: users.length };
 }

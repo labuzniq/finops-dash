@@ -11,7 +11,6 @@ import type { SortDirection, SortKey } from '../lib/metrics/table.js';
  * from this plus the fetched data — no metric is ever stored.
  */
 
-export type ModalTab = 'upload' | 'sources';
 export type TableView = 'users' | 'models';
 
 export interface DashboardState {
@@ -39,8 +38,6 @@ export interface DashboardState {
    * Sparse — a missing key means the chart's first variant.
    */
   usageMetric: Record<string, string>;
-  modalOpen: boolean;
-  modalTab: ModalTab;
 }
 
 export const initialDashboardState: DashboardState = {
@@ -59,8 +56,6 @@ export const initialDashboardState: DashboardState = {
   spendPage: 0,
   tableView: 'users',
   usageMetric: {},
-  modalOpen: false,
-  modalTab: 'upload',
 };
 
 export type DashboardAction =
@@ -76,10 +71,7 @@ export type DashboardAction =
   | { type: 'toggleSpendSort'; key: SpendSortKey }
   | { type: 'setSpendPage'; page: number }
   | { type: 'setTableView'; view: TableView }
-  | { type: 'setUsageMetric'; section: string; metric: string }
-  | { type: 'openModal' }
-  | { type: 'closeModal' }
-  | { type: 'setModalTab'; tab: ModalTab };
+  | { type: 'setUsageMetric'; section: string; metric: string };
 
 export function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
@@ -128,11 +120,5 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
         ...state,
         usageMetric: { ...state.usageMetric, [action.section]: action.metric },
       };
-    case 'openModal':
-      return { ...state, modalOpen: true };
-    case 'closeModal':
-      return { ...state, modalOpen: false };
-    case 'setModalTab':
-      return { ...state, modalTab: action.tab };
   }
 }

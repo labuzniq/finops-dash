@@ -35,3 +35,13 @@ export interface TelemetryRollupRow {
   type: string | null;
   value: number;
 }
+
+/**
+ * How fresh the OTLP feed is. Telemetry is a push source with no sync
+ * affordance, so the Data sources page derives its status from the latest
+ * datapoint rather than from a `refresh_jobs` row.
+ */
+export interface TelemetryFreshness {
+  /** ISO timestamp of the newest ingested datapoint; null when none ever arrived. */
+  latestAt: string | null;
+}

@@ -2,10 +2,12 @@ import type {
   BillingImportResult,
   CopilotSeat,
   DateRange,
+  ImportLogEntry,
   ModelUsage,
   RefreshJob,
   RefreshKind,
   SpendPayload,
+  TelemetryFreshness,
   TelemetryRollupRow,
   UsageHistory,
 } from '@dash/shared';
@@ -100,17 +102,41 @@ export async function fetchModels(range: DateRange): Promise<ModelUsage[]> {
 }
 
 /**
+ * The uploaded file's name, for the import log. A query parameter because the
+ * body of these two endpoints is the CSV itself — there is nowhere else to put
+ * it. Omitted names are logged as `upload.csv` server-side.
+ */
+function named(path: string, filename?: string): string {
+  return filename === undefined ? path : `${path}?filename=${encodeURIComponent(filename)}`;
+}
+
+/**
  * One GitHub billing usage report (Report 1 or Report 2 — the server detects
  * which from the header). The response body *is* the result, unwrapped.
  */
-export function importBillingReport(csv: string): Promise<BillingImportResult> {
-  return postCsv<BillingImportResult>('/import/billing', csv);
+export function importBillingReport(
+  csv: string,
+  filename?: string,
+): Promise<BillingImportResult> {
+  return postCsv<BillingImportResult>(named('/import/billing', filename), csv);
 }
 
 /** GitHub org user export (login → saml_name_id). Wrapped in `{ result }`. */
-export async function importUserExport(csv: string): Promise<{ rowsUpserted: number }> {
-  const { result } = await postCsv<{ result: { rowsUpserted: number } }>('/import/users', csv);
+export async function importUserExport(
+  csv: string,
+  filename?: string,
+): Promise<{ rowsUpserted: number }> {
+  const { result } = await postCsv<{ result: { rowsUpserted: number } }>(
+    named('/import/users', filename),
+    csv,
+  );
   return result;
+}
+
+/** The import log — every upload run, newest first, capped server-side. */
+export async function fetchImportLogs(): Promise<ImportLogEntry[]> {
+  const { imports } = await request<{ imports: ImportLogEntry[] }>('/imports');
+  return imports;
 }
 
 /** Claude Code telemetry, rolled up to (day, user, model, metric, type). */
@@ -119,6 +145,14 @@ export async function fetchTelemetryRollup(days: number): Promise<TelemetryRollu
     `/telemetry/rollup?days=${days}`,
   );
   return rollup;
+}
+
+/**
+ * When the newest OTLP datapoint landed. Telemetry is pushed, not synced, so
+ * this timestamp is the only "connected" signal the Claude Code source has.
+ */
+export function fetchTelemetryFreshness(): Promise<TelemetryFreshness> {
+  return request<TelemetryFreshness>('/telemetry/freshness');
 }
 
 export async function startRefresh(): Promise<RefreshJob> {

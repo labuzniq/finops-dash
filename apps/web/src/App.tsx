@@ -6,8 +6,6 @@ import { downloadSeatsCsv } from './lib/exportCsv.js';
 import {
   useBillingSync,
   useJiraSync,
-  useLatestBillingJob,
-  useLatestJiraJob,
   useLatestRefreshJob,
   useRefresh,
   useReportImports,
@@ -20,15 +18,23 @@ import { Sidebar } from './components/Sidebar.js';
 import type { AppView } from './components/Sidebar.js';
 import { ClaudeCodePage } from './components/claude/ClaudeCodePage.js';
 import { CopilotAnalyticsPage } from './components/copilot/CopilotAnalyticsPage.js';
+import { ImportsPage } from './components/imports/ImportsPage.js';
+import { DataSourcesPage } from './components/sources/DataSourcesPage.js';
 import { SpendSection } from './components/spend/SpendSection.js';
 import { TopBar } from './components/TopBar.js';
-import { AddDataModal } from './components/modal/AddDataModal.js';
 import styles from './App.module.css';
 
 /** Nocturne ships two accents; blurple is the product's own. */
 const ACCENT_CLASS = 'acc-blurple';
 
 const EMPTY_SEATS = [] as const;
+
+/** Pages that bring their own header; the Copilot top bar is not theirs. */
+const STANDALONE_VIEWS: ReadonlySet<AppView> = new Set<AppView>([
+  'claude-code',
+  'data-sources',
+  'imports',
+]);
 
 export function App() {
   const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
@@ -38,15 +44,14 @@ export function App() {
   const queryClient = useQueryClient();
   const seatsQuery = useSeats();
   const latestJobQuery = useLatestRefreshJob();
-  const { refresh, isRunning, error: refreshError } = useRefresh();
-  const billingJobQuery = useLatestBillingJob();
-  const {
-    sync: syncBilling,
-    isRunning: isBillingSyncing,
-    error: billingError,
-  } = useBillingSync();
-  const jiraJobQuery = useLatestJiraJob();
-  const { sync: syncJira, isRunning: isJiraSyncing, error: jiraError } = useJiraSync();
+
+  // The jobs live here rather than on the pages that start them. Each hook
+  // polls its job — or runs its upload — from local state, and a page that
+  // unmounts mid-run takes that state with it, so nothing would ever invalidate
+  // the queries the run feeds. Navigation is now free of the job.
+  const copilot = useRefresh();
+  const billing = useBillingSync();
+  const jira = useJiraSync();
   const imports = useReportImports();
 
   // The reload button refetches every server query in place — same data
@@ -64,20 +69,23 @@ export function App() {
     <div className={cx('theme', ACCENT_CLASS, isDark && 'dark', styles.shell)}>
       <Sidebar activeView={view} onNavigate={setView} />
 
-      {view === 'claude-code' && (
+      {STANDALONE_VIEWS.has(view) && (
         <main className={styles.main}>
-          <ClaudeCodePage />
+          {view === 'claude-code' && <ClaudeCodePage />}
+          {view === 'data-sources' && (
+            <DataSourcesPage copilot={copilot} billing={billing} jira={jira} />
+          )}
+          {view === 'imports' && <ImportsPage imports={imports} />}
         </main>
       )}
 
-      {view !== 'claude-code' && (
+      {!STANDALONE_VIEWS.has(view) && (
         <main className={styles.main}>
           <TopBar
             seatCount={seatsQuery.data?.length ?? 0}
             isDark={isDark}
             isReloading={isReloading}
             onToggleTheme={toggle}
-            onAddData={() => dispatch({ type: 'openModal' })}
             onExportCsv={() => downloadSeatsCsv(metrics.filteredSeats, rangeDays)}
             onReload={reload}
           />
@@ -90,34 +98,10 @@ export function App() {
               dispatch={dispatch}
               metrics={metrics}
               latestJob={latestJobQuery.data ?? null}
-              isRefreshing={isRunning}
+              isRefreshing={copilot.isRunning}
             />
           )}
         </main>
-      )}
-
-      {state.modalOpen && (
-        <AddDataModal
-          tab={state.modalTab}
-          latestJob={latestJobQuery.data ?? null}
-          isRefreshing={isRunning}
-          refreshError={refreshError}
-          billingJob={billingJobQuery.data ?? null}
-          isBillingSyncing={isBillingSyncing}
-          billingError={billingError}
-          jiraJob={jiraJobQuery.data ?? null}
-          isJiraSyncing={isJiraSyncing}
-          jiraError={jiraError}
-          imports={imports}
-          onTabChange={(tab) => dispatch({ type: 'setModalTab', tab })}
-          onClose={() => {
-            imports.reset();
-            dispatch({ type: 'closeModal' });
-          }}
-          onRefresh={refresh}
-          onBillingSync={syncBilling}
-          onJiraSync={syncJira}
-        />
       )}
     </div>
   );

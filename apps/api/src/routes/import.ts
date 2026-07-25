@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   CsvImportError,
@@ -6,11 +6,24 @@ import {
   importUserExportCsv,
 } from '../services/billing-import.js';
 import { importSeats } from '../services/import.js';
+import { listImportLogs } from '../services/import-log.js';
 
 /** Up to ~25 MB of CSV/NDJSON, matching the modal's stated limit. */
 const importBody = z.object({
   content: z.string().min(1).max(30_000_000),
 });
+
+/**
+ * The name of the uploaded file, for the import log. A query parameter because
+ * the body is the CSV itself on these endpoints — there is nowhere else to put
+ * it, and it is optional so a scripted import stays a one-liner.
+ */
+const filenameQuery = z.object({ filename: z.string().trim().min(1).max(255).optional() });
+
+function uploadFilename(request: FastifyRequest): string | undefined {
+  const parsed = filenameQuery.safeParse(request.query);
+  return parsed.success ? parsed.data.filename : undefined;
+}
 
 /**
  * The CSV itself (`content-type: text/csv`, spec §Import pipeline) or the
@@ -57,7 +70,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      return await importBillingCsv(content);
+      return await importBillingCsv(content, uploadFilename(request));
     } catch (error) {
       if (error instanceof CsvImportError) {
         return reply.code(400).send({ error: error.message });
@@ -76,7 +89,7 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      const result = await importUserExportCsv(content);
+      const result = await importUserExportCsv(content, uploadFilename(request));
       return { result };
     } catch (error) {
       if (error instanceof CsvImportError) {
@@ -84,5 +97,10 @@ export const importRoutes: FastifyPluginAsync = async (app) => {
       }
       throw error;
     }
+  });
+
+  /** Import history for the Imports page — most recent runs first, capped at 50. */
+  app.get('/api/imports', async () => {
+    return { imports: await listImportLogs() };
   });
 };

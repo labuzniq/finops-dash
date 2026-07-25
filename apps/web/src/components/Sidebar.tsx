@@ -23,7 +23,12 @@ import styles from './Sidebar.module.css';
  */
 
 /** The views the app can show; items without one are inert placeholders. */
-export type AppView = 'copilot-spend' | 'copilot-analytics' | 'claude-code';
+export type AppView =
+  | 'copilot-spend'
+  | 'copilot-analytics'
+  | 'claude-code'
+  | 'data-sources'
+  | 'imports';
 
 interface NavChild {
   label: string;
@@ -68,8 +73,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'DATA',
     items: [
-      { label: 'Data sources', icon: Database },
-      { label: 'Imports', icon: UploadSimple },
+      { label: 'Data sources', icon: Database, view: 'data-sources' },
+      { label: 'Imports', icon: UploadSimple, view: 'imports' },
     ],
   },
 ];

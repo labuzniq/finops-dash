@@ -17,11 +17,19 @@ import {
   uniqueIndex,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { PLANS, REFRESH_KINDS, REFRESH_STATUSES } from '@dash/shared';
+import {
+  IMPORT_LOG_STATUSES,
+  IMPORT_SLOTS,
+  PLANS,
+  REFRESH_KINDS,
+  REFRESH_STATUSES,
+} from '@dash/shared';
 
 export const planEnum = pgEnum('plan', PLANS);
 export const refreshStatusEnum = pgEnum('refresh_status', REFRESH_STATUSES);
 export const refreshKindEnum = pgEnum('refresh_kind', REFRESH_KINDS);
+export const importSlotEnum = pgEnum('import_slot', IMPORT_SLOTS);
+export const importLogStatusEnum = pgEnum('import_log_status', IMPORT_LOG_STATUSES);
 
 /**
  * Current seat state, keyed by login. A refresh replaces this wholesale —
@@ -277,6 +285,22 @@ export const refreshJobs = pgTable(
 );
 
 /**
+ * One CSV upload run, one row per slot — the Imports page's history list.
+ * Append-only like `refresh_jobs`, and written whether the import landed or was
+ * rejected: a failed upload is exactly what the history has to explain.
+ * `row_count` is what the run upserted, so it stays 0 on a failure.
+ */
+export const importLogs = pgTable('import_logs', {
+  id: text('id').primaryKey(),
+  slot: importSlotEnum('slot').notNull(),
+  filename: varchar('filename', { length: 255 }).notNull(),
+  rowCount: integer('row_count').notNull().default(0),
+  status: importLogStatusEnum('status').notNull(),
+  error: text('error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * Raw OTLP metric datapoints from Claude Code (and any other OTLP client).
  * Append-only. Cumulative sums are normalised to deltas at ingest — see
  * otlp/ingest.ts — so every query is a plain SUM over `value`.
@@ -318,6 +342,9 @@ export const otlpMetricPoints = pgTable(
     index('otlp_metric_points_time_idx').on(table.time, table.metricName),
     index('otlp_metric_points_series_idx').on(table.seriesKey, table.time),
     index('otlp_metric_points_user_idx').on(table.userEmail),
+    // The Data sources page polls max(received_at) every minute; without a
+    // leading-column index that is a seq scan of an append-only table.
+    index('otlp_metric_points_received_idx').on(table.receivedAt),
   ],
 );
 
@@ -367,5 +394,7 @@ export type UsageBreakdownInsert = typeof usageBreakdownDaily.$inferInsert;
 export type AdoptionPhaseRow = typeof adoptionPhaseDaily.$inferSelect;
 export type AdoptionPhaseInsert = typeof adoptionPhaseDaily.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
+export type ImportLogRow = typeof importLogs.$inferSelect;
+export type ImportLogInsert = typeof importLogs.$inferInsert;
 export type OtlpMetricPointInsert = typeof otlpMetricPoints.$inferInsert;
 export type OtlpLogRecordInsert = typeof otlpLogRecords.$inferInsert;

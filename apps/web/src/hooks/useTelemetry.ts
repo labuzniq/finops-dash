@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { TelemetryRollupRow } from '@dash/shared';
-import { fetchTelemetryRollup } from '../api/client.js';
+import type { TelemetryFreshness, TelemetryRollupRow } from '@dash/shared';
+import { fetchTelemetryFreshness, fetchTelemetryRollup } from '../api/client.js';
 
 /** Telemetry always holds the full history and slices it client-side. */
 const SERIES_DAYS = 90;
@@ -12,6 +12,19 @@ export function useTelemetryRollup() {
   return useQuery<TelemetryRollupRow[]>({
     queryKey: ['telemetry', SERIES_DAYS],
     queryFn: () => fetchTelemetryRollup(SERIES_DAYS),
+    refetchInterval: REFETCH_MS,
+  });
+}
+
+/**
+ * The newest ingested datapoint. Telemetry has no job to read a status from —
+ * it arrives on its own — so the Data sources page derives the Claude Code
+ * row's status from this timestamp on the same cadence as the rollup.
+ */
+export function useTelemetryFreshness() {
+  return useQuery<TelemetryFreshness>({
+    queryKey: ['telemetry', 'freshness'],
+    queryFn: fetchTelemetryFreshness,
     refetchInterval: REFETCH_MS,
   });
 }

@@ -1,8 +1,9 @@
 import { useId, useState } from 'react';
+import type { ImportSlot } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { count } from '../../lib/format.js';
-import type { ImportSlot, SlotOutcome } from '../../hooks/useCopilotData.js';
-import styles from './tabs.module.css';
+import type { SlotOutcome } from '../../hooks/useCopilotData.js';
+import styles from './imports.module.css';
 
 /**
  * The three billing-report uploads.
@@ -73,7 +74,8 @@ function detectReport(columns: Set<string>): ImportSlot | null {
   return hasModel ? 'model' : 'cost';
 }
 
-const SLOT_NAME: Record<ImportSlot, string> = {
+/** The slot names, also the labels the import history renders. */
+export const SLOT_NAME: Record<ImportSlot, string> = {
   model: 'Model usage',
   cost: 'Cost report',
   users: 'User export',
@@ -141,7 +143,12 @@ function ReportSlot({ spec, staged, outcome, secondary = false, onStage }: Repor
     if (file) onStage(spec.id, file);
   };
 
-  const failed = staged?.error ?? (outcome?.status === 'error' ? outcome.message : null);
+  // An outcome describes the file that produced it, and the run outlives the
+  // page (it lives in `App`) while staging does not — so a result is only shown
+  // while its file is still in the slot. Otherwise navigating away and back
+  // leaves last run's row count, or a red border, under an empty dropzone.
+  const result = staged === undefined ? undefined : outcome;
+  const failed = staged?.error ?? (result?.status === 'error' ? result.message : null);
 
   return (
     <div className={cx(styles.slot, secondary && styles.slotSecondary)}>
@@ -190,7 +197,7 @@ function ReportSlot({ spec, staged, outcome, secondary = false, onStage }: Repor
               styles.dot,
               failed !== null
                 ? styles.dotFailed
-                : outcome
+                : result
                   ? styles.dotConnected
                   : styles.dotIdle,
             )}
@@ -200,18 +207,18 @@ function ReportSlot({ spec, staged, outcome, secondary = false, onStage }: Repor
       )}
 
       {failed !== null && <div className={styles.slotError}>{failed}</div>}
-      {failed === null && outcome && <div className={styles.slotResult}>{outcomeText(outcome)}</div>}
+      {failed === null && result && <div className={styles.slotResult}>{outcomeText(result)}</div>}
     </div>
   );
 }
 
-interface UploadReportsTabProps {
+interface UploadSlotsProps {
   staged: StagedFiles;
   outcomes: Partial<Record<ImportSlot, SlotOutcome>>;
   onStage: (slot: ImportSlot, file: File) => void;
 }
 
-export function UploadReportsTab({ staged, outcomes, onStage }: UploadReportsTabProps) {
+export function UploadSlots({ staged, outcomes, onStage }: UploadSlotsProps) {
   return (
     <div>
       <div className={styles.slotPair}>
