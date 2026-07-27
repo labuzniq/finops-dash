@@ -3,7 +3,7 @@ import type { Dispatch } from 'react';
 import type { BillingRow, ModelSpendRow, RefreshJob, SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { rangeLabel, relativeTime } from '../../lib/format.js';
-import { useLatestBillingJob } from '../../hooks/useCopilotData.js';
+import { useLatestJob } from '../../hooks/useCopilotData.js';
 import {
   modelBreakdown,
   sortSpendUserRows,
@@ -55,7 +55,7 @@ interface SpendSectionProps {
 export function SpendSection({ state, dispatch }: SpendSectionProps) {
   const spendQuery = useSpendData(state.spendRange);
   const payload = spendQuery.data;
-  const billingJobQuery = useLatestBillingJob();
+  const billingJobQuery = useLatestJob('billing');
 
   // The same bounds the fetch used, so the trend's zero-fill spine and the
   // API response agree on the calendar days in play.

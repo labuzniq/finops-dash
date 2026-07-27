@@ -4,12 +4,10 @@ import { rangeDayCount } from '@dash/shared';
 import { cx } from './lib/cx.js';
 import { downloadSeatsCsv } from './lib/exportCsv.js';
 import {
-  useBillingSync,
-  useJiraSync,
-  useLatestRefreshJob,
-  useRefresh,
+  useLatestJob,
   useReportImports,
   useSeats,
+  useSyncJob,
 } from './hooks/useCopilotData.js';
 import { useDashboardMetrics } from './hooks/useDashboardMetrics.js';
 import { useTheme } from './hooks/useTheme.js';
@@ -43,15 +41,15 @@ export function App() {
 
   const queryClient = useQueryClient();
   const seatsQuery = useSeats();
-  const latestJobQuery = useLatestRefreshJob();
+  const latestJobQuery = useLatestJob('copilot');
 
   // The jobs live here rather than on the pages that start them. Each hook
   // polls its job — or runs its upload — from local state, and a page that
   // unmounts mid-run takes that state with it, so nothing would ever invalidate
   // the queries the run feeds. Navigation is now free of the job.
-  const copilot = useRefresh();
-  const billing = useBillingSync();
-  const jira = useJiraSync();
+  const copilot = useSyncJob('copilot');
+  const billing = useSyncJob('billing');
+  const jira = useSyncJob('jira');
   const imports = useReportImports();
 
   // The reload button refetches every server query in place — same data
