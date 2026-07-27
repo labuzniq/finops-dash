@@ -2,14 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## ALWAYS WORK LIKE THIS
+## Git Rules - MUST DO
 
-1. NEVER WORK ON MAIN BRANCH, always create worktree using claude superpowers.
-2. Always commit using conventional commits.
-3. Always create a PR for changes to the branch.
-4. Keep the description business focused, not implementation-focused.
-5. USE GitHub MCP to create PRs, alternatively GitHub CLI. NOT git CLI,.
-6. CleanUp your worktree after PR is merged, using claude superpowers.
+1. NEVER WORK ON MAIN BRANCH, always create worktree using claude superpowers worktrees.
+2. Always commit using conventional commits (feat, fix, chore...).
+3. Always create a PR from the worktree to main branch after you are done with your work.
+3. Keep the description business focused, with decent implementation detail.
+4. USE GitHub MCP to create PRs, alternatively GitHub CLI.
 
 ## Commands
 
