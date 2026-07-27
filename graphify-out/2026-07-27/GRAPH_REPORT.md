@@ -1,16 +1,16 @@
-# Graph Report - Dash  (2026-07-27)
+# Graph Report - Dash  (2026-07-21)
 
 ## Corpus Check
-- 149 files · ~106,020 words
+- 131 files · ~86,478 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1325 nodes · 2487 edges · 75 communities (72 shown, 3 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 60 edges (avg confidence: 0.78)
+- 1190 nodes · 2167 edges · 67 communities (65 shown, 2 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 52 edges (avg confidence: 0.79)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4c78ed31`
+- Built from commit: `26687494`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -80,26 +80,18 @@
 - LoginScreen.tsx
 - Sidebar.tsx
 - exportCsv.ts
-- export-mock-csv.ts
-- client.ts
-- Copilot Spend / Analytics Page Split — Design
-- Data sources + Imports pages — design
-- Avatar.tsx
-- Global Constraints
-- Analytics identity mapping + spend-parity filters
-- download.ps1
 
 ## God Nodes (most connected - your core abstractions)
-1. `cx()` - 39 edges
-2. `count()` - 30 edges
-3. `compilerOptions` - 18 edges
-4. `moduleLogger()` - 17 edges
-5. `Card()` - 17 edges
-6. `SpendSection()` - 17 edges
+1. `cx()` - 34 edges
+2. `count()` - 28 edges
+3. `App()` - 19 edges
+4. `compilerOptions` - 18 edges
+5. `Card()` - 16 edges
+6. `SpendSection()` - 15 edges
 7. `usd()` - 15 edges
 8. `buildApp()` - 14 edges
-9. `App()` - 14 edges
-10. `Db` - 13 edges
+9. `moduleLogger()` - 13 edges
+10. `eventDuration()` - 13 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `reclaimCandidates()` --indirect_call--> `isIdle()`  [INFERRED]
@@ -120,47 +112,47 @@
 - **Asynchronous refresh flow — modal trigger, job row, polling, invalidation** — docs_handoff_add_data_modal, readme_async_refresh, readme_http_api_surface, docs_handoff_three_tables, readme_refresh_dedup_guarantee, readme_transactional_seat_replace, docs_handoff_no_refresh_affordance [EXTRACTED 1.00]
 - **Prototype-to-React port — renderVals split into pure memoised metric modules** — design_github_copilot_spend_dc_rendervals, docs_handoff_rendervals_port, readme_use_dashboard_metrics, readme_metrics_derived_never_stored, design_github_copilot_spend_dc_memo, docs_handoff_client_side_pipeline [EXTRACTED 1.00]
 
-## Communities (75 total, 3 thin omitted)
+## Communities (67 total, 2 thin omitted)
 
 ### Community 0 - "Web Dashboard Components"
-Cohesion: 0.05
-Nodes (79): fetchSpend(), CopilotAnalyticsPage(), CopilotAnalyticsPageProps, EMPTY_MODELS, EMPTY_SEATS, FilterBar(), FilterBarProps, seatLabel() (+71 more)
+Cohesion: 0.07
+Nodes (48): Avatar(), AvatarProps, FilterBar(), FilterBarProps, syncLabel(), SpendSectionProps, SORTABLE_COLUMNS, SortableColumn (+40 more)
 
 ### Community 1 - "Design Prototype Runtime"
-Cohesion: 0.05
-Nodes (58): load(), dependencies, @dash/shared, @phosphor-icons/react, react, react-dom, @tanstack/react-query, @dash/shared (+50 more)
+Cohesion: 0.07
+Nodes (47): load(), boot(), cdnScriptFor(), collectProps(), compileAttr(), compileTemplate(), contentKey(), createComponentFactory() (+39 more)
 
 ### Community 2 - "API Server & Database Schema"
-Cohesion: 0.12
-Nodes (34): MONEY_FORMAT, SpendTrendCard(), SpendTrendCardProps, TrendChart(), TrendChartProps, TrendVariant, buildSections(), ChartSpec (+26 more)
+Cohesion: 0.11
+Nodes (35): MONEY_FORMAT, SpendTrendCard(), SpendTrendCardProps, TeamsPanel(), TeamsPanelProps, TrendChart(), TrendChartProps, TrendVariant (+27 more)
 
 ### Community 3 - "Copilot Data Clients"
-Cohesion: 0.14
-Nodes (28): OtlpLogRecordInsert, otlpLogRecords, OtlpMetricPointInsert, asArray(), Attrs, AttrScalar, attrString(), decodeAnyValue() (+20 more)
+Cohesion: 0.16
+Nodes (26): OtlpMetricPointInsert, asArray(), Attrs, AttrScalar, attrString(), decodeAnyValue(), decodeAttributes(), decodeTemporality() (+18 more)
 
 ### Community 4 - "Web Data Hooks & API Client"
 Cohesion: 0.20
-Nodes (17): fetchModels(), fetchRefreshJob(), fetchSeats(), startBillingSync(), startJiraSync(), startRefresh(), DataSourcesPageProps, isSettled() (+9 more)
+Nodes (17): fetchModels(), fetchRefreshJob(), fetchSeats(), fetchUsage(), importBillingReport(), postCsv(), startJiraSync(), startRefresh() (+9 more)
 
 ### Community 5 - "API Package Dependencies"
 Cohesion: 0.05
 Nodes (39): dependencies, @dash/shared, drizzle-orm, @elastic/ecs-pino-format, fastify, @fastify/cors, pino, postgres (+31 more)
 
 ### Community 6 - "Web Package Dependencies"
-Cohesion: 0.10
-Nodes (20): devDependencies, @types/react, @types/react-dom, typescript, vite, @vitejs/plugin-react, typescript, name (+12 more)
+Cohesion: 0.06
+Nodes (31): dependencies, @dash/shared, @phosphor-icons/react, react, react-dom, @tanstack/react-query, devDependencies, @types/react (+23 more)
 
 ### Community 7 - "Shared Types & Cost Model"
-Cohesion: 0.04
-Nodes (42): isIdle(), BILLING_SKUS, BillingImportResult, BillingRow, BillingSku, ModelSpendRow, SpendPayload, SpendPerson (+34 more)
+Cohesion: 0.06
+Nodes (32): isIdle(), BillingImportResult, BillingRow, BillingSku, ModelSpendRow, SpendPayload, SpendPerson, TELEMETRY_METRICS (+24 more)
 
 ### Community 8 - "Base TypeScript Config"
 Cohesion: 0.10
 Nodes (19): compilerOptions, esModuleInterop, exactOptionalPropertyTypes, forceConsistentCasingInFileNames, isolatedModules, lib, module, moduleResolution (+11 more)
 
 ### Community 9 - "Add Data Modal"
-Cohesion: 0.09
-Nodes (35): Archetype, archetypeFor(), buildAdoptionDaily(), buildBreakdownDaily(), buildMockBillingReport(), buildMockIdentity(), buildModelDaily(), buildOrgDaily() (+27 more)
+Cohesion: 0.10
+Nodes (33): Archetype, archetypeFor(), buildAdoptionDaily(), buildBreakdownDaily(), buildMockBillingReport(), buildMockIdentity(), buildModelDaily(), buildOrgDaily() (+25 more)
 
 ### Community 10 - "Root Workspace Scripts"
 Cohesion: 0.11
@@ -199,8 +191,8 @@ Cohesion: 0.18
 Nodes (10): compilerOptions, declaration, declarationMap, outDir, rootDir, sourceMap, extends, include (+2 more)
 
 ### Community 19 - "Avatar Rendering"
-Cohesion: 0.18
-Nodes (15): createBillingClient(), moduleLogger(), LocalParts, log, nextRunAt(), partsFormat, startBillingScheduler(), BillingSyncUnavailableError (+7 more)
+Cohesion: 0.13
+Nodes (27): fetchSpend(), ModelSpendChart(), ModelSpendChartProps, SpendKpiRow(), SpendKpiRowProps, EMPTY_BILLING, EMPTY_MODELS, EMPTY_PEOPLE (+19 more)
 
 ### Community 20 - "Seat & Spend Data Contract"
 Cohesion: 0.18
@@ -211,24 +203,24 @@ Cohesion: 0.50
 Nodes (5): Activity bucket boundaries (act7 / occ / dorm / never), Donut segments via stroke-dasharray offsets, The 29-day hole (open question), Seat utilization donut panel, Wasted spend panel
 
 ### Community 22 - "Cost Model Conventions"
-Cohesion: 0.11
-Nodes (28): acceptanceRate(), accumulateBreakdown(), addDays(), AdoptionPhaseTotals, adoptionSnapshots(), aggregateUserRows(), breakdownSnapshots(), dominant() (+20 more)
+Cohesion: 0.12
+Nodes (26): acceptanceRate(), accumulateBreakdown(), addDays(), AdoptionPhaseTotals, adoptionSnapshots(), breakdownSnapshots(), dominant(), FeatureTotals (+18 more)
 
 ### Community 23 - "Postgres Container Setup"
-Cohesion: 0.07
-Nodes (41): adoptionPhaseDaily, AdoptionPhaseInsert, AdoptionPhaseRow, BillingDailyRow, GithubUserRow, ImportLogInsert, importLogStatusEnum, importSlotEnum (+33 more)
+Cohesion: 0.08
+Nodes (38): adoptionPhaseDaily, AdoptionPhaseInsert, AdoptionPhaseRow, BillingDailyRow, copilotSeats, GithubUserRow, JiraPersonInsert, modelDaily (+30 more)
 
 ### Community 26 - "import.ts"
-Cohesion: 0.07
-Nodes (54): BillingDailyInsert, GithubUserInsert, ModelSpendDailyInsert, SeatInsert, CsvRow, parseCsvRows(), stripBom(), RFC-4180 (+46 more)
+Cohesion: 0.06
+Nodes (57): BillingDailyInsert, GithubUserInsert, ModelSpendDailyInsert, SeatInsert, billing, Cell, csv(), days (+49 more)
 
 ### Community 27 - "chart.ts"
-Cohesion: 0.12
-Nodes (22): ChartHoverLayer(), ChartHoverLayerProps, ClaudeCodePage(), dateLabel(), usdCompact(), buildChartGeometry(), ChartGeometry, ChartHoverOptions (+14 more)
+Cohesion: 0.13
+Nodes (20): ChartHoverLayerProps, dateLabel(), usdCompact(), buildChartGeometry(), ChartGeometry, ChartHoverOptions, EMPTY_GEOMETRY, GRID_FRACTIONS (+12 more)
 
 ### Community 28 - "dashboard.ts"
-Cohesion: 0.11
-Nodes (28): createCopilotClient(), copilotSeats, modelDaily, orgDaily, client, countExpr, days, log (+20 more)
+Cohesion: 0.15
+Nodes (22): createCopilotClient(), RefreshJobRow, refreshJobs, jobParams, latestQuery, refreshRoutes(), ACTIVE_STATUSES, activeOfKind() (+14 more)
 
 ### Community 29 - "schema.ts"
 Cohesion: 0.12
@@ -247,28 +239,28 @@ Cohesion: 0.20
 Nodes (10): Add data modal, Charts row — grid `1fr 380px`, 14px gap, CSV import fills exactly the columns the API cannot provide, Filter bar, Header row, KPI row — 4 equal cards, No refresh affordance (open question), Screens / Views (+2 more)
 
 ### Community 33 - "AGENTS.md"
-Cohesion: 0.16
-Nodes (16): Card(), CardProps, TokenUsageChart(), DateRangePicker(), DateRangePickerProps, ImportHistory(), LogRow(), KpiCard() (+8 more)
+Cohesion: 0.12
+Nodes (25): Card(), CardProps, ChartHoverLayer(), TokenUsageChart(), DateRangePicker(), DateRangePickerProps, ConnectedSourcesTab(), ConnectedSourcesTabProps (+17 more)
 
 ### Community 34 - "refresh.ts"
-Cohesion: 0.22
-Nodes (14): ChartSeriesPoint, accumulateUser(), deriveTelemetry(), emptyUserRow(), isoDatesBetween(), isoDaysAgo(), MutableUserRow, parseIsoDate() (+6 more)
+Cohesion: 0.20
+Nodes (15): ChartSeriesPoint, accumulateUser(), deriveTelemetry(), emptyUserRow(), isoDatesBetween(), isoDaysAgo(), MutableUserRow, parseIsoDate() (+7 more)
 
 ### Community 35 - "GitHub Copilot integration"
-Cohesion: 0.25
-Nodes (7): Enterprise billing: real dollars, one login at a time, GitHub Copilot integration, Spend is derived, not fetched (when billing is not configured), The data sources GitHub actually gives us, The reports API is indirect, Time ranges, What lands in the database
+Cohesion: 0.29
+Nodes (6): GitHub Copilot integration, Spend is derived, not fetched, The data sources GitHub actually gives us, The reports API is indirect, Time ranges, What lands in the database
 
 ### Community 36 - "Manual import format (CSV / JSON / NDJSON)"
 Cohesion: 0.33
 Nodes (5): Accepted payloads, API shape, Columns, How rows are applied, Manual import format (CSV / JSON / NDJSON)
 
 ### Community 39 - "format.ts"
-Cohesion: 0.16
-Nodes (18): KpiRow(), ModelTable(), ModelTableProps, TopBar(), TopBarProps, TeamsPanel(), TeamsPanelProps, modelTitle() (+10 more)
+Cohesion: 0.20
+Nodes (13): KpiCard(), KpiCardProps, KpiRow(), KpiRowProps, ModelTable(), ModelTableProps, TopBar(), TopBarProps (+5 more)
 
 ### Community 40 - "reports.ts"
-Cohesion: 0.16
-Nodes (13): describe(), downloadNdjson(), errorClues(), fetchRetry(), FORBIDDEN_RETRY_DELAYS_MS, GithubApi, log, ReportEnvelope (+5 more)
+Cohesion: 0.22
+Nodes (10): describe(), downloadNdjson(), errorClues(), fetchRetry(), GithubApi, log, ReportEnvelope, ReportResult (+2 more)
 
 ### Community 41 - "Claude Code Telemetry — Visibility Expansion"
 Cohesion: 0.17
@@ -279,8 +271,8 @@ Cohesion: 0.18
 Nodes (10): Bounds & validation, Dashboard calendar date-range picker — design, Decisions (from brainstorming), Delta ("vs previous period"), Fixed 28d-window metrics, Goal, Slicing, State model (+2 more)
 
 ### Community 43 - "ClaudeCodePage.tsx"
-Cohesion: 0.23
-Nodes (8): daysSinceIso(), EMPTY_ROWS, UserRow(), LEGEND, SEGMENTS, TokenLeaderboard(), compactCount(), TokenLeaderboardRow
+Cohesion: 0.20
+Nodes (11): fetchTelemetryRollup(), ClaudeCodePage(), daysSinceIso(), EMPTY_ROWS, UserRow(), LEGEND, SEGMENTS, TokenLeaderboard() (+3 more)
 
 ### Community 44 - "UserTable.tsx"
 Cohesion: 0.14
@@ -296,7 +288,7 @@ Nodes (7): AGENTS.md, ALWAYS WORK LIKE THIS, Architecture, Commands, Design sour
 
 ### Community 47 - "ConnectedSourcesTab.tsx"
 Cohesion: 0.18
-Nodes (11): GithubCopilotClient, parsePlan(), userDailyFromRow(), MockCopilotClient, AdoptionPhaseDailySnapshot, BreakdownDailySnapshot, CopilotClient, ModelDailySnapshot (+3 more)
+Nodes (12): aggregateUserRows(), GithubCopilotClient, mergeTotals(), parsePlan(), MockCopilotClient, AdoptionPhaseDailySnapshot, BreakdownDailySnapshot, CopilotClient (+4 more)
 
 ### Community 48 - "Static token login — design"
 Cohesion: 0.29
@@ -307,8 +299,8 @@ Cohesion: 0.20
 Nodes (8): Vite web entry document, Component (prototype DCLogic class), Architecture notes, Deviations from the spec, [impl] Implementation notes, Open questions for design, pnpm workspace (apps/* + packages/*), esbuild postinstall allowlisted
 
 ### Community 50 - "Mock dataset (CSV)"
-Cohesion: 0.23
-Nodes (8): EnterpriseBillingClient, floatToNano(), log, SKU_MAP, UsageItem, UsageResponse, UserModelUsage, parseNano()
+Cohesion: 0.50
+Nodes (3): Files, Loading, Mock dataset (CSV)
 
 ### Community 51 - "Merged Usage Charts — Design"
 Cohesion: 0.20
@@ -316,7 +308,7 @@ Nodes (9): Component changes, Decisions (user-confirmed), Goal, Heading and labe
 
 ### Community 52 - "export-mock-csv.ts"
 Cohesion: 0.13
-Nodes (21): fetchImportLogs(), EMPTY_LOGS, ImportsPage(), detectReport(), headerColumns(), outcomeText(), REPORT_SLOTS, ReportSlot() (+13 more)
+Nodes (23): importUserExport(), AddDataModal(), AddDataModalProps, TABS, detectReport(), headerColumns(), outcomeText(), REPORT_SLOTS (+15 more)
 
 ### Community 53 - "Global Constraints"
 Cohesion: 0.25
@@ -327,20 +319,20 @@ Cohesion: 0.12
 Nodes (15): ATTR, chunk(), firstLabel(), firstValue(), InsightJiraClient, JiraClient, JiraPerson, JiraRequestError (+7 more)
 
 ### Community 55 - "app.ts"
-Cohesion: 0.17
-Nodes (20): buildApp(), PUBLIC_PATHS, clearSessionCookie(), hasSession(), readCookie(), setSessionCookie(), closeDb(), queryClient (+12 more)
+Cohesion: 0.25
+Nodes (14): buildApp(), PUBLIC_PATHS, clearSessionCookie(), hasSession(), readCookie(), setSessionCookie(), closeDb(), Env (+6 more)
 
 ### Community 56 - "log.ts"
-Cohesion: 0.36
-Nodes (6): createJiraClient(), jiraRoutes(), chunk(), JiraSyncUnavailableError, log, startJiraSync()
+Cohesion: 0.18
+Nodes (12): log, migrationsFolder, runMigrations(), createJiraClient(), eventDuration(), logger, moduleLogger(), jiraRoutes() (+4 more)
 
 ### Community 57 - "refresh-once.ts"
-Cohesion: 0.21
-Nodes (10): Db, ImportLogRow, importLogs, otlpMetricPoints, daysQuery, telemetryRoutes(), ImportOutcome, log (+2 more)
+Cohesion: 0.17
+Nodes (11): Db, queryClient, otlpMetricPoints, client, countExpr, days, log, startedAt (+3 more)
 
 ### Community 58 - "spend.ts"
-Cohesion: 0.16
-Nodes (14): billingDaily, githubUsers, jiraPeople, JiraPersonRow, modelSpendDaily, formatNano(), nanoToDollars(), isoDate (+6 more)
+Cohesion: 0.18
+Nodes (13): billingDaily, githubUsers, jiraPeople, JiraPersonRow, modelSpendDaily, nanoToDollars(), isoDate, rangeQuery (+5 more)
 
 ### Community 59 - "Spend Data Redesign — Billing CSV Import + JIRA Identity"
 Cohesion: 0.13
@@ -359,68 +351,40 @@ Cohesion: 0.20
 Nodes (9): Global Constraints, Spend Data Redesign Implementation Plan, Task 1: Shared contract — spend types, billing consts, delete fake cost model, Task 2: DB schema + fresh migrations, Task 3: CSV importers (billing reports + user export), Task 4: JIRA sync job + spend read endpoint + mock + fake-spend removal (api), Task 5: Web data layer + pure spend metrics, Task 6: Web UI — spend section, filters, cost-column removal (+1 more)
 
 ### Community 63 - "App.tsx"
-Cohesion: 0.18
-Nodes (17): fetchLatestRefreshJob(), syncLabel(), COPILOT_SOURCES, DataSourcesPage(), dotClassFor(), errorFor(), Source, SourceRow() (+9 more)
+Cohesion: 0.36
+Nodes (8): fetchLatestRefreshJob(), App(), EMPTY_MODELS, EMPTY_SEATS, useLatestJiraJob(), useLatestRefreshJob(), seatLanguages(), dashboardReducer()
 
 ### Community 64 - "LoginScreen.tsx"
 Cohesion: 0.43
 Nodes (5): LoginScreen(), LoginScreenProps, readStoredTheme(), Theme, useTheme
 
 ### Community 65 - "Sidebar.tsx"
-Cohesion: 0.25
-Nodes (7): AppView, NAV_GROUPS, NavChild, NavGroup, NavItem, Sidebar(), SidebarProps
+Cohesion: 0.29
+Nodes (6): AppView, NAV_GROUPS, NavGroup, NavItem, Sidebar(), SidebarProps
 
 ### Community 66 - "exportCsv.ts"
-Cohesion: 0.24
-Nodes (12): App(), EMPTY_SEATS, STANDALONE_VIEWS, useReportImports, buildSeatsCsv(), downloadSeatsCsv(), escapeCell(), HEADERS (+4 more)
-
-### Community 67 - "export-mock-csv.ts"
-Cohesion: 0.17
-Nodes (10): billing, Cell, days, files, identity, outDir, report1, report2 (+2 more)
-
-### Community 68 - "client.ts"
-Cohesion: 0.30
-Nodes (10): fetchTelemetryFreshness(), fetchTelemetryRollup(), fetchUsage(), importBillingReport(), importUserExport(), named(), postCsv(), request() (+2 more)
-
-### Community 69 - "Copilot Spend / Analytics Page Split — Design"
-Cohesion: 0.17
-Nodes (11): Background, Copilot Spend / Analytics Page Split — Design, Design, Error handling, Goal, Navigation, Pages, Rejected alternative (+3 more)
-
-### Community 70 - "Data sources + Imports pages — design"
-Cohesion: 0.22
-Nodes (8): 1. Navigation, 2. Data sources page, 3. Imports page, 4. Backend: import log, 5. Out of scope, Data source inventory (current), Data sources + Imports pages — design, Goal
-
-### Community 71 - "Avatar.tsx"
-Cohesion: 0.36
-Nodes (5): Avatar(), AvatarProps, avatarTint(), TINTS, initials()
-
-### Community 72 - "Global Constraints"
-Cohesion: 0.25
-Nodes (7): Analytics Identity Mapping + Spend-Parity Filters Implementation Plan, Global Constraints, Task 1: Identity resolver in the API + `CopilotSeat` fields, Task 2: Web filter model — scope filters on seats, Task 3: FilterBar UI + page wiring, Task 4: Seat table shows resolved names, Task 5: End-to-end verification + PR
-
-### Community 73 - "Analytics identity mapping + spend-parity filters"
-Cohesion: 0.29
-Nodes (6): Alternatives rejected, Analytics identity mapping + spend-parity filters, Decision, Error handling, Problem, Verification
+Cohesion: 0.48
+Nodes (6): buildSeatsCsv(), downloadSeatsCsv(), escapeCell(), HEADERS, toRow(), RFC-4180
 
 ## Knowledge Gaps
-- **501 isolated node(s):** `name`, `version`, `private`, `type`, `dev` (+496 more)
+- **448 isolated node(s):** `name`, `version`, `private`, `type`, `dev` (+443 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **3 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **2 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `login()` connect `import.ts` to `Web Dashboard Components`, `client.ts`, `ConnectedSourcesTab.tsx`, `Avatar Rendering`, `spend.ts`, `useAuth.ts`?**
-  _High betweenness centrality (0.157) - this node is a cross-community bridge._
-- **Why does `request()` connect `client.ts` to `Web Dashboard Components`, `import.ts`, `Copilot Data Clients`, `app.ts`?**
-  _High betweenness centrality (0.051) - this node is a cross-community bridge._
+- **Why does `login()` connect `import.ts` to `AGENTS.md`, `Web Data Hooks & API Client`, `ConnectedSourcesTab.tsx`, `Avatar Rendering`, `spend.ts`, `useAuth.ts`?**
+  _High betweenness centrality (0.114) - this node is a cross-community bridge._
 - **Why does `load()` connect `Design Prototype Runtime` to `app.ts`?**
-  _High betweenness centrality (0.049) - this node is a cross-community bridge._
+  _High betweenness centrality (0.059) - this node is a cross-community bridge._
+- **Are the 2 inferred relationships involving `App()` (e.g. with `search()` and `dashboardReducer()`) actually correct?**
+  _`App()` has 2 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `name`, `version`, `private` to the rest of the system?**
-  _501 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _448 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Web Dashboard Components` be split into smaller, more focused modules?**
-  _Cohesion score 0.05326460481099656 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06666666666666667 - nodes in this community are weakly interconnected._
 - **Should `Design Prototype Runtime` be split into smaller, more focused modules?**
-  _Cohesion score 0.05432595573440644 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06949152542372881 - nodes in this community are weakly interconnected._
 - **Should `API Server & Database Schema` be split into smaller, more focused modules?**
-  _Cohesion score 0.11806543385490754 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.10661268556005399 - nodes in this community are weakly interconnected._

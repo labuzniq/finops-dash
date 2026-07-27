@@ -65,13 +65,5 @@
   "63": "App.tsx",
   "64": "LoginScreen.tsx",
   "65": "Sidebar.tsx",
-  "66": "exportCsv.ts",
-  "67": "export-mock-csv.ts",
-  "68": "client.ts",
-  "69": "Copilot Spend / Analytics Page Split — Design",
-  "70": "Data sources + Imports pages — design",
-  "71": "Avatar.tsx",
-  "72": "Global Constraints",
-  "73": "Analytics identity mapping + spend-parity filters",
-  "74": "download.ps1"
+  "66": "exportCsv.ts"
 }
