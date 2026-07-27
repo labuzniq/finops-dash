@@ -2,16 +2,8 @@ import type { ReactNode } from 'react';
 import type { RefreshJob } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { relativeTime } from '../../lib/format.js';
-import {
-  useLatestBillingJob,
-  useLatestJiraJob,
-  useLatestRefreshJob,
-} from '../../hooks/useCopilotData.js';
-import type {
-  UseBillingSync,
-  UseJiraSync,
-  UseRefresh,
-} from '../../hooks/useCopilotData.js';
+import { useLatestJob } from '../../hooks/useCopilotData.js';
+import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { useTelemetryFreshness } from '../../hooks/useTelemetry.js';
 import styles from './DataSourcesPage.module.css';
 
@@ -139,19 +131,19 @@ function SourceRow({
 
 interface DataSourcesPageProps {
   /** The sync jobs, owned by `App` so they outlive a navigation away. */
-  copilot: UseRefresh;
-  billing: UseBillingSync;
-  jira: UseJiraSync;
+  copilot: UseSyncJob;
+  billing: UseSyncJob;
+  jira: UseSyncJob;
 }
 
 export function DataSourcesPage({ copilot, billing, jira }: DataSourcesPageProps) {
-  const { refresh, isRunning: isRefreshing, error: refreshError } = copilot;
+  const { sync: syncCopilot, isRunning: isRefreshing, error: refreshError } = copilot;
   const { sync: syncBilling, isRunning: isBillingSyncing, error: billingError } = billing;
   const { sync: syncJira, isRunning: isJiraSyncing, error: jiraError } = jira;
 
-  const latestJobQuery = useLatestRefreshJob();
-  const billingJobQuery = useLatestBillingJob();
-  const jiraJobQuery = useLatestJiraJob();
+  const latestJobQuery = useLatestJob('copilot');
+  const billingJobQuery = useLatestJob('billing');
+  const jiraJobQuery = useLatestJob('jira');
   const freshnessQuery = useTelemetryFreshness();
 
   const latestJob = latestJobQuery.data ?? null;
@@ -196,7 +188,7 @@ export function DataSourcesPage({ copilot, billing, jira }: DataSourcesPageProps
               type="button"
               className={styles.connect}
               aria-label="Sync GitHub Copilot APIs"
-              onClick={refresh}
+              onClick={syncCopilot}
               disabled={isRefreshing}
             >
               {isRefreshing ? 'Syncing…' : 'Sync'}

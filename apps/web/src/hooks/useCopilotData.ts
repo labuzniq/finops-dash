@@ -8,6 +8,7 @@ import type {
   ImportSlot,
   ModelUsage,
   RefreshJob,
+  RefreshKind,
   UsageHistory,
 } from '@dash/shared';
 import {
@@ -159,47 +160,58 @@ export function useImportLogs() {
   return useQuery<ImportLogEntry[]>({ queryKey: ['imports'], queryFn: fetchImportLogs });
 }
 
-/** The last sync of any status — drives the "synced 2h ago" note. */
-export function useLatestRefreshJob() {
+/**
+ * The last sync of a given source, whatever its status — drives every
+ * "synced 2h ago" note. Covers scheduled runs too: the scheduler and the
+ * on-demand syncs share one job table.
+ */
+export function useLatestJob(kind: RefreshKind) {
   return useQuery<RefreshJob | null>({
-    queryKey: ['refresh', 'latest', 'copilot'],
-    queryFn: () => fetchLatestRefreshJob('copilot'),
-  });
-}
-
-/** The last JIRA identity sync — the Data sources page reads its status. */
-export function useLatestJiraJob() {
-  return useQuery<RefreshJob | null>({
-    queryKey: ['refresh', 'latest', 'jira'],
-    queryFn: () => fetchLatestRefreshJob('jira'),
+    queryKey: ['refresh', 'latest', kind],
+    queryFn: () => fetchLatestRefreshJob(kind),
   });
 }
 
 /**
- * The last enterprise billing sync — the Data sources page's billing row and
- * the spend section's freshness note both read it. Covers the 07:00 run too:
- * scheduler and on-demand syncs share the job table.
+ * What each source needs to start a sync, and which cached queries its data
+ * lands in. Adding a fourth source is a row here, not a fourth copy of the
+ * polling hook below.
  */
-export function useLatestBillingJob() {
-  return useQuery<RefreshJob | null>({
-    queryKey: ['refresh', 'latest', 'billing'],
-    queryFn: () => fetchLatestRefreshJob('billing'),
-  });
+interface SyncSource {
+  start: () => Promise<RefreshJob>;
+  invalidates: readonly string[];
 }
 
-export interface UseRefresh {
+// `satisfies` rather than an annotation: it still fails the build when a new
+// `RefreshKind` has no row, while keeping the lookup below free of `undefined`.
+const SYNC_SOURCES = {
+  copilot: { start: startRefresh, invalidates: ['seats', 'spend', 'models', 'usage'] },
+  // Identity is joined into the spend payload alone.
+  jira: { start: startJiraSync, invalidates: ['spend'] },
+  // Writes `billing_daily` and `model_spend_daily`, both served by spend.
+  billing: { start: startBillingSync, invalidates: ['spend'] },
+} satisfies Record<RefreshKind, SyncSource>;
+
+export interface UseSyncJob {
   /** Kick off a sync; safe to call twice — the API returns the in-flight job. */
-  refresh: () => void;
+  sync: () => void;
   isRunning: boolean;
+  /** A failed job's error, or the start call's own (e.g. a 503 for unset env). */
   error: string | null;
 }
 
-export function useRefresh(): UseRefresh {
+/**
+ * One source's on-demand sync. The POST returns a job rather than the data, so
+ * the job is polled until it settles and only then are the queries it feeds
+ * invalidated — the dashboard swaps to fresh numbers in one step, not torn.
+ */
+export function useSyncJob(kind: RefreshKind): UseSyncJob {
   const queryClient = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
+  const source = SYNC_SOURCES[kind];
 
   const start = useMutation({
-    mutationFn: startRefresh,
+    mutationFn: source.start,
     onSuccess: (job) => setJobId(job.id),
   });
 
@@ -216,108 +228,17 @@ export function useRefresh(): UseRefresh {
 
     setJobId(null);
     if (job?.status === 'succeeded') {
-      void queryClient.invalidateQueries({ queryKey: ['seats'] });
-      void queryClient.invalidateQueries({ queryKey: ['spend'] });
-      void queryClient.invalidateQueries({ queryKey: ['models'] });
-      void queryClient.invalidateQueries({ queryKey: ['usage'] });
+      for (const key of source.invalidates) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
     }
-    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest'] });
-  }, [job, queryClient]);
-
-  return {
-    refresh: () => start.mutate(),
-    isRunning: jobId !== null || start.isPending,
-    error: job?.status === 'failed' ? job.error : null,
-  };
-}
-
-export interface UseJiraSync {
-  sync: () => void;
-  isRunning: boolean;
-  /** A failed job's error, or the 503 message when JIRA env is unconfigured. */
-  error: string | null;
-}
-
-/**
- * The JIRA identity sync. Same job table and polling shape as the Copilot
- * refresh (kind `jira`); on success only `spend` changes, since identity is
- * joined into the spend payload alone.
- */
-export function useJiraSync(): UseJiraSync {
-  const queryClient = useQueryClient();
-  const [jobId, setJobId] = useState<string | null>(null);
-
-  const start = useMutation({
-    mutationFn: startJiraSync,
-    onSuccess: (job) => setJobId(job.id),
-  });
-
-  const { data: job } = useQuery<RefreshJob>({
-    queryKey: ['refresh', jobId],
-    queryFn: () => fetchRefreshJob(jobId!),
-    enabled: jobId !== null,
-    refetchInterval: (query) => (isSettled(query.state.data) ? false : POLL_INTERVAL_MS),
-  });
-
-  useEffect(() => {
-    if (!isSettled(job)) return;
-
-    setJobId(null);
-    if (job?.status === 'succeeded') {
-      void queryClient.invalidateQueries({ queryKey: ['spend'] });
-    }
-    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest', 'jira'] });
-  }, [job, queryClient]);
+    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest', kind] });
+  }, [job, kind, source, queryClient]);
 
   return {
     sync: () => start.mutate(),
     isRunning: jobId !== null || start.isPending,
     // A 503 from the start call never produces a job, so surface it directly.
-    error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),
-  };
-}
-
-export interface UseBillingSync {
-  sync: () => void;
-  isRunning: boolean;
-  /** A failed job's error, or the 503 message when GITHUB_ENTERPRISE is unset. */
-  error: string | null;
-}
-
-/**
- * The enterprise billing sync (kind `billing`). Same job table and polling
- * shape as the JIRA sync; on success only `spend` changes — the sync writes
- * `billing_daily` and `model_spend_daily`, both served by the spend payload.
- */
-export function useBillingSync(): UseBillingSync {
-  const queryClient = useQueryClient();
-  const [jobId, setJobId] = useState<string | null>(null);
-
-  const start = useMutation({
-    mutationFn: startBillingSync,
-    onSuccess: (job) => setJobId(job.id),
-  });
-
-  const { data: job } = useQuery<RefreshJob>({
-    queryKey: ['refresh', jobId],
-    queryFn: () => fetchRefreshJob(jobId!),
-    enabled: jobId !== null,
-    refetchInterval: (query) => (isSettled(query.state.data) ? false : POLL_INTERVAL_MS),
-  });
-
-  useEffect(() => {
-    if (!isSettled(job)) return;
-
-    setJobId(null);
-    if (job?.status === 'succeeded') {
-      void queryClient.invalidateQueries({ queryKey: ['spend'] });
-    }
-    void queryClient.invalidateQueries({ queryKey: ['refresh', 'latest', 'billing'] });
-  }, [job, queryClient]);
-
-  return {
-    sync: () => start.mutate(),
-    isRunning: jobId !== null || start.isPending,
     error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),
   };
 }
