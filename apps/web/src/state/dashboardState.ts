@@ -1,4 +1,5 @@
 import type { DateRange } from '@dash/shared';
+import type { CostCentreDimension } from '../lib/metrics/costCentre.js';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
 import type { SpendSortDirection, SpendSortKey } from '../lib/metrics/spend.js';
@@ -30,6 +31,8 @@ export interface DashboardState {
   spendSortKey: SpendSortKey;
   spendSortDirection: SpendSortDirection;
   spendPage: number;
+  /** Which org dimension the cost-centre rollup ranks. */
+  spendGroupBy: CostCentreDimension;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
   /**
@@ -54,6 +57,7 @@ export const initialDashboardState: DashboardState = {
   spendSortKey: 'gross',
   spendSortDirection: -1,
   spendPage: 0,
+  spendGroupBy: 'department',
   tableView: 'users',
   usageMetric: {},
 };
@@ -70,6 +74,7 @@ export type DashboardAction =
   | { type: 'setSpendFilters'; filters: Partial<SpendFilters> }
   | { type: 'toggleSpendSort'; key: SpendSortKey }
   | { type: 'setSpendPage'; page: number }
+  | { type: 'setSpendGroupBy'; dimension: CostCentreDimension }
   | { type: 'setTableView'; view: TableView }
   | { type: 'setUsageMetric'; section: string; metric: string };
 
@@ -112,6 +117,11 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
 
     case 'setSpendPage':
       return { ...state, spendPage: action.page };
+
+    // Regrouping only changes how the rollup is cut, so the filters and the
+    // table below it stay exactly where they were.
+    case 'setSpendGroupBy':
+      return { ...state, spendGroupBy: action.dimension };
 
     case 'setTableView':
       return { ...state, tableView: action.view };

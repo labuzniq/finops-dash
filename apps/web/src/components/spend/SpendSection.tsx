@@ -12,10 +12,18 @@ import {
   spendUserRows,
   wastedSpend,
 } from '../../lib/metrics/spend.js';
-import { applySpendFilter, filterLogins } from '../../lib/metrics/spendFilter.js';
+import { costCentreRollup } from '../../lib/metrics/costCentre.js';
+import type { CostCentreDimension } from '../../lib/metrics/costCentre.js';
+import {
+  applySpendFilter,
+  cascadeScopeChange,
+  filterLogins,
+} from '../../lib/metrics/spendFilter.js';
+import type { SpendFilters } from '../../lib/metrics/spendFilter.js';
 import { paginate } from '../../lib/metrics/table.js';
 import { spendRangeBounds, useSpendData } from '../../hooks/useSpendData.js';
 import type { DashboardAction, DashboardState } from '../../state/dashboardState.js';
+import { CostCentreCard } from './CostCentreCard.js';
 import { ModelSpendChart } from './ModelSpendChart.js';
 import { SpendFilterBar } from './SpendFilterBar.js';
 import { SpendKpiRow } from './SpendKpiRow.js';
@@ -45,6 +53,18 @@ function billingSyncLabel(job: RefreshJob | null): string {
   if (job?.status === 'failed') return 'billing API · sync failed';
   if (job?.finishedAt) return `billing API · synced ${relativeTime(job.finishedAt)}`;
   return 'billing API · not yet synced';
+}
+
+/**
+ * The filters with the grouped dimension released — the cost-centre rollup is
+ * faceted like the filter bar's own option lists: picking one department must
+ * still show its peers, or the ranking collapses to the single row you just
+ * selected and there is nothing left to compare it against or click next.
+ */
+function releaseDimension(filters: SpendFilters, dimension: CostCentreDimension): SpendFilters {
+  if (dimension === 'department') return { ...filters, department: null };
+  if (dimension === 'b1Manager') return { ...filters, b1Manager: null };
+  return { ...filters, b2Manager: null };
 }
 
 interface SpendSectionProps {
@@ -90,6 +110,28 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
   // disagree with the KPIs about who is being counted.
   const waste = useMemo(() => wastedSpend(userRows), [userRows]);
 
+  // The rollup runs over the faceted row set: identical to `userRows` unless
+  // the grouped dimension is itself filtered, in which case it widens back out
+  // so the selected group can be ranked against its peers.
+  const rollupFilters = useMemo(
+    () => releaseDimension(state.spendFilters, state.spendGroupBy),
+    [state.spendFilters, state.spendGroupBy],
+  );
+  const faceted = state.spendFilters[state.spendGroupBy] !== null;
+  const rollupRows = useMemo(() => {
+    if (!faceted) return userRows;
+    const rollupLogins = filterLogins(people, rollupFilters);
+    return spendUserRows(
+      applySpendFilter(payload?.billingRows ?? EMPTY_BILLING, rollupLogins),
+      applySpendFilter(payload?.modelRows ?? EMPTY_MODELS, rollupLogins),
+      people,
+    );
+  }, [faceted, userRows, people, rollupFilters, payload]);
+  const rollup = useMemo(
+    () => costCentreRollup(rollupRows, state.spendGroupBy),
+    [rollupRows, state.spendGroupBy],
+  );
+
   const label = rangeLabel(state.spendRange);
 
   return (
@@ -127,6 +169,25 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
             <SpendTrendCard trend={trend} subtitle={label} />
             <WastedSpendCard waste={waste} rangeLabel={label} />
           </div>
+
+          <CostCentreCard
+            rollup={rollup}
+            dimension={state.spendGroupBy}
+            selected={state.spendFilters[state.spendGroupBy]}
+            faceted={faceted}
+            rangeLabel={label}
+            onDimensionChange={(dimension) => dispatch({ type: 'setSpendGroupBy', dimension })}
+            onSelect={(value) =>
+              dispatch({
+                type: 'setSpendFilters',
+                // Same reconciliation the filter bar uses, so a click can never
+                // leave an orphaned selection behind.
+                filters: cascadeScopeChange(people, state.spendFilters, {
+                  [state.spendGroupBy]: value,
+                }),
+              })
+            }
+          />
 
           <SpendUserTable
             page={page}
