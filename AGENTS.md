@@ -69,7 +69,10 @@ drills into that key's own series on the *same* spine as the page totals; there 
 drill-down because the proxy's daily aggregates carry no joint key. The one thing the page fetches
 twice is the *preceding* window (`lib/metrics/gatewayCompare.ts`): its bounds are derived from the
 trimmed spine, so they are not known until the current payload has answered, and it is skipped
-entirely when it falls outside the proxy's 90-day retention. **It is a draft against
+entirely when it falls outside the proxy's 90-day retention. `lib/metrics/gatewayAnomaly.ts` flags days
+that ran away from their trailing median and attributes the overrun across the selected dimension — on a
+*mean* baseline, deliberately, because means add up and the contributor rows must reconcile to the day's
+overrun exactly. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions.
 

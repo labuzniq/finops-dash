@@ -145,6 +145,17 @@ so the numbers are identical across restarts. Every breakdown is folded from the
 same atomic rows, so the dimension invariant above holds in local development
 too, and a UI that shows model spend ≠ provider spend is a bug in the UI.
 
+It also runs a **twice-monthly re-embedding batch** on the `data-platform-etl`
+key (the 9th and the 23rd, six times that key's normal traffic), because a
+gateway that never bursts cannot exercise the unusual-spend card, and a
+corporate one always bursts. Keyed off the calendar day rather than an index
+into the pulled window, so the same date bursts whatever range is requested.
+Only the *production* keys now touch every model every day — the sandbox key
+still jumps between them, which is what makes the per-model drill-down worth
+having, but at ~40k requests a day a production key dropping a model wholesale
+swung the daily total further than the batch job does, and generator noise that
+large is indistinguishable from the anomalies the page is meant to surface.
+
 ## Endpoints
 
 | Method | Path | Answer |
@@ -172,8 +183,9 @@ What it shows, and why each one is there:
 | Breakdown | One dimension at a time, ranked by spend, with each row's share **of the gateway-wide total** |
 | Drill-down | Selecting a breakdown row opens that key's own daily trend (spend / tokens / requests) and its unit economics: $/1M, $/request, cache-hit and success rate |
 | Period-over-period | Every KPI carries its change against the immediately preceding window of the same length; `Biggest movers` ranks the current dimension's keys by how many dollars they moved |
+| Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 
-Five decisions worth keeping:
+Six decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -212,6 +224,22 @@ Five decisions worth keeping:
   *points*, counts and dollars in percent, and a key with no prior spend reads
   `new this period` rather than an infinite ratio.
 
+- **Unusual days are detected on a median and attributed on a mean.** The two
+  baselines in `lib/metrics/gatewayAnomaly.ts` are different on purpose. A
+  *median* over the preceding fortnight is what the day is judged against,
+  because a mean is dragged upward by the very spike being looked for and one
+  bad Tuesday would then mask the next one; the baseline also never includes
+  the candidate day itself. A *mean* is what the overrun is attributed with,
+  because means add up — the sum of the per-key means is the mean of the total,
+  so the contributor rows reconcile to the day's overrun exactly, and the share
+  column is a reconciliation rather than a decoration. The card names which
+  baseline it is measuring against rather than letting the reader assume they
+  are the same number. Two gates must both pass (≥25% above baseline *and*
+  ≥3.5 robust deviations), and only overruns are flagged: a quiet Saturday is
+  already visible on the trend chart, and a card that fires every weekend is a
+  card nobody reads. Attribution follows the breakdown's dimension, so the two
+  cards never disagree about which slice is under discussion.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -225,6 +253,14 @@ period-over-period layer: the prior window is adjacent and equal-length, the
 deltas are arithmetic over the two payloads, and — the load-bearing one — each
 full-coverage dimension's signed movements add back up to the gateway-wide
 swing, while `mcp_server` can only move a subset of it. Run it the same way.
+
+`apps/api/scripts/verify-gateway-anomaly.ts` covers the unusual-spend layer: the
+mock's twice-monthly batch bursts are the only days flagged (no weekday burst
+missed, no ordinary day flagged, no weekend ever), a flat series produces
+nothing while an injected quadrupling produces exactly one hit, traffic starting
+from zero is new rather than anomalous, and — the load-bearing one — each
+full-coverage dimension's per-key overruns sum to the gateway's overrun exactly,
+with `batch` correctly named as the culprit the generator actually burst.
 
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is

@@ -140,6 +140,20 @@ const WEEKDAY_SHAPE = [0.18, 0.98, 1.06, 1.08, 1.04, 0.92, 0.16];
 /** Share of requests that fail (rate limits, content filters, backend 5xx). */
 const FAILURE_RATE = 0.021;
 
+/**
+ * The twice-monthly re-embedding batch on the data-platform key.
+ *
+ * A corporate gateway is not a smooth curve: a scheduled job that reprocesses a
+ * document corpus can multiply a day's spend on its own, which is exactly the
+ * event the `Unusual spend` card exists to surface. Keyed off the calendar day
+ * of the month rather than an index into the window, so the same date always
+ * bursts no matter which range is pulled — a re-sync must reproduce history,
+ * not redraw it.
+ */
+const BURST_DAYS_OF_MONTH = new Set([9, 23]);
+const BURST_TAG = 'batch';
+const BURST_MULTIPLIER = 6;
+
 /** Fixed Lehmer seed — identical output across restarts. */
 const SEED = 1_337_991;
 
@@ -205,16 +219,24 @@ export class MockGatewayClient implements GatewayClient {
       );
 
       const dayTotals: GatewayDailySnapshot = { date, ...ZERO_COUNTERS };
+      const bursting = BURST_DAYS_OF_MONTH.has(Number(date.slice(8, 10)));
 
       for (const key of KEYS) {
-        const keyRequests = Math.round(dayRequests * key.weight * (0.85 + random() * 0.3));
+        // The burst multiplies one key's traffic, not the whole gateway's, so
+        // the day is attributable to a culprit the way a real one is.
+        const burst = bursting && key.tag === BURST_TAG ? BURST_MULTIPLIER : 1;
+        const keyRequests = Math.round(dayRequests * key.weight * burst * (0.85 + random() * 0.3));
         if (keyRequests === 0) continue;
 
         for (const model of MODELS) {
-          // Not every key touches every model on every day — the sandbox key in
-          // particular jumps between models, which is what makes a per-model
-          // drill-down worth having.
-          if (random() > model.weight * 3.2) continue;
+          // The sandbox key jumps between models day to day, which is what
+          // makes a per-model drill-down worth having. The production keys do
+          // not: at ~40k requests a day every routed model sees traffic every
+          // day, and dropping one wholesale would swing the daily total by more
+          // than a runaway batch job does — which would make the whole
+          // unusual-spend card indistinguishable from generator noise.
+          const jumps = random() > model.weight * 3.2;
+          if (jumps && key.tag === 'experiment') continue;
 
           const modelRequests = Math.max(1, Math.round(keyRequests * model.weight));
           const failed = Math.round(modelRequests * FAILURE_RATE * (0.4 + random() * 1.6));

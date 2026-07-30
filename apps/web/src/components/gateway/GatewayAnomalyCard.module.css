@@ -1,0 +1,216 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 3px;
+  max-width: 720px;
+}
+
+/* Day, severity bar, then four numeric columns — the breakdown card's grid,
+   so the two read as one family. */
+.row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 96px 96px 120px 120px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 20px;
+  font-size: 12.5px;
+}
+
+.rowButton {
+  width: 100%;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding-left: 18px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowButton:hover {
+  background: var(--card2);
+}
+
+.rowSelected,
+.rowSelected:hover {
+  background: var(--card2);
+  border-left-color: var(--neg);
+}
+
+.headerStrip {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.date {
+  font-weight: 600;
+}
+
+.weekday {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* The bar is severity, not composition — it scales to the biggest overrun in
+   the list so a second, smaller runaway day still reads as one. */
+.track {
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--neg) var(--chart-fill), transparent);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 5px;
+  background: var(--neg);
+}
+
+.fillWarn {
+  background: color-mix(in oklab, var(--neg) 78%, var(--card));
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.excess {
+  color: var(--neg);
+  font-weight: 600;
+}
+
+.excessShare,
+.failed,
+.versus {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.versus {
+  display: inline;
+}
+
+.empty {
+  padding: 24px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* Attribution sits inside the flagged row, indented, so it reads as that day's
+   explanation rather than as a second table. */
+.panel {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  padding: 10px 20px 14px;
+}
+
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px 0 8px;
+}
+
+.panelTitle {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.panelNote,
+.panelEmpty {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.contributor {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 96px 160px 140px;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.key {
+  font: 500 12px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sublabel {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1100px) {
+  .row {
+    grid-template-columns: 150px minmax(0, 1fr) 90px 110px;
+  }
+
+  .row > :nth-child(4),
+  .row > :nth-child(6) {
+    display: none;
+  }
+
+  .contributor {
+    grid-template-columns: 150px minmax(0, 1fr) 90px;
+  }
+
+  .contributor > :nth-child(4),
+  .contributor > :nth-child(5) {
+    display: none;
+  }
+}

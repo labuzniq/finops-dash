@@ -12,6 +12,7 @@ import type { DateRange, GatewayDimension } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
+import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import {
   comparisonWindow,
@@ -32,6 +33,7 @@ import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { spendRangeBounds } from '../../hooks/useSpendData.js';
 import { Card } from '../Card.js';
 import { DateRangePicker } from '../DateRangePicker.js';
+import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
@@ -161,6 +163,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const [dimension, setDimension] = useState<GatewayDimension>('model');
   /** The drilled-into key. Held as a key, not a row, so it survives a refetch. */
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  /** The flagged day whose overrun is attributed, held as a date for the same reason. */
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
 
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
@@ -237,6 +241,25 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   // that is no longer ranked simply stops resolving, and nothing stale renders.
   const selectedRow =
     summary.breakdowns[activeDimension].find((row) => row.key === selectedKey) ?? null;
+
+  // Runaway days, and — for the opened one — which keys of the *current*
+  // dimension paid for it. Switching dimension re-attributes the same day
+  // rather than closing it: "who overran" is a different question per slice.
+  const anomalies = useMemo(() => detectSpendAnomalies(summary.daily), [summary.daily]);
+  const openAnomaly = anomalies.some((anomaly) => anomaly.date === selectedDay) ? selectedDay : null;
+
+  const attribution = useMemo(
+    () =>
+      openAnomaly === null
+        ? null
+        : attributeAnomaly(
+            usageQuery.data?.breakdowns ?? [],
+            activeDimension,
+            openAnomaly,
+            summary.daily,
+          ),
+    [usageQuery.data, activeDimension, openAnomaly, summary.daily],
+  );
 
   const selectedDaily = useMemo(
     () =>
@@ -455,6 +478,14 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           </div>
 
           <GatewayTrendCard title="Daily requests" sub="successes + failures" chart={charts.requests} />
+
+          <GatewayAnomalyCard
+            anomalies={anomalies}
+            dimension={activeDimension}
+            selectedDate={openAnomaly}
+            onSelect={(date) => setSelectedDay((current) => (current === date ? null : date))}
+            attribution={attribution}
+          />
 
           <GatewayBreakdownCard
             rows={summary.breakdowns[activeDimension]}
