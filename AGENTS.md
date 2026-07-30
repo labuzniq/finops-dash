@@ -78,7 +78,12 @@ pulling the month to date plus the 28 days before it so each remaining day can b
 weekday's trailing mean instead of a flat run rate. It does not extrapolate growth, so a ramping
 gateway reads low, and the card says so. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
-assumptions and open questions.
+assumptions and open questions. The live client's *wire* behaviour is covered:
+`apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP
+server serving the documented envelope (pagination, auth, retry classification, exponent-notation
+spend, absent optional routes, and the rule that `/team` and `/tag` never contribute totals). That
+proves the client handles the documented shape, not that the proxy sends it — it is also the harness
+for replaying a real captured response the day one exists.
 
 **Refresh is a job table, not a broker.** `POST /api/refresh` inserts a row, returns `202`, and syncs in
 the background; the client polls until `succeeded`/`failed`, then invalidates its queries. The

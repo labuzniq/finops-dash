@@ -106,6 +106,12 @@ breakdown. Both are optional — a `401/403/404/405/501` on either is logged and
 the dimension is skipped, because a proxy with no teams or tags configured
 simply has no such route.
 
+Requests retry on network errors, `429` and transient 5xx with a 0.5/1/2 s
+backoff. `501` is pointedly **not** in the transient set even though it is a
+5xx: it is a permanent statement about the route and it is also an "absent"
+status, so retrying it would burn the whole backoff and then fail the sync with
+*unreachable* instead of skipping the dimension it means to skip.
+
 ## Invariants
 
 - **Money is bigint nano-dollars** (1e-9 USD) in Postgres, dollars at the API
@@ -299,6 +305,28 @@ the script makes, alongside the structural ones (the projection never falls
 below month-to-date, a completed month projects exactly what it spent, an
 unsynced tail does not change the answer, an empty payload projects nothing at
 all, and February 2024 ends on the 29th).
+
+`apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
+script that exercises the **live** client rather than the mock. It stands up a
+throwaway HTTP server answering the envelope documented above and points
+`LiteLlmGatewayClient` at it, so the wire-level behaviour is checked against a
+server instead of against a reading of the docs — bearer auth and query
+parameters, two-page pagination merging into one day and one bucket, the three
+ways a proxy can leave `has_more` lying, `1.095e-05` reaching Postgres as
+`10950` nano and a sub-nanodollar rounding to zero, labels resolved from
+`key_alias`/`team_alias`/`user_email`, empty keys dropped, omitted counters and
+whole absent breakdown groups defaulting to zero rather than throwing, a
+malformed envelope failing loudly instead of syncing silently empty, `429` and
+`503` retried while `401/403/404/405/501` are answered once and skipped, and the
+load-bearing one — the `/team` endpoint's `metrics` **and** its own
+`models` breakdown staying out of the totals, so the same dollars re-sliced
+never double-count. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-litellm-contract.ts`.
+
+It cannot confirm that a real proxy *sends* these shapes — that is still an open
+question below. It is, though, the harness for answering it: drop a captured
+response from the real gateway into a handler and the assertions become a
+conformance check of the proxy rather than of the client.
 
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is
