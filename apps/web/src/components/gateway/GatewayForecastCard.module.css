@@ -1,0 +1,190 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 3px;
+}
+
+.kicker {
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.08em;
+}
+
+.headline {
+  text-align: right;
+}
+
+.headlineValue {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 20px 18px;
+}
+
+/* Spent to date against the projected whole — one bar, so the month reads as
+   how much of it has already happened. */
+.track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--chart-fill);
+  border: 1px solid var(--border2);
+  overflow: hidden;
+}
+
+.spent {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 6px;
+}
+
+.trackNote {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 12px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.swatchSpent,
+.swatchExpected {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.swatchSpent {
+  background: var(--accent);
+}
+
+.swatchExpected {
+  background: var(--chart-fill);
+  border: 1px solid var(--border);
+}
+
+.statRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border2);
+  border: 1px solid var(--border2);
+  border-radius: 14px; /* matches Card, so the strip lines up with the cards */
+  overflow: hidden;
+}
+
+.stat {
+  background: var(--card);
+  padding: 14px 16px;
+}
+
+.statValue {
+  font-size: 19px;
+  font-weight: 600;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statSub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* The weekday profile: seven columns, the ones still to come highlighted —
+   the evidence behind the projected remainder. */
+.profile {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  padding: 4px 0 0;
+}
+
+.weekday {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.bar {
+  width: 100%;
+  height: 56px;
+  display: flex;
+  align-items: flex-end;
+  background: var(--card2);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.barFill {
+  width: 100%;
+  background: var(--border);
+  border-radius: 8px 8px 0 0;
+  min-height: 2px;
+}
+
+.pending .barFill {
+  background: var(--acc);
+}
+
+.weekdayLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+}
+
+.pending .weekdayLabel {
+  color: var(--text);
+}
+
+.weekdayValue {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.footnote {
+  font-size: 11.5px;
+  color: var(--faint);
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .statRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

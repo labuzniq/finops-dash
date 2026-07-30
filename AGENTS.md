@@ -72,7 +72,11 @@ trimmed spine, so they are not known until the current payload has answered, and
 entirely when it falls outside the proxy's 90-day retention. `lib/metrics/gatewayAnomaly.ts` flags days
 that ran away from their trailing median and attributes the overrun across the selected dimension — on a
 *mean* baseline, deliberately, because means add up and the contributor rows must reconcile to the day's
-overrun exactly. **It is a draft against
+overrun exactly. `lib/metrics/gatewayForecast.ts` is the page's other extra fetch and the only
+forward-looking card: it projects the *calendar month* (never the picked range — budgets are monthly),
+pulling the month to date plus the 28 days before it so each remaining day can be priced at its own
+weekday's trailing mean instead of a flat run rate. It does not extrapolate growth, so a ramping
+gateway reads low, and the card says so. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions.
 

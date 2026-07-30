@@ -184,8 +184,9 @@ What it shows, and why each one is there:
 | Drill-down | Selecting a breakdown row opens that key's own daily trend (spend / tokens / requests) and its unit economics: $/1M, $/request, cache-hit and success rate |
 | Period-over-period | Every KPI carries its change against the immediately preceding window of the same length; `Biggest movers` ranks the current dimension's keys by how many dollars they moved |
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
+| Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 
-Six decisions worth keeping:
+Seven decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -240,6 +241,27 @@ Six decisions worth keeping:
   card nobody reads. Attribution follows the breakdown's dimension, so the two
   cards never disagree about which slice is under discussion.
 
+- **The month-end forecast prices each remaining day by its weekday, and
+  fetches its own window.** `lib/metrics/gatewayForecast.ts` projects the
+  *calendar month*, not the selected range — a projection is only meaningful
+  against the period a budget is set in, and nobody budgets in "last 7 days".
+  Its window is the month to date plus the 28 days before the month started, so
+  the weekday profile is the same size on the 2nd as on the 28th; at 58 days
+  worst case it is always inside retention, so it needs no guard. Each
+  remaining day is priced at that weekday's trailing mean rather than at a flat
+  daily rate, because gateway traffic is workload-shaped: in the mock's own
+  profile a Saturday runs at $78/day against a Tuesday's $483, so a flat rate
+  prices the last weekend of a month like a working week. The card shows the
+  flat answer alongside, and the weekday strip beneath it, so the correction is
+  evidence rather than assertion. Two things it deliberately does not do:
+  extrapolate growth (the trailing means already carry whatever trend is
+  there — fitting a curve on 90 days of daily aggregates would dress a guess up
+  as a model, and the consequence, that a ramping gateway reads low, is stated
+  on the card), and count today as spent (the sync ends at yesterday, so the
+  projection starts after the last *reported* day). A month with no reported day
+  yet — the 1st, or the 2nd before a sync — renders no card at all rather than
+  a projection built entirely out of last month.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -261,6 +283,22 @@ nothing while an injected quadrupling produces exactly one hit, traffic starting
 from zero is new rather than anomalous, and — the load-bearing one — each
 full-coverage dimension's per-key overruns sum to the gateway's overrun exactly,
 with `batch` correctly named as the culprit the generator actually burst.
+
+`apps/api/scripts/verify-gateway-forecast.ts` **backtests** the month-end
+forecast: a completed calendar month is pulled once, replayed day by day as if
+it were still running, and each day's projection scored against the total that
+actually happened. One pull, sliced — never two, because the mock's Lehmer
+stream is consumed from the window start, so the same date carries different
+numbers in a 30-day pull and a 59-day one and comparing across windows would
+measure the generator rather than the maths. Averaged over the whole month the
+weekday-aware and flat projections land within a fraction of a percent of each
+other (both ~7% low, which is the mock's compound growth neither extrapolates);
+in the **final week**, where the remaining days are two weekend days or three
+midweek ones, the weekday profile is measurably closer — that is the assertion
+the script makes, alongside the structural ones (the projection never falls
+below month-to-date, a completed month projects exactly what it spent, an
+unsynced tail does not change the answer, an empty payload projects nothing at
+all, and February 2024 ends on the 29th).
 
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is

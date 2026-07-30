@@ -3,6 +3,7 @@ import type { DateRange, GatewayUsage } from '@dash/shared';
 import { fetchGatewayStatus, fetchGatewayUsage } from '../api/client.js';
 import type { GatewayStatus } from '../api/client.js';
 import type { ComparisonWindow } from '../lib/metrics/gatewayCompare.js';
+import type { ForecastRange } from '../lib/metrics/gatewayForecast.js';
 import { spendRangeBounds } from './useSpendData.js';
 
 /**
@@ -37,6 +38,24 @@ export function useGatewayComparisonData(window: ComparisonWindow | null) {
     queryKey: ['gateway', window?.from ?? 'none', window?.to ?? 'none'],
     queryFn: () => fetchGatewayUsage(window?.from ?? '', window?.to ?? ''),
     enabled: window !== null,
+  });
+}
+
+/**
+ * The current calendar month plus the four weeks before it — the month-end
+ * forecast's own window, deliberately independent of the range picker: a
+ * projection is only meaningful against the period a budget is set in.
+ *
+ * Its bounds move once a day and once a month, so it caches for the day, and
+ * at 58 days at most it is always inside the proxy's 90-day retention. Gated on
+ * the gateway being configured at all, since nothing on the page would render
+ * the answer.
+ */
+export function useGatewayForecastData(range: ForecastRange, enabled: boolean) {
+  return useQuery<GatewayUsage>({
+    queryKey: ['gateway', range.from, range.to],
+    queryFn: () => fetchGatewayUsage(range.from, range.to),
+    enabled,
   });
 }
 

@@ -23,9 +23,11 @@ import {
   rateDelta,
 } from '../../lib/metrics/gatewayCompare.js';
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
+import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import {
   useGatewayComparisonData,
   useGatewayData,
+  useGatewayForecastData,
   useGatewayStatus,
 } from '../../hooks/useGatewayData.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
@@ -35,6 +37,7 @@ import { Card } from '../Card.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
+import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -233,6 +236,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
   const configured = statusQuery.data?.configured ?? false;
   const source = statusQuery.data?.source ?? 'off';
+
+  // The forecast answers a calendar-month question, so it fetches its own
+  // month-shaped window rather than reading the range picker's. Null until the
+  // month has a reported day — on the 1st there is nothing to project from.
+  const forecastRangeValue = useMemo(() => forecastRange(maxIso), [maxIso]);
+  const forecastQuery = useGatewayForecastData(forecastRangeValue, configured);
+  const forecast = useMemo(
+    () => deriveSpendForecast(forecastQuery.data?.daily ?? [], forecastRangeValue),
+    [forecastQuery.data, forecastRangeValue],
+  );
+
   const latestJob = latestJobQuery.data ?? null;
   const hasData = totals.requests > 0 || totals.spend > 0;
 
@@ -471,6 +485,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
                 : `${percent((totals.failedRequests / totals.requests) * 100)} of all calls`}
             </KpiCard>
           </div>
+
+          {forecast !== null && <GatewayForecastCard forecast={forecast} />}
 
           <div className={styles.chartRow}>
             <GatewayTrendCard title="Daily gateway spend" sub={rangeLabel(range)} chart={charts.spend} />
