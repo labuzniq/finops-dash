@@ -162,6 +162,18 @@ having, but at ~40k requests a day a production key dropping a model wholesale
 swung the daily total further than the batch job does, and generator noise that
 large is indistinguishable from the anomalies the page is meant to surface.
 
+Failures are not uniform either, and for the same reason: a gateway where every
+deployment fails at the same rate cannot exercise a reliability view, and no
+real one does. Two sources sit on top of the ~2% baseline. `azure/o4-mini` is a
+**capacity-constrained deployment** that rate-limits a steady ~7.6% of its
+traffic, every day — a structural problem, and the one the reliability card's
+key ranking is meant to name. `bedrock` runs a **two-day regional incident** on
+the 17th and 18th of each month at ~16%, keyed off the calendar day like the
+spend burst so a re-sync reproduces it. The incident is deliberately invisible
+to every spend-shaped card on the page: a rejected call bills no tokens, so
+those two days come in slightly *cheaper* than usual. That is the whole argument
+for the reliability card being separate from the unusual-spend one.
+
 ## Endpoints
 
 | Method | Path | Answer |
@@ -191,8 +203,9 @@ What it shows, and why each one is there:
 | Period-over-period | Every KPI carries its change against the immediately preceding window of the same length; `Biggest movers` ranks the current dimension's keys by how many dollars they moved |
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
+| Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 
-Seven decisions worth keeping:
+Eight decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -268,6 +281,27 @@ Seven decisions worth keeping:
   yet — the 1st, or the 2nd before a sync — renders no card at all rather than
   a projection built entirely out of last month.
 
+- **Reliability is read two ways at once, because one view cannot find both
+  kinds of failure.** `lib/metrics/gatewayReliability.ts` derives a per-day
+  failure *rate* strip and a per-key ranking, and the mock's two planted faults
+  show why both are needed: a permanently rate-limited deployment is invisible
+  in the day strip (it is 8% bad every day, so no day stands out) and tops the
+  key ranking; a two-day regional incident is invisible in the key ranking (two
+  bad days in sixty average away to nothing) and lights up two bars in the
+  strip. A card with only one of the two views would miss one of the two
+  faults. Keys rank by failures *above* the gateway-wide rate rather than by
+  count — ranking by count re-answers "who gets the most traffic", which the
+  breakdown card above already answers, and would crown a healthy busy model
+  every day. That excess is signed and sums to zero across a full-coverage
+  dimension, which makes the column a redistribution of the same failures
+  rather than an opinion, and is asserted as such. The `elevated` badge needs
+  **two** gates to pass, and they guard opposite regimes: a Wilson score
+  interval against the gateway-wide rate (thin evidence — a key that failed 3 of
+  4 requests has no case to answer) *and* a minimum ratio of 1.5× (significant
+  but trivial — across half a million requests a 3.39% rate is *certainly*
+  worse than a 3.31% one, and nobody can act on that). With only the interval,
+  the badge lands on roughly every key above the mean, which is half of them.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -305,6 +339,20 @@ the script makes, alongside the structural ones (the projection never falls
 below month-to-date, a completed month projects exactly what it spent, an
 unsynced tail does not change the answer, an empty payload projects nothing at
 all, and February 2024 ends on the 29th).
+
+`apps/api/scripts/verify-gateway-reliability.ts` covers the reliability layer.
+The reconciliation checks first: every full-coverage dimension's failure counts
+sum to the gateway's, its shares sum to 1, and its signed excess sums to zero,
+while `mcp_server` stays a strict subset. Then the two planted faults, each
+found by the view it belongs to — the rate-limited deployment tops the key
+ranking and carries the badge, the regional incident produces exactly the
+flagged days it ran on (and no others) plus that provider's worst day, and is
+explicitly **not** badged as a key. Then the gates in the regimes they exist
+for: 1 failure of 2 requests is real evidence and still immaterial, while every
+above-baseline key that goes unbadged is one the interval would have passed and
+the ratio rejected — so a passing run means the materiality gate is doing the
+work, not a lucky interval. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-reliability.ts`.
 
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a

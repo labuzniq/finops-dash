@@ -76,7 +76,13 @@ overrun exactly. `lib/metrics/gatewayForecast.ts` is the page's other extra fetc
 forward-looking card: it projects the *calendar month* (never the picked range — budgets are monthly),
 pulling the month to date plus the 28 days before it so each remaining day can be priced at its own
 weekday's trailing mean instead of a flat run rate. It does not extrapolate growth, so a ramping
-gateway reads low, and the card says so. **It is a draft against
+gateway reads low, and the card says so. `lib/metrics/gatewayReliability.ts` is the page's only
+non-money derivation: it reads the same payload for *failures*, per day and per key of the selected
+dimension, because the two find different faults — a permanently throttled deployment never makes one
+day stand out, and a two-day backend incident averages away across a key's whole range. Keys rank by
+failures above the gateway-wide rate (signed, and summing to zero across a full-coverage dimension),
+and the `elevated` badge needs both a Wilson interval and a 1.5× materiality ratio, because at gateway
+volumes statistical significance alone flags everything above the mean. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. The live client's *wire* behaviour is covered:
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP

@@ -42,12 +42,21 @@ interface MockModel {
   inputPerMillion: number;
   outputPerMillion: number;
   weight: number;
+  /**
+   * Multiplier on the baseline failure rate. Deployments are not equally
+   * healthy on a real gateway — a model on a thin PTU quota rejects a steady
+   * slice of its traffic with 429s while its neighbours never do, and that
+   * asymmetry is the whole reason a reliability breakdown exists. Absent means
+   * 1, i.e. this deployment behaves like the rest.
+   */
+  failureBias?: number;
 }
 
 const MODELS: readonly MockModel[] = [
   { id: 'azure/gpt-4o', provider: 'azure', inputPerMillion: 2.5, outputPerMillion: 10, weight: 0.24 },
   { id: 'azure/gpt-4o-mini', provider: 'azure', inputPerMillion: 0.15, outputPerMillion: 0.6, weight: 0.2 },
-  { id: 'azure/o4-mini', provider: 'azure', inputPerMillion: 1.1, outputPerMillion: 4.4, weight: 0.08 },
+  // Capacity-constrained reasoning deployment: small quota, steady rate limiting.
+  { id: 'azure/o4-mini', provider: 'azure', inputPerMillion: 1.1, outputPerMillion: 4.4, weight: 0.08, failureBias: 3.6 },
   { id: 'azure_ai/mistral-large', provider: 'azure_ai', inputPerMillion: 2, outputPerMillion: 6, weight: 0.09 },
   { id: 'azure_ai/phi-4', provider: 'azure_ai', inputPerMillion: 0.125, outputPerMillion: 0.5, weight: 0.06 },
   { id: 'bedrock/anthropic.claude-sonnet-4-v1:0', provider: 'bedrock', inputPerMillion: 3, outputPerMillion: 15, weight: 0.21 },
@@ -141,6 +150,20 @@ const WEEKDAY_SHAPE = [0.18, 0.98, 1.06, 1.08, 1.04, 0.92, 0.16];
 const FAILURE_RATE = 0.021;
 
 /**
+ * A backend incident: one provider's region degrades for two days a month.
+ *
+ * Keyed off the calendar day of the month for the same reason the spend burst
+ * is — a re-sync has to reproduce history rather than redraw it. Failures cost
+ * almost nothing (a rejected call bills no tokens), so this is deliberately
+ * invisible on every spend surface on the page and only shows up where
+ * reliability is being read, which is exactly the gap the `Reliability` card
+ * exists to close.
+ */
+const INCIDENT_DAYS_OF_MONTH = new Set([17, 18]);
+const INCIDENT_PROVIDER = 'bedrock';
+const INCIDENT_FAILURE_RATE = 0.16;
+
+/**
  * The twice-monthly re-embedding batch on the data-platform key.
  *
  * A corporate gateway is not a smooth curve: a scheduled job that reprocesses a
@@ -219,7 +242,9 @@ export class MockGatewayClient implements GatewayClient {
       );
 
       const dayTotals: GatewayDailySnapshot = { date, ...ZERO_COUNTERS };
-      const bursting = BURST_DAYS_OF_MONTH.has(Number(date.slice(8, 10)));
+      const dayOfMonth = Number(date.slice(8, 10));
+      const bursting = BURST_DAYS_OF_MONTH.has(dayOfMonth);
+      const incident = INCIDENT_DAYS_OF_MONTH.has(dayOfMonth);
 
       for (const key of KEYS) {
         // The burst multiplies one key's traffic, not the whole gateway's, so
@@ -239,7 +264,15 @@ export class MockGatewayClient implements GatewayClient {
           if (jumps && key.tag === 'experiment') continue;
 
           const modelRequests = Math.max(1, Math.round(keyRequests * model.weight));
-          const failed = Math.round(modelRequests * FAILURE_RATE * (0.4 + random() * 1.6));
+          // An incident overrides the deployment's own bias: while a region is
+          // degraded, everything routed to it fails at the region's rate.
+          const degraded = incident && model.provider === INCIDENT_PROVIDER;
+          const failureRate = degraded
+            ? INCIDENT_FAILURE_RATE
+            : FAILURE_RATE * (model.failureBias ?? 1);
+          // A degraded region fails consistently; ordinary noise swings wide.
+          const failureJitter = degraded ? 0.85 + random() * 0.3 : 0.4 + random() * 1.6;
+          const failed = Math.round(modelRequests * failureRate * failureJitter);
           const successful = Math.max(0, modelRequests - failed);
 
           // Batch and document workloads carry far longer prompts than chat.

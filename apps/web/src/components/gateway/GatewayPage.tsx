@@ -24,6 +24,7 @@ import {
 } from '../../lib/metrics/gatewayCompare.js';
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
+import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
   useGatewayComparisonData,
   useGatewayData,
@@ -40,6 +41,7 @@ import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
+import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
 import styles from './GatewayPage.module.css';
 
@@ -275,6 +277,14 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [usageQuery.data, activeDimension, openAnomaly, summary.daily],
   );
 
+  // Reliability follows the same dimension as the breakdown and the movers, for
+  // the same reason: three cards discussing the same slice must never disagree
+  // about which slice it is.
+  const reliability = useMemo(
+    () => deriveReliability(summary.daily, usageQuery.data?.breakdowns ?? [], activeDimension),
+    [summary.daily, usageQuery.data, activeDimension],
+  );
+
   const selectedDaily = useMemo(
     () =>
       selectedRow === null
@@ -502,6 +512,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             onSelect={(date) => setSelectedDay((current) => (current === date ? null : date))}
             attribution={attribution}
           />
+
+          <GatewayReliabilityCard summary={reliability} />
 
           <GatewayBreakdownCard
             rows={summary.breakdowns[activeDimension]}
