@@ -82,7 +82,13 @@ dimension, because the two find different faults — a permanently throttled dep
 day stand out, and a two-day backend incident averages away across a key's whole range. Keys rank by
 failures above the gateway-wide rate (signed, and summing to zero across a full-coverage dimension),
 and the `elevated` badge needs both a Wilson interval and a 1.5× materiality ratio, because at gateway
-volumes statistical significance alone flags everything above the mean. **It is a draft against
+volumes statistical significance alone flags everything above the mean. `lib/metrics/gatewayAgents.ts`
+is the one module that *splits* the totals rather than ranking within them, and it is only allowed to
+because `mcp_server` is a strict subset: `remainder = totals − attributed` is the single legal
+subtraction the overlapping dimensions permit, so the page can compare agent-shaped traffic against
+everything else on $/call and tokens/call and read adoption half-over-half. It is wired to the constant
+`mcp_server`, never to the dimension switcher, and it says "MCP-attributed" rather than "agents"
+because the proxy only tags calls that routed through a server — the number is a floor. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. The live client's *wire* behaviour is covered:
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP

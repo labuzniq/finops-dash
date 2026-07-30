@@ -12,6 +12,7 @@ import type { DateRange, GatewayDimension } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
+import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import {
@@ -36,6 +37,7 @@ import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { spendRangeBounds } from '../../hooks/useSpendData.js';
 import { Card } from '../Card.js';
 import { DateRangePicker } from '../DateRangePicker.js';
+import { GatewayAgentsCard } from './GatewayAgentsCard.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
@@ -285,6 +287,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.daily, usageQuery.data, activeDimension],
   );
 
+  // The one card that does not follow the dimension switcher: `mcp_server` is
+  // a subset of the same requests rather than a peer slice, so it is the only
+  // dimension the totals can legitimately be split *by*. Reading it through the
+  // switcher would put it back among the overlapping six.
+  const agents = useMemo(
+    () => deriveAgentTraffic(summary.daily, usageQuery.data?.breakdowns ?? []),
+    [summary.daily, usageQuery.data],
+  );
+
   const selectedDaily = useMemo(
     () =>
       selectedRow === null
@@ -514,6 +525,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           />
 
           <GatewayReliabilityCard summary={reliability} />
+
+          {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
 
           <GatewayBreakdownCard
             rows={summary.breakdowns[activeDimension]}

@@ -109,9 +109,19 @@ for (const dimension of GATEWAY_DIMENSIONS) {
   const signed = all.reduce((total, row) => total + row.spend.absolute, 0);
 
   if (dimension === 'mcp_server') {
+    // A subset is bounded in *level*, never in movement: MCP adoption climbing
+    // while the gateway holds flat means the subset's swing legitimately
+    // exceeds the gateway's, and an earlier version of this check asserted the
+    // opposite and only passed because the mock's MCP share was then fixed.
+    const current = all.reduce((total, row) => total + row.spend.current, 0);
+    const previous = all.reduce((total, row) => total + row.spend.previous, 0);
     check(
-      Math.abs(signed) <= Math.abs(comparison.spend.absolute) + 1e-6,
-      `${dimension}: subset moved more than the gateway did`,
+      current <= summary.totals.spend + 1e-6,
+      `${dimension}: subset spent more than the gateway in the current window`,
+    );
+    check(
+      previous <= priorTotals.spend + 1e-6,
+      `${dimension}: subset spent more than the gateway in the prior window`,
     );
   } else {
     check(

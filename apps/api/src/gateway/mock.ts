@@ -137,6 +137,44 @@ const KEYS: readonly MockKey[] = [
 /** MCP servers the agents call through the gateway — a small, flat dimension. */
 const MCP_SERVERS = ['github', 'jira', 'confluence', 'snowflake'] as const;
 
+/**
+ * Agent adoption: the share of an agent-shaped key's traffic that routes
+ * through an MCP server, climbing month over month.
+ *
+ * A corporate gateway in 2026 is not sitting at a stable agent share — tool-
+ * using workloads are the part that grows, and "how fast" is precisely what the
+ * agent-traffic card exists to answer. Keyed off the calendar month rather than
+ * an index into the window, for the same reason the batch burst and the
+ * regional incident are: a re-sync has to reproduce history rather than redraw
+ * it, and the same date must read the same in a 30-day pull and a 90-day one.
+ *
+ * Interpolated within the month so a 30-day range still shows movement, and
+ * clamped at both ends so a range far from the epoch stays plausible rather
+ * than passing 100% or going negative.
+ */
+const MCP_SHARE_EPOCH_YEAR = 2026;
+const MCP_SHARE_BASE = 0.1;
+const MCP_SHARE_PER_MONTH = 0.03;
+
+/**
+ * How much heavier an MCP-routed call is than the same key's ordinary calls.
+ *
+ * A tool-using turn ships the server's tool schemas, the tool results and the
+ * conversation so far, so it carries well over a plain turn's context — which
+ * is exactly the asymmetry the agent-traffic card exists to price. The share of
+ * *calls* and the share of *tokens* therefore differ by design here, and the
+ * key's non-MCP calls are correspondingly lighter than its average.
+ */
+const MCP_WEIGHT = 1.55;
+
+function mcpShare(date: string): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const months = (year - MCP_SHARE_EPOCH_YEAR) * 12 + (month - 1) + (day - 1) / 31;
+  return Math.min(0.55, Math.max(0.05, MCP_SHARE_BASE + MCP_SHARE_PER_MONTH * months));
+}
+
 /** Requests per day at the start of the window, before growth and weekday shape. */
 const BASE_REQUESTS_PER_DAY = 42_000;
 
@@ -318,14 +356,30 @@ export class MockGatewayClient implements GatewayClient {
 
           // MCP traffic is a subset of the same requests, attributed to the
           // server the agent called. Only agent-shaped workloads have any.
+          //
+          // Calls scale by the MCP share; tokens and the dollars they drive
+          // scale by that share *times* the weight, because a tool turn is a
+          // bigger turn. Both scalings must be applied to every counter of
+          // their kind: a row whose spend was scaled while its tokens were not
+          // would report agent calls at a tokens-per-call figure that is a pure
+          // artefact, and comparing that unit economics against the rest of the
+          // gateway is the whole point of the agent-traffic card.
           if (key.tag === 'coding-assistant' || key.tag === 'support') {
             const server = MCP_SERVERS[Math.floor(random() * MCP_SERVERS.length)] ?? MCP_SERVERS[0];
+            const share = mcpShare(date);
+            const weighted = Math.min(0.9, share * MCP_WEIGHT);
+            const calls = (value: number): number => Math.round(value * share);
+            const tokens = (value: number): number => Math.round(value * weighted);
             add(date, 'mcp_server', server, null, {
-              ...counters,
-              spendNano: counters.spendNano / 4n,
-              requests: Math.round(counters.requests / 4),
-              successfulRequests: Math.round(counters.successfulRequests / 4),
-              failedRequests: Math.round(counters.failedRequests / 4),
+              spendNano: BigInt(Math.round(Number(counters.spendNano) * weighted)),
+              requests: calls(counters.requests),
+              successfulRequests: calls(counters.successfulRequests),
+              failedRequests: calls(counters.failedRequests),
+              promptTokens: tokens(counters.promptTokens),
+              completionTokens: tokens(counters.completionTokens),
+              totalTokens: tokens(counters.totalTokens),
+              cacheReadTokens: tokens(counters.cacheReadTokens),
+              cacheCreationTokens: tokens(counters.cacheCreationTokens),
             });
           }
         }

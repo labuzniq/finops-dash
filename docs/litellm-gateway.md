@@ -174,6 +174,21 @@ to every spend-shaped card on the page: a rejected call bills no tokens, so
 those two days come in slightly *cheaper* than usual. That is the whole argument
 for the reliability card being separate from the unusual-spend one.
 
+MCP traffic is the third planted shape. It is a subset of the same requests on
+the two agent-shaped keys (`copilot-agents`, `customer-support-bot`), and two
+things about it are deliberate. Its share of those keys' traffic **climbs ~3
+points a month**, keyed off the calendar month rather than an index into the
+window (so a 30-day pull and a 90-day pull agree about a given day) and
+interpolated within the month, so a short range still shows movement — a gateway
+sitting at a fixed agent share cannot exercise an adoption trend, and no real one
+in 2026 is. And an MCP-routed call is **1.55× the weight** of the same key's
+ordinary calls: calls scale by the share, while tokens and the dollars they
+drive scale by the share times the weight, because a tool turn ships the
+server's schemas, the tool results and the conversation so far. That asymmetry
+is what the agent card's unit-economics contrast reads; scaling spend without
+scaling tokens (which is what the generator originally did) makes
+tokens-per-call a pure artefact of the scaling.
+
 ## Endpoints
 
 | Method | Path | Answer |
@@ -204,8 +219,9 @@ What it shows, and why each one is there:
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
+| Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 
-Eight decisions worth keeping:
+Nine decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -302,6 +318,32 @@ Eight decisions worth keeping:
   worse than a 3.31% one, and nobody can act on that). With only the interval,
   the badge lands on roughly every key above the mean, which is half of them.
 
+- **`mcp_server` is the one dimension the totals can be split *by*, and the
+  agent card is the only place that does it.** Every other card ranks *within* a
+  dimension, because the six full-coverage dimensions are re-slices of the same
+  dollar and subtracting one from the totals would be meaningless. `mcp_server`
+  is different in kind: it is a strict subset of the same requests, so
+  `remainder = totals − attributed` is a real quantity, and
+  `lib/metrics/gatewayAgents.ts` is built on exactly that one legal subtraction
+  (clamped at zero, with any day that violated the invariant *reported* rather
+  than swallowed — an over-attributing proxy is a fault to raise, not a negative
+  to hide). It is deliberately **not** wired to the dimension switcher: reading
+  it through the switcher would put it back among the peers it is not one of.
+  The wording is "MCP-attributed", never "agents", and the footnote says why —
+  LiteLLM tags a call only when it routed through an MCP server, so an agent
+  driving its own tool loop over `/chat/completions` lands in the remainder next
+  to the human chat turns. The number is a **floor** on agent traffic. What the
+  card is actually for is the two things the floor still answers: the *contrast*
+  (a tool turn ships schemas, tool results and the conversation so far, so it is
+  usually a heavier and dearer call — the card measures that ratio instead of
+  asserting it, because a gateway whose MCP traffic is short lookups runs the
+  other way) and the *direction* (share half-over-half, weighted by dollars
+  rather than averaged over daily shares, so a quiet weekend of batch agent work
+  cannot carry the trend). The server rows take their share from **attributed**
+  spend rather than gateway spend — the breakdown card already answers "how much
+  of the bill is this server", and "how much of the agent bill" is the different
+  question that ranks tool usage.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -314,7 +356,11 @@ web app's metrics modules, which do not belong in the API's build.
 period-over-period layer: the prior window is adjacent and equal-length, the
 deltas are arithmetic over the two payloads, and — the load-bearing one — each
 full-coverage dimension's signed movements add back up to the gateway-wide
-swing, while `mcp_server` can only move a subset of it. Run it the same way.
+swing, while `mcp_server` — being a subset — is bounded in *level* in each
+window rather than in movement. (It was bounded in movement until the mock grew
+an adoption ramp, at which point the assertion failed for the right reason: a
+subset that is growing while the gateway holds flat legitimately swings more
+than the gateway does.) Run it the same way.
 
 `apps/api/scripts/verify-gateway-anomaly.ts` covers the unusual-spend layer: the
 mock's twice-monthly batch bursts are the only days flagged (no weekday burst
@@ -353,6 +399,25 @@ above-baseline key that goes unbadged is one the interval would have passed and
 the ratio rejected — so a passing run means the materiality gate is doing the
 work, not a lucky interval. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-reliability.ts`.
+
+`apps/api/scripts/verify-gateway-agents.ts` covers the agent split. The
+load-bearing check is that it really is a partition: attributed + remainder
+reproduces the gateway totals on *every* counter, and no single day attributes
+more than the gateway saw, which is the only licence for subtracting a dimension
+from the totals at all. Then the server rows reconcile to the attributed total
+and their two share columns use the two denominators they claim to; then the
+unit economics, where the mock's planted asymmetry has to survive — MCP traffic
+carries a larger share of tokens than of calls, tokens-per-call lands in the
+range a tool turn plausibly occupies rather than the artefact that scaling spend
+without scaling tokens would manufacture, and dollars-per-token stays within 5%
+of the rest (an MCP tag changes what a call carries, not what a token costs).
+Then the adoption ramp, checked through a second, shorter pull, because a ramp
+keyed on the window rather than on the date would read differently in a 30-day
+range than in a 60-day one. Then the edges: no MCP rows stands the card down
+rather than claiming 0% agents, a 4-day spine reports no trend, an empty range
+reports nulls not zeros, and a deliberately over-attributed day clamps *and* is
+named. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-agents.ts`.
 
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a
