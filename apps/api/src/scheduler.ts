@@ -1,17 +1,23 @@
+import type { RefreshJob } from '@dash/shared';
 import { env } from './env.js';
 import { moduleLogger } from './log.js';
 import { startBillingSync } from './services/billing-sync.js';
+import { startJiraSync } from './services/jira-sync.js';
+import { startRefresh } from './services/refresh.js';
 
 /**
- * In-process daily trigger for the enterprise billing sync — no cron
- * dependency, no external scheduler. One timer aims at the next 07:00
- * Europe/Prague (CET/CEST resolved via Intl, so DST needs no special-casing),
- * fires the same `startBillingSync` the manual route uses, and re-aims.
+ * In-process daily trigger for every data pull — no cron dependency, no
+ * external scheduler. One timer aims at the next 07:00 Europe/Prague (CET/CEST
+ * resolved via Intl, so DST needs no special-casing), fires the same sync
+ * entry points the manual routes use (Copilot analytics refresh, JIRA identity
+ * sync, enterprise billing sync), and re-aims. The three jobs are distinct
+ * `refresh_jobs` kinds, single-flight per kind, and safe to run concurrently.
  *
  * 07:00 local is well past midnight UTC year-round, so "yesterday UTC" — the
- * sync's newest target day — is always complete when the timer fires. Missed
- * runs (process down at 07:00) are simply skipped; the next run's two-day
- * window re-pulls the gap's most recent day anyway.
+ * billing sync's newest target day — is always complete when the timer fires.
+ * Missed runs (process down at 07:00) are simply skipped; the billing sync's
+ * two-day window re-pulls the gap's most recent day anyway, and the other two
+ * pulls are full snapshots.
  */
 
 const TIME_ZONE = 'Europe/Prague';
@@ -80,16 +86,46 @@ export function nextRunAt(now: Date): Date {
   throw new Error(`could not resolve the next ${RUN_HOUR}:00 in ${TIME_ZONE}`);
 }
 
-/**
- * Arms the daily billing-sync timer. No-op (returns null) while
- * GITHUB_ENTERPRISE is unset. Returns a stop function for shutdown.
- */
-export function startBillingScheduler(): (() => void) | null {
-  if (!env.GITHUB_ENTERPRISE) {
-    log.info('billing scheduler off — GITHUB_ENTERPRISE is not set');
-    return null;
-  }
+interface ScheduledSync {
+  name: string;
+  /** Why the sync stays off this run, or null when it should fire. */
+  disabledReason: () => string | null;
+  start: () => Promise<RefreshJob>;
+}
 
+/**
+ * Every data pull the app knows, in one place. Availability mirrors each
+ * manual route's guard: the Copilot refresh always has a source (mock or
+ * github — env.ts refuses to boot otherwise), JIRA needs its credentials
+ * unless the mock source is active, billing needs GITHUB_ENTERPRISE.
+ */
+const SYNCS: ScheduledSync[] = [
+  {
+    name: 'copilot-refresh',
+    disabledReason: () => null,
+    start: startRefresh,
+  },
+  {
+    name: 'jira-sync',
+    disabledReason: () =>
+      env.JIRA_BASE_URL || env.COPILOT_SOURCE === 'mock'
+        ? null
+        : 'JIRA_BASE_URL and JIRA_TOKEN are not set',
+    start: startJiraSync,
+  },
+  {
+    name: 'billing-sync',
+    disabledReason: () => (env.GITHUB_ENTERPRISE ? null : 'GITHUB_ENTERPRISE is not set'),
+    start: startBillingSync,
+  },
+];
+
+/**
+ * Arms the daily sync timer for all configured data pulls. Unconfigured syncs
+ * are logged and skipped each run (config is fixed at boot, but the log keeps
+ * the reason visible daily). Returns a stop function for shutdown.
+ */
+export function startScheduler(): () => void {
   let timer: NodeJS.Timeout;
 
   const arm = (): void => {
@@ -98,25 +134,45 @@ export function startBillingScheduler(): (() => void) | null {
       void fire().finally(arm);
     }, runAt.getTime() - Date.now());
     log.info(
-      { dash: { runAt: runAt.toISOString(), timeZone: TIME_ZONE } },
-      'billing sync scheduled',
+      {
+        dash: {
+          runAt: runAt.toISOString(),
+          timeZone: TIME_ZONE,
+          syncs: SYNCS.filter((sync) => sync.disabledReason() === null).map((sync) => sync.name),
+        },
+      },
+      'daily syncs scheduled',
     );
   };
 
   const fire = async (): Promise<void> => {
-    try {
-      const job = await startBillingSync();
-      log.info(
-        { 'event.action': 'billing-sync-scheduled', dash: { jobId: job.id, status: job.status } },
-        'scheduled billing sync started',
-      );
-    } catch (error) {
-      // startJob never throws for job failures — this is config/db trouble.
-      // Log and keep the schedule armed; tomorrow retries.
-      log.error(
-        { 'event.action': 'billing-sync-scheduled', 'event.outcome': 'failure', err: error },
-        'scheduled billing sync failed to start',
-      );
+    for (const sync of SYNCS) {
+      const reason = sync.disabledReason();
+      if (reason !== null) {
+        log.info({ dash: { sync: sync.name, reason } }, 'scheduled sync skipped — not configured');
+        continue;
+      }
+      try {
+        const job = await sync.start();
+        log.info(
+          {
+            'event.action': `${sync.name}-scheduled`,
+            dash: { sync: sync.name, jobId: job.id, status: job.status },
+          },
+          'scheduled sync started',
+        );
+      } catch (error) {
+        // startJob never throws for job failures — this is config/db trouble.
+        // Log and keep the schedule armed; tomorrow retries.
+        log.error(
+          {
+            'event.action': `${sync.name}-scheduled`,
+            'event.outcome': 'failure',
+            err: error,
+          },
+          'scheduled sync failed to start',
+        );
+      }
     }
   };
 

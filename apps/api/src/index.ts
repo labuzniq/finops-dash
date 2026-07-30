@@ -3,7 +3,7 @@ import { closeDb } from './db/client.js';
 import { env } from './env.js';
 import { logger } from './log.js';
 import { runMigrations } from './db/migrate.js';
-import { startBillingScheduler } from './scheduler.js';
+import { startScheduler } from './scheduler.js';
 
 const log = logger.child({ 'log.logger': 'boot' });
 
@@ -19,13 +19,13 @@ async function main(): Promise<void> {
 
   await app.listen({ port: env.API_PORT, host: env.HOST });
 
-  const stopBillingScheduler = startBillingScheduler();
+  const stopScheduler = startScheduler();
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.on(signal, () => {
       void (async () => {
         app.log.info(`${signal} received — shutting down`);
-        stopBillingScheduler?.();
+        stopScheduler();
         await app.close();
         await closeDb();
         log.info('shutdown complete');
