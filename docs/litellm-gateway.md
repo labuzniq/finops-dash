@@ -171,8 +171,9 @@ What it shows, and why each one is there:
 | Trends | Daily spend, daily tokens, daily requests — the same hand-rolled 900×240 SVG as every other chart in the console |
 | Breakdown | One dimension at a time, ranked by spend, with each row's share **of the gateway-wide total** |
 | Drill-down | Selecting a breakdown row opens that key's own daily trend (spend / tokens / requests) and its unit economics: $/1M, $/request, cache-hit and success rate |
+| Period-over-period | Every KPI carries its change against the immediately preceding window of the same length; `Biggest movers` ranks the current dimension's keys by how many dollars they moved |
 
-Four decisions worth keeping:
+Five decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -198,6 +199,19 @@ Four decisions worth keeping:
   is ever wanted, it needs a new pull — `LiteLLM_SpendLogs`, or a
   `/spend/logs`-derived aggregate — not a new derivation.
 
+- **The comparison window is measured off the trimmed spine, not off the
+  requested range.** A "30d" range holds 29 reported days; comparing those
+  against a full 30 would book a day of missing traffic as a decline, every
+  day. The prior window is therefore exactly as long as what is on screen, ends
+  the day before it starts, and is fetched separately (`lib/metrics/
+  gatewayCompare.ts` + `useGatewayComparisonData`) because its bounds are not
+  known until the current payload has answered. If the prior window falls
+  outside the proxy's 90-day retention it is not requested at all and no
+  comparison renders — an empty payload there would mean "never synced", and
+  drawing it as −100% would be a lie. Rates are compared in percentage
+  *points*, counts and dollars in percent, and a key with no prior spend reads
+  `new this period` rather than an infinite ratio.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -205,6 +219,12 @@ slice. Run it with
 `DATABASE_URL=… node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-drilldown.ts`.
 It sits outside `apps/api/tsconfig.json`'s `include` on purpose: it imports the
 web app's metrics modules, which do not belong in the API's build.
+
+`apps/api/scripts/verify-gateway-compare.ts` does the same for the
+period-over-period layer: the prior window is adjacent and equal-length, the
+deltas are arithmetic over the two payloads, and — the load-bearing one — each
+full-coverage dimension's signed movements add back up to the gateway-wide
+swing, while `mcp_server` can only move a subset of it. Run it the same way.
 
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is

@@ -66,7 +66,10 @@ licence-shaped — the two never sum into one number. The `LLM gateway` page
 Copilot spend section, over the pure functions in `lib/metrics/gateway.ts` and `gatewayChart.ts`; the
 breakdown is a dimension *switcher* precisely because the dimensions overlap. Selecting a breakdown row
 drills into that key's own series on the *same* spine as the page totals; there is no cross-dimension
-drill-down because the proxy's daily aggregates carry no joint key. **It is a draft against
+drill-down because the proxy's daily aggregates carry no joint key. The one thing the page fetches
+twice is the *preceding* window (`lib/metrics/gatewayCompare.ts`): its bounds are derived from the
+trimmed spine, so they are not known until the current payload has answered, and it is skipped
+entirely when it falls outside the proxy's 90-day retention. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions.
 

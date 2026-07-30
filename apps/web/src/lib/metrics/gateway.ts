@@ -59,7 +59,7 @@ export const EMPTY_GATEWAY_SUMMARY: GatewaySummary = {
 };
 
 /** ISO date shifted by `days` in UTC — the spine walks calendar days, not 24h steps. */
-function shiftIso(iso: string, days: number): string {
+export function shiftIso(iso: string, days: number): string {
   const [year, month, day] = iso.split('-');
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day) + days))
     .toISOString()

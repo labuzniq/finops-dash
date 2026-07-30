@@ -13,7 +13,20 @@ import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
-import { useGatewayData, useGatewayStatus } from '../../hooks/useGatewayData.js';
+import {
+  comparisonWindow,
+  deriveGatewayComparison,
+  isWithinRetention,
+  optionalDelta,
+  rankMovers,
+  rateDelta,
+} from '../../lib/metrics/gatewayCompare.js';
+import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
+import {
+  useGatewayComparisonData,
+  useGatewayData,
+  useGatewayStatus,
+} from '../../hooks/useGatewayData.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
 import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { spendRangeBounds } from '../../hooks/useSpendData.js';
@@ -21,6 +34,7 @@ import { Card } from '../Card.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
+import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
 import styles from './GatewayPage.module.css';
 
@@ -41,13 +55,94 @@ import styles from './GatewayPage.module.css';
 const RETENTION_DAYS = 90;
 const MS_PER_DAY = 86_400_000;
 
-function KpiCard({ kicker, value, children }: { kicker: string; value: ReactNode; children: ReactNode }) {
+function KpiCard({
+  kicker,
+  value,
+  trend,
+  children,
+}: {
+  kicker: string;
+  value: ReactNode;
+  /** Period-over-period note, absent when there is nothing to compare against. */
+  trend?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <Card padded={false} className={styles.kpiCard}>
       <div className={styles.kicker}>{kicker}</div>
       <div className={styles.kpiValue}>{value}</div>
       <div className={styles.kpiSub}>{children}</div>
+      {trend}
     </Card>
+  );
+}
+
+/**
+ * Which direction of a metric is worth flagging.
+ *
+ * `cost` — up is money out, drawn in the negative hue. `quality` — up is
+ * better. `neutral` — volume, which is neither good nor bad on its own: more
+ * requests are the point of the gateway, so they get an arrow and no colour.
+ */
+type Tone = 'cost' | 'neutral' | 'quality';
+
+function toneClass(direction: number, tone: Tone): string | false | undefined {
+  if (direction === 0 || tone === 'neutral') return false;
+  const adverse = tone === 'cost' ? direction > 0 : direction < 0;
+  return adverse ? styles.trendNeg : styles.trendPos;
+}
+
+function arrowFor(direction: number): string {
+  return direction > 0 ? '▲' : direction < 0 ? '▼' : '·';
+}
+
+/** `▲ +12.4% · vs $1,204.11` — the change, then what it is a change from. */
+function TrendNote({
+  delta,
+  tone,
+  format,
+}: {
+  delta: MetricDelta | null;
+  tone: Tone;
+  format: (value: number) => string;
+}) {
+  if (delta === null) return null;
+
+  const direction = Math.sign(delta.absolute);
+  const change =
+    delta.change === null
+      ? delta.current > 0
+        ? 'new this period'
+        : 'no prior activity'
+      : `${delta.change >= 0 ? '+' : '−'}${Math.abs(delta.change * 100).toFixed(1)}%`;
+
+  return (
+    <div className={styles.trend}>
+      <span className={cx(styles.trendValue, toneClass(direction, tone))}>
+        {arrowFor(direction)} {change}
+      </span>
+      {delta.change !== null && <span className={styles.trendPrev}>vs {format(delta.previous)}</span>}
+    </div>
+  );
+}
+
+/**
+ * Rates move in percentage *points*, never in percent of a percent: a cache-hit
+ * rate going 20% → 24% is +4 points, and calling it +20% would be a different,
+ * wrong claim.
+ */
+function RateTrendNote({ points, tone }: { points: number | null; tone: Tone }) {
+  if (points === null) return null;
+
+  const direction = Math.sign(Number(points.toFixed(1)));
+  return (
+    <div className={styles.trend}>
+      <span className={cx(styles.trendValue, toneClass(direction, tone))}>
+        {arrowFor(direction)} {points >= 0 ? '+' : '−'}
+        {Math.abs(points).toFixed(1)} pts
+      </span>
+      <span className={styles.trendPrev}>vs prior period</span>
+    </div>
   );
 }
 
@@ -88,10 +183,6 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const rangeDays = rangeDayCount(range);
 
   const { totals } = summary;
-  const configured = statusQuery.data?.configured ?? false;
-  const source = statusQuery.data?.source ?? 'off';
-  const latestJob = latestJobQuery.data ?? null;
-  const hasData = totals.requests > 0 || totals.spend > 0;
 
   // The dimension the user picked may carry no rows in a shorter range; fall
   // back to whatever the proxy did answer rather than showing an empty card.
@@ -99,6 +190,47 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     summary.availableDimensions.includes(dimension) || summary.availableDimensions.length === 0
       ? dimension
       : (summary.availableDimensions[0] ?? dimension);
+
+  // The prior window is measured off the *trimmed* spine, so it is exactly as
+  // long as what is on screen — and it is only asked for when it is inside
+  // retention, where an empty answer would mean "nothing spent" rather than
+  // "never synced".
+  const priorWindow = useMemo(() => {
+    const window = comparisonWindow(summary.daily);
+    return window !== null && isWithinRetention(window, minIso) ? window : null;
+  }, [summary.daily, minIso]);
+
+  const priorQuery = useGatewayComparisonData(priorWindow);
+  const priorUsage = priorQuery.data;
+
+  const comparison = useMemo(
+    () =>
+      priorWindow === null || priorQuery.isPending
+        ? null
+        : deriveGatewayComparison(priorUsage, priorWindow, totals),
+    [priorUsage, priorWindow, priorQuery.isPending, totals],
+  );
+  const compared = comparison !== null && comparison.hasActivity ? comparison : null;
+
+  // Movers follow the breakdown's dimension: the two cards answer "where does
+  // the money go" and "where did it move" about the same slice, so they must
+  // never disagree about which slice that is.
+  const movers = useMemo(
+    () =>
+      compared === null
+        ? []
+        : rankMovers(
+            summary.breakdowns[activeDimension],
+            priorUsage?.breakdowns ?? [],
+            activeDimension,
+          ),
+    [compared, summary, activeDimension, priorUsage],
+  );
+
+  const configured = statusQuery.data?.configured ?? false;
+  const source = statusQuery.data?.source ?? 'off';
+  const latestJob = latestJobQuery.data ?? null;
+  const hasData = totals.requests > 0 || totals.spend > 0;
 
   // Resolving the selection against the *current* rows is what makes switching
   // dimension or shortening the range close the drill-down by itself: a key
@@ -201,14 +333,47 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
       {configured && !usageQuery.error && !usageQuery.isPending && hasData && (
         <>
+          {compared !== null && (
+            <div className={styles.compareNote}>
+              compared against the preceding {compared.window.days} days ({compared.window.from} …{' '}
+              {compared.window.to})
+            </div>
+          )}
+
           <div className={styles.kpiRow}>
-            <KpiCard kicker={`GATEWAY SPEND · ${rangeDays}d`} value={usd(totals.spend, 2)}>
+            <KpiCard
+              kicker={`GATEWAY SPEND · ${rangeDays}d`}
+              value={usd(totals.spend, 2)}
+              trend={
+                <TrendNote
+                  delta={compared?.spend ?? null}
+                  tone="cost"
+                  format={(value) => usd(value, 2)}
+                />
+              }
+            >
               per-token cost across every provider
             </KpiCard>
-            <KpiCard kicker="REQUESTS" value={compactCount(totals.requests)}>
+            <KpiCard
+              kicker="REQUESTS"
+              value={compactCount(totals.requests)}
+              trend={
+                <TrendNote delta={compared?.requests ?? null} tone="neutral" format={compactCount} />
+              }
+            >
               {optionalRate(successRate(totals))} succeeded
             </KpiCard>
-            <KpiCard kicker="TOKENS" value={compactCount(totals.totalTokens)}>
+            <KpiCard
+              kicker="TOKENS"
+              value={compactCount(totals.totalTokens)}
+              trend={
+                <TrendNote
+                  delta={compared?.totalTokens ?? null}
+                  tone="neutral"
+                  format={compactCount}
+                />
+              }
+            >
               {compactCount(totals.promptTokens)} in · {compactCount(totals.completionTokens)} out
             </KpiCard>
             <KpiCard
@@ -218,22 +383,66 @@ export function GatewayPage({ sync }: GatewayPageProps) {
                   ? EMPTY
                   : usd(costPerMillionTokens(totals) ?? 0, 2)
               }
+              trend={
+                <TrendNote
+                  delta={
+                    compared === null
+                      ? null
+                      : optionalDelta(
+                          costPerMillionTokens(totals),
+                          costPerMillionTokens(compared.totals),
+                        )
+                  }
+                  tone="cost"
+                  format={(value) => usd(value, 2)}
+                />
+              }
             >
               blended across models and providers
             </KpiCard>
           </div>
 
           <div className={styles.kpiRowSecondary}>
-            <KpiCard kicker="PROMPT CACHE HIT RATE" value={optionalRate(cacheHitRate(totals))}>
+            <KpiCard
+              kicker="PROMPT CACHE HIT RATE"
+              value={optionalRate(cacheHitRate(totals))}
+              trend={
+                <RateTrendNote
+                  points={
+                    compared === null
+                      ? null
+                      : rateDelta(cacheHitRate(totals), cacheHitRate(compared.totals))
+                  }
+                  tone="quality"
+                />
+              }
+            >
               {compactCount(totals.cacheReadTokens)} of {compactCount(totals.promptTokens + totals.cacheReadTokens)} input tokens served from cache
             </KpiCard>
             <KpiCard
               kicker="COST PER REQUEST"
               value={costPerRequest(totals) === null ? EMPTY : usd(costPerRequest(totals) ?? 0, 4)}
+              trend={
+                <TrendNote
+                  delta={
+                    compared === null
+                      ? null
+                      : optionalDelta(costPerRequest(totals), costPerRequest(compared.totals))
+                  }
+                  tone="cost"
+                  format={(value) => usd(value, 4)}
+                />
+              }
             >
               average across the range
             </KpiCard>
-            <KpiCard kicker="FAILED REQUESTS" value={count(totals.failedRequests)}>
+            <KpiCard
+              kicker="FAILED REQUESTS"
+              value={count(totals.failedRequests)}
+              trend={
+                <TrendNote delta={compared?.failedRequests ?? null} tone="cost" format={count} />
+              }
+            >
               {totals.requests === 0
                 ? EMPTY
                 : `${percent((totals.failedRequests / totals.requests) * 100)} of all calls`}
@@ -255,6 +464,10 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             selectedKey={selectedRow?.key ?? null}
             onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
           />
+
+          {compared !== null && movers.length > 0 && (
+            <GatewayMoversCard rows={movers} dimension={activeDimension} window={compared.window} />
+          )}
 
           {selectedRow !== null && (
             <GatewayKeyDetail
