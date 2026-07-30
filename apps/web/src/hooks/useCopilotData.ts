@@ -21,6 +21,7 @@ import {
   importBillingReport,
   importUserExport,
   startBillingSync,
+  startGatewaySync,
   startJiraSync,
   startRefresh,
 } from '../api/client.js';
@@ -190,6 +191,9 @@ const SYNC_SOURCES = {
   jira: { start: startJiraSync, invalidates: ['spend'] },
   // Writes `billing_daily` and `model_spend_daily`, both served by spend.
   billing: { start: startBillingSync, invalidates: ['spend'] },
+  // Writes `gateway_daily` and `gateway_breakdown_daily` — its own query key,
+  // shared with nothing else.
+  gateway: { start: startGatewaySync, invalidates: ['gateway'] },
 } satisfies Record<RefreshKind, SyncSource>;
 
 export interface UseSyncJob {

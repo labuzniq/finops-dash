@@ -260,6 +260,68 @@ export const jiraPeople = pgTable('jira_people', {
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-day gateway-wide totals from the LiteLLM proxy — one row per calendar
+ * day, replaced wholesale for every day a sync fetches.
+ *
+ * Money is bigint nano-dollars (1e-9 USD) like `billing_daily`: LiteLLM
+ * reports per-request spend down to ~1e-8 USD, so cents cannot hold it and
+ * float sums drift. Token counters are bigint too — a corporate gateway
+ * clears int32's 2.1B ceiling in a single busy day.
+ */
+export const gatewayDaily = pgTable('gateway_daily', {
+  date: date('date').primaryKey(),
+  /** USD × 1e9. */
+  spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+  requests: integer('requests').notNull(),
+  successfulRequests: integer('successful_requests').notNull(),
+  failedRequests: integer('failed_requests').notNull(),
+  promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+  completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+  totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+  cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+  cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Per-day, per-key gateway usage for one breakdown dimension — the same
+ * one-generic-table shape as `usage_breakdown_daily`, for the same reason: the
+ * axes (model, provider, api_key, mcp_server, user, team, tag) carry identical
+ * metrics and the UI treats them identically.
+ *
+ * `key` is the raw id the proxy reports (hashed key tokens and user ids can be
+ * long, hence 200); `label` is the alias it resolved, null when it did not.
+ * Dimensions overlap by construction — never sum across them.
+ */
+export const gatewayBreakdownDaily = pgTable(
+  'gateway_breakdown_daily',
+  {
+    date: date('date').notNull(),
+    /** See GATEWAY_DIMENSIONS in @dash/shared. */
+    dimension: varchar('dimension', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: integer('requests').notNull(),
+    successfulRequests: integer('successful_requests').notNull(),
+    failedRequests: integer('failed_requests').notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.dimension, table.key] }),
+    // The range read filters on date and then groups by dimension; the primary
+    // key already leads with date, so this only serves the dimension-first
+    // lookups the drill-down issues.
+    index('gateway_breakdown_dimension_idx').on(table.dimension, table.date),
+  ],
+);
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -393,6 +455,10 @@ export type UsageBreakdownRow = typeof usageBreakdownDaily.$inferSelect;
 export type UsageBreakdownInsert = typeof usageBreakdownDaily.$inferInsert;
 export type AdoptionPhaseRow = typeof adoptionPhaseDaily.$inferSelect;
 export type AdoptionPhaseInsert = typeof adoptionPhaseDaily.$inferInsert;
+export type GatewayDailyRow = typeof gatewayDaily.$inferSelect;
+export type GatewayDailyInsert = typeof gatewayDaily.$inferInsert;
+export type GatewayBreakdownRow = typeof gatewayBreakdownDaily.$inferSelect;
+export type GatewayBreakdownInsert = typeof gatewayBreakdownDaily.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
 export type ImportLogRow = typeof importLogs.$inferSelect;
 export type ImportLogInsert = typeof importLogs.$inferInsert;

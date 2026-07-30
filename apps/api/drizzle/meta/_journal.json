@@ -43,6 +43,13 @@
       "when": 1784975775364,
       "tag": "0005_omniscient_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785450141830,
+      "tag": "0006_silent_wallop",
+      "breakpoints": true
     }
   ]
 }

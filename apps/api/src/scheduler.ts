@@ -2,6 +2,7 @@ import type { RefreshJob } from '@dash/shared';
 import { env } from './env.js';
 import { moduleLogger } from './log.js';
 import { startBillingSync } from './services/billing-sync.js';
+import { startGatewaySync } from './services/gateway-sync.js';
 import { startJiraSync } from './services/jira-sync.js';
 import { startRefresh } from './services/refresh.js';
 
@@ -10,8 +11,9 @@ import { startRefresh } from './services/refresh.js';
  * external scheduler. One timer aims at the next 07:00 Europe/Prague (CET/CEST
  * resolved via Intl, so DST needs no special-casing), fires the same sync
  * entry points the manual routes use (Copilot analytics refresh, JIRA identity
- * sync, enterprise billing sync), and re-aims. The three jobs are distinct
- * `refresh_jobs` kinds, single-flight per kind, and safe to run concurrently.
+ * sync, enterprise billing sync, LLM-gateway sync), and re-aims. Each job is a
+ * distinct `refresh_jobs` kind, single-flight per kind, safe to run
+ * concurrently.
  *
  * 07:00 local is well past midnight UTC year-round, so "yesterday UTC" — the
  * billing sync's newest target day — is always complete when the timer fires.
@@ -97,7 +99,8 @@ interface ScheduledSync {
  * Every data pull the app knows, in one place. Availability mirrors each
  * manual route's guard: the Copilot refresh always has a source (mock or
  * github — env.ts refuses to boot otherwise), JIRA needs its credentials
- * unless the mock source is active, billing needs GITHUB_ENTERPRISE.
+ * unless the mock source is active, billing needs GITHUB_ENTERPRISE, and the
+ * LLM gateway needs GATEWAY_SOURCE to be anything but `off`.
  */
 const SYNCS: ScheduledSync[] = [
   {
@@ -117,6 +120,11 @@ const SYNCS: ScheduledSync[] = [
     name: 'billing-sync',
     disabledReason: () => (env.GITHUB_ENTERPRISE ? null : 'GITHUB_ENTERPRISE is not set'),
     start: startBillingSync,
+  },
+  {
+    name: 'gateway-sync',
+    disabledReason: () => (env.GATEWAY_SOURCE === 'off' ? 'GATEWAY_SOURCE is off' : null),
+    start: startGatewaySync,
   },
 ];
 

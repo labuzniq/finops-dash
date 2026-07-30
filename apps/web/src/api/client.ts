@@ -2,6 +2,8 @@ import type {
   BillingImportResult,
   CopilotSeat,
   DateRange,
+  GatewaySource,
+  GatewayUsage,
   ImportLogEntry,
   ModelUsage,
   RefreshJob,
@@ -188,4 +190,32 @@ export async function startJiraSync(): Promise<RefreshJob> {
 export async function startBillingSync(): Promise<RefreshJob> {
   const { job } = await request<{ job: RefreshJob }>('/refresh/billing', { method: 'POST' });
   return job;
+}
+
+/**
+ * Kick off an LLM-gateway sync (kind `gateway`) — polled through
+ * `fetchRefreshJob` like the others. A 503 (GATEWAY_SOURCE off) surfaces the
+ * server's message via the shared error unwrapping.
+ */
+export async function startGatewaySync(): Promise<RefreshJob> {
+  const { job } = await request<{ job: RefreshJob }>('/refresh/gateway', { method: 'POST' });
+  return job;
+}
+
+/**
+ * LiteLLM gateway usage for an inclusive ISO date range — daily totals plus
+ * every breakdown dimension. The body *is* the payload, like `/spend`.
+ */
+export function fetchGatewayUsage(from: string, to: string): Promise<GatewayUsage> {
+  return request<GatewayUsage>(`/gateway?from=${from}&to=${to}`);
+}
+
+/** Whether a gateway source is configured at all — gates the whole view. */
+export function fetchGatewayStatus(): Promise<GatewayStatus> {
+  return request<GatewayStatus>('/gateway/status');
+}
+
+export interface GatewayStatus {
+  source: GatewaySource;
+  configured: boolean;
 }

@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { REFRESH_KINDS } from '@dash/shared';
 import { BillingSyncUnavailableError, startBillingSync } from '../services/billing-sync.js';
+import { GatewaySyncUnavailableError, startGatewaySync } from '../services/gateway-sync.js';
 import { getLatestRefreshJob, getRefreshJob, startRefresh } from '../services/refresh.js';
 
 const jobParams = z.object({ id: z.string().uuid() });
@@ -26,6 +27,22 @@ export const refreshRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(202).send({ job });
     } catch (error) {
       if (error instanceof BillingSyncUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Kick off an LLM-gateway sync (kind `gateway`) — the scheduled 07:00 run
+   * uses the same entry point. 503 while GATEWAY_SOURCE is `off`.
+   */
+  app.post('/api/refresh/gateway', async (_request, reply) => {
+    try {
+      const job = await startGatewaySync();
+      return reply.code(202).send({ job });
+    } catch (error) {
+      if (error instanceof GatewaySyncUnavailableError) {
         return reply.code(503).send({ error: error.message });
       }
       throw error;
