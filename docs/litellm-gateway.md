@@ -153,6 +153,45 @@ too, and a UI that shows model spend ≠ provider spend is a bug in the UI.
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
 
+## The view
+
+`LLM gateway` in the sidebar (`apps/web/src/components/gateway/`). It follows
+the Copilot spend section's contract exactly: **one fetch per range, everything
+else derived client-side** by pure functions — `lib/metrics/gateway.ts` for the
+totals and the ranked breakdowns, `lib/metrics/gatewayChart.ts` for the SVG
+path maths. Changing dimension, or re-slicing the range within what is already
+loaded, never touches the network.
+
+What it shows, and why each one is there:
+
+| Element | Reads |
+| --- | --- |
+| KPI row 1 | Gateway spend · requests (with success rate) · tokens (in / out) · blended $/1M tokens |
+| KPI row 2 | Prompt-cache hit rate · cost per request · failed requests |
+| Trends | Daily spend, daily tokens, daily requests — the same hand-rolled 900×240 SVG as every other chart in the console |
+| Breakdown | One dimension at a time, ranked by spend, with each row's share **of the gateway-wide total** |
+
+Three decisions worth keeping:
+
+- **The breakdown is a switcher, not seven cards.** Seven cards side by side
+  invite reading the dimensions as parts of a whole and adding them up, which
+  the overlap invariant forbids. One at a time, with the share column always
+  measured against the gateway-wide daily total, keeps the arithmetic honest —
+  and makes `mcp_server` visibly sum to less than 100%, as it should.
+- **Rows rank by spend, not by request count.** This is a FinOps console: the
+  model that ran twice at $4 outranks the one that ran 4,000 times at a
+  thousandth of a cent.
+- **The unsynced tail is trimmed, not zero-filled.** The sync ends at yesterday
+  UTC and a preset range anchors on today, so the last day or two of the spine
+  are days the proxy was never asked about. Interior gaps stay zero-filled (a
+  quiet weekend is a real dip); the tail is dropped, or every chart would end
+  in a cliff to the floor every single day.
+
+The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
+renders the configuration hint instead of empty charts, and the Sync button is
+disabled. The `Data sources` page carries a matching LiteLLM row with the same
+gating.
+
 ## Open questions for the day we get access
 
 1. Does the admin key really answer gateway-wide, or does the proxy scope it?

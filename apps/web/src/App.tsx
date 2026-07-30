@@ -16,6 +16,7 @@ import { Sidebar } from './components/Sidebar.js';
 import type { AppView } from './components/Sidebar.js';
 import { ClaudeCodePage } from './components/claude/ClaudeCodePage.js';
 import { CopilotAnalyticsPage } from './components/copilot/CopilotAnalyticsPage.js';
+import { GatewayPage } from './components/gateway/GatewayPage.js';
 import { ImportsPage } from './components/imports/ImportsPage.js';
 import { DataSourcesPage } from './components/sources/DataSourcesPage.js';
 import { SpendSection } from './components/spend/SpendSection.js';
@@ -30,6 +31,7 @@ const EMPTY_SEATS = [] as const;
 /** Pages that bring their own header; the Copilot top bar is not theirs. */
 const STANDALONE_VIEWS: ReadonlySet<AppView> = new Set<AppView>([
   'claude-code',
+  'llm-gateway',
   'data-sources',
   'imports',
 ]);
@@ -50,6 +52,7 @@ export function App() {
   const copilot = useSyncJob('copilot');
   const billing = useSyncJob('billing');
   const jira = useSyncJob('jira');
+  const gateway = useSyncJob('gateway');
   const imports = useReportImports();
 
   // The reload button refetches every server query in place — same data
@@ -70,8 +73,9 @@ export function App() {
       {STANDALONE_VIEWS.has(view) && (
         <main className={styles.main}>
           {view === 'claude-code' && <ClaudeCodePage />}
+          {view === 'llm-gateway' && <GatewayPage sync={gateway} />}
           {view === 'data-sources' && (
-            <DataSourcesPage copilot={copilot} billing={billing} jira={jira} />
+            <DataSourcesPage copilot={copilot} billing={billing} jira={jira} gateway={gateway} />
           )}
           {view === 'imports' && <ImportsPage imports={imports} />}
         </main>

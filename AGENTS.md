@@ -61,8 +61,12 @@ migrates on boot and creates **no data** — a fresh database starts empty. The 
 chosen by `GATEWAY_SOURCE` (`off` | `mock` | `litellm`). It writes `gateway_daily` and
 `gateway_breakdown_daily`, is a fourth `refresh_jobs` kind (`gateway`), and reads back through
 `GET /api/gateway`. Gateway spend is per-token and workload-shaped; Copilot spend is per-seat and
-licence-shaped — the two never sum into one number. **It is a draft against LiteLLM's published API, not
-validated against a live proxy** — see `docs/litellm-gateway.md` for the assumptions and open questions.
+licence-shaped — the two never sum into one number. The `LLM gateway` page
+(`apps/web/src/components/gateway/`) renders it on the same one-fetch-then-derive contract as the
+Copilot spend section, over the pure functions in `lib/metrics/gateway.ts` and `gatewayChart.ts`; the
+breakdown is a dimension *switcher* precisely because the dimensions overlap. **It is a draft against
+LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
+assumptions and open questions.
 
 **Refresh is a job table, not a broker.** `POST /api/refresh` inserts a row, returns `202`, and syncs in
 the background; the client polls until `succeeded`/`failed`, then invalidates its queries. The
