@@ -153,6 +153,45 @@ export function rankBreakdown(
 }
 
 /**
+ * One key's own daily series, aligned to the gateway-wide spine.
+ *
+ * The spine is passed in rather than rebuilt so the drill-down chart's x-axis
+ * is the *same* axis as the page's totals charts — same first day, same last
+ * day, same trimmed unsynced tail. A key that only appeared for a fortnight
+ * then reads as the fortnight it was, not as a series stretched across the
+ * range.
+ *
+ * Days the key never appeared on are zero: the proxy omits what never
+ * happened, so "no row" here means "this model cost nothing that day", which
+ * is a fact. Rows are summed per day rather than taken singly — one row per
+ * date per key is what the sync writes, but summing costs nothing and cannot
+ * silently drop a duplicate.
+ */
+export function breakdownDailySeries(
+  points: readonly GatewayBreakdownPoint[],
+  dimension: GatewayDimension,
+  key: string,
+  spine: readonly GatewayDailyPoint[],
+): GatewayDailyPoint[] {
+  const byDate = new Map<string, GatewayBreakdownPoint[]>();
+
+  for (const point of points) {
+    if (point.dimension !== dimension || point.key !== key) continue;
+    const bucket = byDate.get(point.date);
+    if (bucket === undefined) {
+      byDate.set(point.date, [point]);
+    } else {
+      bucket.push(point);
+    }
+  }
+
+  return spine.map((day) => ({
+    date: day.date,
+    ...sumGatewayMetrics(byDate.get(day.date) ?? []),
+  }));
+}
+
+/**
  * Everything the gateway page renders, from one payload and the range it was
  * fetched for. The range bounds come from the caller rather than from the data
  * so an empty payload still draws a full, flat axis instead of nothing.

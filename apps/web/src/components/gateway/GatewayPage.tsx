@@ -11,17 +11,17 @@ import {
 import type { DateRange, GatewayDimension } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
-import { deriveGateway } from '../../lib/metrics/gateway.js';
-import { buildGatewayChartGeometry, GATEWAY_CHART_VIEWBOX } from '../../lib/metrics/gatewayChart.js';
-import type { GatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
+import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
+import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import { useGatewayData, useGatewayStatus } from '../../hooks/useGatewayData.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
 import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { spendRangeBounds } from '../../hooks/useSpendData.js';
 import { Card } from '../Card.js';
-import { ChartHoverLayer } from '../ChartHoverLayer.js';
 import { DateRangePicker } from '../DateRangePicker.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
+import { GatewayKeyDetail } from './GatewayKeyDetail.js';
+import { GatewayTrendCard } from './GatewayTrendCard.js';
 import styles from './GatewayPage.module.css';
 
 /**
@@ -51,45 +51,6 @@ function KpiCard({ kicker, value, children }: { kicker: string; value: ReactNode
   );
 }
 
-function TrendCard({
-  title,
-  sub,
-  chart,
-}: {
-  title: string;
-  sub: string;
-  chart: GatewayChartGeometry;
-}) {
-  return (
-    <Card>
-      <div className={styles.chartHeader}>
-        <div className={styles.chartTitle}>{title}</div>
-        <div className={styles.chartSub}>{sub}</div>
-      </div>
-      <div className={styles.plot}>
-        {chart.gridLines.map((line) => (
-          <div key={line.topPercent} className={styles.gridLine} style={{ top: line.topPercent }}>
-            <span className={styles.gridLabel}>{line.label}</span>
-          </div>
-        ))}
-        <svg className={styles.svg} viewBox={GATEWAY_CHART_VIEWBOX} preserveAspectRatio="none" aria-hidden>
-          <path className={styles.area} d={chart.areaPath} />
-          <path className={styles.line} d={chart.linePath} vectorEffect="non-scaling-stroke" />
-        </svg>
-        <ChartHoverLayer points={chart.hoverPoints} />
-        <div className={styles.xLabels}>
-          {chart.xLabels.map((label, index) => (
-            // Dates can repeat across a short range, so pair them with position.
-            <div key={`${label}-${index}`} className={styles.xLabel}>
-              {label}
-            </div>
-          ))}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 /** Percentages that are only meaningful when something happened. */
 function optionalRate(value: number | null): string {
   return value === null ? EMPTY : `${value.toFixed(1)}%`;
@@ -103,6 +64,8 @@ interface GatewayPageProps {
 export function GatewayPage({ sync }: GatewayPageProps) {
   const [range, setRange] = useState<DateRange>({ kind: 'preset', days: RANGE_DAYS[0] });
   const [dimension, setDimension] = useState<GatewayDimension>('model');
+  /** The drilled-into key. Held as a key, not a row, so it survives a refetch. */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
@@ -136,6 +99,25 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     summary.availableDimensions.includes(dimension) || summary.availableDimensions.length === 0
       ? dimension
       : (summary.availableDimensions[0] ?? dimension);
+
+  // Resolving the selection against the *current* rows is what makes switching
+  // dimension or shortening the range close the drill-down by itself: a key
+  // that is no longer ranked simply stops resolving, and nothing stale renders.
+  const selectedRow =
+    summary.breakdowns[activeDimension].find((row) => row.key === selectedKey) ?? null;
+
+  const selectedDaily = useMemo(
+    () =>
+      selectedRow === null
+        ? []
+        : breakdownDailySeries(
+            usageQuery.data?.breakdowns ?? [],
+            activeDimension,
+            selectedRow.key,
+            summary.daily,
+          ),
+    [usageQuery.data, activeDimension, selectedRow, summary.daily],
+  );
 
   return (
     <>
@@ -259,18 +241,30 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           </div>
 
           <div className={styles.chartRow}>
-            <TrendCard title="Daily gateway spend" sub={rangeLabel(range)} chart={charts.spend} />
-            <TrendCard title="Daily tokens" sub="input + output" chart={charts.tokens} />
+            <GatewayTrendCard title="Daily gateway spend" sub={rangeLabel(range)} chart={charts.spend} />
+            <GatewayTrendCard title="Daily tokens" sub="input + output" chart={charts.tokens} />
           </div>
 
-          <TrendCard title="Daily requests" sub="successes + failures" chart={charts.requests} />
+          <GatewayTrendCard title="Daily requests" sub="successes + failures" chart={charts.requests} />
 
           <GatewayBreakdownCard
             rows={summary.breakdowns[activeDimension]}
             dimension={activeDimension}
             available={summary.availableDimensions}
             onDimension={setDimension}
+            selectedKey={selectedRow?.key ?? null}
+            onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
           />
+
+          {selectedRow !== null && (
+            <GatewayKeyDetail
+              dimension={activeDimension}
+              row={selectedRow}
+              daily={selectedDaily}
+              rangeLabel={rangeLabel(range)}
+              onClose={() => setSelectedKey(null)}
+            />
+          )}
         </>
       )}
     </>

@@ -58,6 +58,30 @@
   font-size: 12.5px;
 }
 
+/* Rows are buttons that open the drill-down; strip the button chrome and keep
+   the grid. */
+.rowButton {
+  width: 100%;
+  border: 0;
+  border-left: 2px solid transparent;
+  padding-left: 18px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowButton:hover {
+  background: var(--card2);
+}
+
+.rowSelected,
+.rowSelected:hover {
+  background: var(--card2);
+  border-left-color: var(--row-color);
+}
+
 .headerStrip {
   background: var(--card2);
   border-top: 1px solid var(--border2);

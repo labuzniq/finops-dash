@@ -31,6 +31,10 @@ interface GatewayBreakdownCardProps {
   /** Only the dimensions the proxy actually answered for this range. */
   available: readonly GatewayDimension[];
   onDimension: (dimension: GatewayDimension) => void;
+  /** The key whose drill-down is open, or null. */
+  selectedKey: string | null;
+  /** Toggles the drill-down; the card owns no selection state of its own. */
+  onSelect: (key: string) => void;
 }
 
 export function GatewayBreakdownCard({
@@ -38,6 +42,8 @@ export function GatewayBreakdownCard({
   dimension,
   available,
   onDimension,
+  selectedKey,
+  onSelect,
 }: GatewayBreakdownCardProps) {
   const shown = rows.slice(0, MAX_ROWS);
   const max = shown.reduce((peak, row) => Math.max(peak, row.metrics.spend), 0);
@@ -48,7 +54,10 @@ export function GatewayBreakdownCard({
       <div className={styles.header}>
         <div>
           <div className={styles.title}>Spend by {GATEWAY_DIMENSION_LABELS[dimension].toLowerCase()}</div>
-          <div className={styles.sub}>share is of gateway spend — dimensions overlap, never sum across them</div>
+          <div className={styles.sub}>
+            select a row for its own trend · share is of gateway spend — dimensions overlap, never
+            sum across them
+          </div>
         </div>
 
         <div className={styles.segmented} role="group" aria-label="Breakdown dimension">
@@ -82,10 +91,15 @@ export function GatewayBreakdownCard({
         <div className={styles.empty}>The gateway reported no {GATEWAY_DIMENSION_LABELS[dimension].toLowerCase()} activity in this range.</div>
       ) : (
         shown.map((row, index) => (
-          <div
+          // A button, not a row with a handler: the drill-down is the row's
+          // primary action, and keyboard users get it for free.
+          <button
             key={row.key}
-            className={styles.row}
+            type="button"
+            className={cx(styles.row, styles.rowButton, row.key === selectedKey && styles.rowSelected)}
             style={{ ['--row-color' as string]: `var(--chart-${(index % CHART_HUES) + 1})` }}
+            aria-expanded={row.key === selectedKey}
+            onClick={() => onSelect(row.key)}
           >
             <div className={styles.name} title={row.key}>
               <span className={styles.key}>{row.key}</span>
@@ -111,7 +125,7 @@ export function GatewayBreakdownCard({
             <div className={cx(styles.right, styles.muted)}>
               {compactCount(row.metrics.requests)}
             </div>
-          </div>
+          </button>
         ))
       )}
 

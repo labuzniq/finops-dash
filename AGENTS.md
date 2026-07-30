@@ -64,7 +64,9 @@ chosen by `GATEWAY_SOURCE` (`off` | `mock` | `litellm`). It writes `gateway_dail
 licence-shaped — the two never sum into one number. The `LLM gateway` page
 (`apps/web/src/components/gateway/`) renders it on the same one-fetch-then-derive contract as the
 Copilot spend section, over the pure functions in `lib/metrics/gateway.ts` and `gatewayChart.ts`; the
-breakdown is a dimension *switcher* precisely because the dimensions overlap. **It is a draft against
+breakdown is a dimension *switcher* precisely because the dimensions overlap. Selecting a breakdown row
+drills into that key's own series on the *same* spine as the page totals; there is no cross-dimension
+drill-down because the proxy's daily aggregates carry no joint key. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions.
 

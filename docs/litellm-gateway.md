@@ -170,8 +170,9 @@ What it shows, and why each one is there:
 | KPI row 2 | Prompt-cache hit rate · cost per request · failed requests |
 | Trends | Daily spend, daily tokens, daily requests — the same hand-rolled 900×240 SVG as every other chart in the console |
 | Breakdown | One dimension at a time, ranked by spend, with each row's share **of the gateway-wide total** |
+| Drill-down | Selecting a breakdown row opens that key's own daily trend (spend / tokens / requests) and its unit economics: $/1M, $/request, cache-hit and success rate |
 
-Three decisions worth keeping:
+Four decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -186,6 +187,24 @@ Three decisions worth keeping:
   are days the proxy was never asked about. Interior gaps stay zero-filled (a
   quiet weekend is a real dip); the tail is dropped, or every chart would end
   in a cliff to the floor every single day.
+
+- **The drill-down is one dimension deep, and stays that way.** A selected key
+  gets its own series on the *same* spine as the totals above it — same first
+  day, same last day, same trimmed tail — so "is gpt-4o climbing?" is answered
+  by comparing two charts with one axis. What it deliberately does **not** show
+  is a cross-dimension mix (this team's models, this model's teams): LiteLLM's
+  daily aggregates report each dimension independently, with no joint key, so
+  that number does not exist in the payload and could only be invented. If it
+  is ever wanted, it needs a new pull — `LiteLLM_SpendLogs`, or a
+  `/spend/logs`-derived aggregate — not a new derivation.
+
+`apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
+freshly generated mock payload — series align to the spine, sum back to the
+ranked row they were opened from, and never exceed the gateway-wide day they
+slice. Run it with
+`DATABASE_URL=… node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-drilldown.ts`.
+It sits outside `apps/api/tsconfig.json`'s `include` on purpose: it imports the
+web app's metrics modules, which do not belong in the API's build.
 
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is

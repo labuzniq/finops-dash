@@ -145,80 +145,8 @@
   }
 }
 
-/* Chart — the same fixed-viewbox SVG treatment as the spend trend. */
-.chartHeader {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.chartTitle {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.chartSub {
-  font-size: 11.5px;
-  color: var(--faint);
-}
-
-.plot {
-  position: relative;
-  height: 250px;
-  margin-top: 14px;
-}
-
-.gridLine {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-top: 1px dashed var(--border2);
-}
-
-.gridLabel {
-  position: absolute;
-  right: 0;
-  top: -15px;
-  font-weight: 500;
-  font-size: 10.5px;
-  color: var(--faint);
-}
-
-.svg {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  width: 100%;
-  height: 240px;
-  display: block;
-  overflow: visible;
-}
-
-.area {
-  fill: color-mix(in oklab, var(--accent) 13%, transparent);
-}
-
-.line {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-}
-
-.xLabels {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -6px;
-  display: flex;
-  justify-content: space-between;
-}
-
-.xLabel {
-  font-weight: 500;
-  font-size: 10.5px;
-  color: var(--faint);
-}
+/* The chart itself lives in GatewayTrendCard — both this page and the
+   per-key drill-down draw with it. */
 
 .status {
   padding: 40px 0;
