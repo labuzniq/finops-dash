@@ -1,7 +1,8 @@
-import { and, asc, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, lte } from 'drizzle-orm';
 import {
   GATEWAY_BUDGET_SCOPES,
   GATEWAY_DIMENSIONS,
+  classifyGatewayException,
   summarizeGatewayCoverage,
   summarizeGatewayProbe,
 } from '@dash/shared';
@@ -16,6 +17,7 @@ import type {
   GatewayDeployment,
   GatewayDeploymentHistory,
   GatewayDeploymentObservation,
+  GatewayExceptions,
   GatewayHealth,
   GatewayModelPrice,
   GatewayModels,
@@ -531,6 +533,92 @@ export async function getGatewaySpendLogs(
     rows: page.rows.map(toSpendLog),
     available: page.available,
     truncated: page.truncated,
+    fetchedAt,
+  };
+}
+
+/**
+ * How many aliases one exception sweep will ask about.
+ *
+ * The proxy's query filters on `model_group` and offers no wildcard, so a sweep
+ * is one HTTP round trip per alias and the only bound available is how many are
+ * worth asking about. Twelve covers a corporate gateway's real traffic several
+ * times over; the aliases left out are reported rather than dropped, because a
+ * capped per-model read that says nothing about the cap reads as a clean
+ * gateway.
+ */
+export const EXCEPTION_MODEL_CAP = 12;
+
+/**
+ * Why the failed calls failed, per deployment, for a window — fetched live and
+ * stored nowhere.
+ *
+ * The second read here that talks to the proxy while the caller waits, and for
+ * a different reason than `/spend/logs`: this one is not too big to store, it
+ * is too *thin* to be worth a table. `LiteLLM_ErrorLogs` is switchable
+ * upstream, pruned on its own schedule, and carries no denominator — so the
+ * value is entirely in reading it beside a failure count somebody is already
+ * looking at, and a stored copy would only add a second thing to age.
+ *
+ * The aliases are chosen here rather than by the caller, and taken from the
+ * window's own usage: `gateway_breakdown_daily`'s `model` dimension ranked by
+ * spend. That keeps the sweep bounded, keeps it about traffic that exists, and
+ * makes the skipped list a fact about the gateway rather than about a
+ * hard-coded list.
+ */
+export async function getGatewayExceptions(from: string, to: string): Promise<GatewayExceptions> {
+  const fetchedAt = new Date().toISOString();
+  const client = createGatewayClient();
+  if (client === null) {
+    throw new GatewayLogsUnavailableError(
+      'GATEWAY_SOURCE is off — exception logs come from the proxy directly and there is nothing to read.',
+    );
+  }
+
+  const rows = await db
+    .select()
+    .from(gatewayBreakdownDaily)
+    .where(
+      and(
+        eq(gatewayBreakdownDaily.dimension, 'model'),
+        gte(gatewayBreakdownDaily.date, from),
+        lte(gatewayBreakdownDaily.date, to),
+      ),
+    );
+
+  const spendByModel = new Map<string, bigint>();
+  for (const row of rows) {
+    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
+  }
+  const ranked = [...spendByModel.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
+    .map(([key]) => key);
+
+  const models = ranked.slice(0, EXCEPTION_MODEL_CAP);
+  const skippedModels = ranked.slice(EXCEPTION_MODEL_CAP);
+
+  const page = await client.fetchModelExceptions(from, to, models);
+
+  return {
+    from,
+    to,
+    models,
+    skippedModels,
+    deployments: page.rows.map((row) => ({
+      deployment: row.deployment,
+      model: row.model,
+      exceptions: row.exceptions.map((entry) => ({
+        type: entry.type,
+        class: classifyGatewayException(entry.type),
+        count: entry.count,
+      })),
+      // Our sum, never the proxy's `total_exceptions` — that field counts
+      // distinct classes upstream, and is carried alongside so the disagreement
+      // stays visible rather than being silently corrected.
+      total: row.exceptions.reduce((sum, entry) => sum + entry.count, 0),
+      reportedTotal: row.reportedTotal,
+    })),
+    available: page.available,
     fetchedAt,
   };
 }

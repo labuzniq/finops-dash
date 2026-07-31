@@ -29,6 +29,8 @@ import {
   budgetPeriodStart,
   budgetRemaining,
   budgetUtilization,
+  classifyGatewayException,
+  deploymentExceptionKey,
   parseBudgetDuration,
   resolveDeploymentModel,
   resolveModelPrice,
@@ -2239,6 +2241,184 @@ check(
   summarizeGatewayProbe([]).usable === false,
   'no routes at all is not "usable" by default',
 );
+
+// ------------------------------------------- GET /model/metrics/exceptions
+//
+// The seventh envelope, and the only one whose *field names are data*: the
+// per-class counts are spread onto the same object as the row's own fields.
+// Two traps live in it — `total_exceptions` counts distinct classes rather
+// than exceptions, and the route filters on one `model_group` per call with no
+// wildcard, so a sweep is N requests and an alias nobody asked about is unread
+// rather than clean.
+
+const EXC_FROM = '2026-06-01';
+const EXC_TO = '2026-06-30';
+
+const exceptionsBody = (rows: Record<string, unknown>[]) => ({
+  data: rows,
+  exception_types: [
+    ...new Set(
+      rows.flatMap((row) =>
+        Object.keys(row).filter((field) => field !== 'model' && field !== 'total_exceptions'),
+      ),
+    ),
+  ],
+});
+
+// Alias-aware, because the route is: each call filters on one model_group and
+// answers only that alias's deployments.
+const exceptionRows: Record<string, Record<string, unknown>[]> = {
+  'azure/gpt-4o': [
+    {
+      model: 'azure/gpt-4o-https://nocturne-neu-ptu.openai.azure.com/',
+      // The proxy's own figure: two classes, four thousand exceptions.
+      total_exceptions: 2,
+      RateLimitError: 4_000,
+      Timeout: 20,
+      // A field a newer proxy might carry. Not a class, not a number, and
+      // never coerced into one.
+      api_base: 'https://nocturne-neu-ptu.openai.azure.com/',
+      // A class the proxy counted none of. Dropped rather than stored as a
+      // zero row nobody can act on.
+      AuthenticationError: 0,
+    },
+    // A row naming no deployment is unusable and is dropped.
+    { total_exceptions: 1, BadRequestError: 5 },
+  ],
+  'bedrock/claude': [{ model: 'bedrock/claude', total_exceptions: 1, ServiceUnavailableError: 12 }],
+};
+
+const sweep = await withProxy(
+  (captured) =>
+    captured.path === '/model/metrics/exceptions'
+      ? {
+          status: 200,
+          body: exceptionsBody(
+            exceptionRows[captured.query.get('_selected_model_group') ?? ''] ?? [],
+          ),
+        }
+      : { status: 404, body: { detail: 'unknown route' } },
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelExceptions(EXC_FROM, EXC_TO, [
+      'azure/gpt-4o',
+      'bedrock/claude',
+    ]);
+    return { page, calls: [...proxy.calls] };
+  },
+);
+
+check(
+  sweep.calls.length === 2 &&
+    sweep.calls.every((call) => call.path === '/model/metrics/exceptions'),
+  `one call per alias, no wildcard call (${sweep.calls.length})`,
+);
+check(
+  sweep.calls[0]?.query.get('_selected_model_group') === 'azure/gpt-4o' &&
+    sweep.calls[1]?.query.get('_selected_model_group') === 'bedrock/claude',
+  'each call names its own model group — the parameter the proxy filters on',
+);
+check(
+  sweep.calls[0]?.query.get('startTime') === `${EXC_FROM}T00:00:00` &&
+    sweep.calls[0]?.query.get('endTime') === `${EXC_TO}T23:59:59`,
+  'the window is sent as datetimes, ending at the end of the last day',
+);
+check(
+  sweep.calls.every((call) => call.authorization === 'Bearer sk-test-key'),
+  'the sweep is authenticated like every other route',
+);
+
+const ptu = sweep.page.rows.find((row) => row.deployment.includes('neu-ptu'));
+check(
+  sweep.page.available && sweep.page.rows.length === 2,
+  `a row with no model is dropped, the rest survive (${sweep.page.rows.length})`,
+);
+check(
+  ptu?.deployment === 'azure/gpt-4o-https://nocturne-neu-ptu.openai.azure.com/',
+  'combined_model_api_base is kept verbatim and never parsed back into parts',
+);
+check(
+  ptu !== undefined && deploymentExceptionKey('azure/gpt-4o', 'https://nocturne-neu-ptu.openai.azure.com/') === ptu.deployment,
+  'and the health row rebuilds the same key — the join runs that way round only',
+);
+check(
+  ptu?.model === 'azure/gpt-4o',
+  'the alias comes from the query, since the row carries only a deployment',
+);
+check(
+  ptu?.exceptions.length === 2 &&
+    ptu.exceptions.find((entry) => entry.type === 'RateLimitError')?.count === 4_000,
+  'every remaining numeric key is read as an exception class with its count',
+);
+check(
+  !(ptu?.exceptions.some((entry) => entry.type === 'api_base') ?? true),
+  'a non-numeric extra field is ignored, never coerced into a class',
+);
+check(
+  !(ptu?.exceptions.some((entry) => entry.type === 'AuthenticationError') ?? true),
+  'a class the proxy counted zero of is dropped rather than stored as a zero',
+);
+check(
+  ptu?.reportedTotal === 2 &&
+    ptu.exceptions.reduce((sum, entry) => sum + entry.count, 0) === 4_020,
+  'total_exceptions counts classes, not exceptions — the sum is ours and disagrees with it',
+);
+check(
+  classifyGatewayException('RateLimitError') === 'rate-limit' &&
+    classifyGatewayException('litellm.RateLimitError') === 'rate-limit' &&
+    classifyGatewayException('BudgetExceededError') === 'budget' &&
+    classifyGatewayException('ContextWindowExceededError') === 'request' &&
+    classifyGatewayException('SomethingNewError') === 'other',
+  'the class map reads LiteLLM\'s own exception names, prefixed or bare, and guesses at nothing',
+);
+
+const noAliases = await withProxy(
+  replier({ '/model/metrics/exceptions': { status: 200, body: exceptionsBody([]) } }),
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelExceptions(EXC_FROM, EXC_TO, []);
+    return { page, calls: proxy.calls.length };
+  },
+);
+check(
+  noAliases.calls === 0 && noAliases.page.available && noAliases.page.rows.length === 0,
+  'no aliases fetches nothing rather than everything — there is no "all models" call',
+);
+
+const emptyAnswer = await withProxy(
+  replier({ '/model/metrics/exceptions': { status: 200, body: exceptionsBody([]) } }),
+  async (proxy) => client(proxy.baseUrl).fetchModelExceptions(EXC_FROM, EXC_TO, ['azure/gpt-4o']),
+);
+check(
+  emptyAnswer.available && emptyAnswer.rows.length === 0,
+  'a route that answers with no rows is available and recorded nothing — not refused',
+);
+
+for (const status of [401, 403, 404, 405, 501]) {
+  const refused = await withProxy(
+    replier({ '/model/metrics/exceptions': { status, body: { detail: 'no' } } }),
+    async (proxy) => {
+      const page = await client(proxy.baseUrl).fetchModelExceptions(EXC_FROM, EXC_TO, [
+        'azure/gpt-4o',
+        'bedrock/claude',
+      ]);
+      return { page, calls: proxy.calls.length };
+    },
+  );
+  check(
+    !refused.page.available && refused.page.rows.length === 0 && refused.calls === 1,
+    `${status} stands the whole sweep down after one call, rather than asking per alias`,
+  );
+}
+
+let threw = false;
+try {
+  await withProxy(
+    replier({ '/model/metrics/exceptions': { status: 200, body: { data: 'not a list' } } }),
+    async (proxy) => client(proxy.baseUrl).fetchModelExceptions(EXC_FROM, EXC_TO, ['azure/gpt-4o']),
+  );
+} catch (error) {
+  threw = String(error).includes('unexpected shape');
+}
+check(threw, 'a malformed envelope throws rather than reporting a clean gateway');
 
 // -------------------------------------------------------------------- done
 

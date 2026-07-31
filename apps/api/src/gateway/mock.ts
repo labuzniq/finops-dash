@@ -17,7 +17,7 @@
  * traffic is a subset of the same requests, so it sums to less than the day.
  */
 
-import { budgetCounterResets, SPEND_LOG_ROW_CAP } from '@dash/shared';
+import { budgetCounterResets, deploymentExceptionKey, SPEND_LOG_ROW_CAP } from '@dash/shared';
 import type {
   GatewayBudgetScope,
   GatewayDimension,
@@ -33,6 +33,8 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayExceptionPage,
+  GatewayExceptionRecord,
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
@@ -550,6 +552,64 @@ const BURST_MULTIPLIER = 6;
  */
 const LIFETIME_WINDOW_DAYS = 90;
 
+/**
+ * What share of a failed call ends up in `LiteLLM_ErrorLogs`.
+ *
+ * Deliberately below 1: the error table and the daily aggregates are written by
+ * different code paths on a real proxy, error logging can be switched off on
+ * its own, and the two are pruned on unrelated schedules. Anything that treated
+ * an exception count as a failure count would be right here and wrong there, so
+ * the mock refuses to reconcile them.
+ */
+const ERROR_LOG_COVERAGE = 0.85;
+
+/**
+ * How many calls a day the refusing reserved-throughput pool rejects before the
+ * router fails them over. They cost nothing, bill nothing and never reach
+ * `failed_requests` — the alias answers on its second deployment — so this
+ * number exists in exactly one payload.
+ */
+const PTU_REFUSALS_PER_DAY = 340;
+
+/** The model whose traffic runs into a budget the proxy enforces. */
+const BUDGET_REFUSED_MODEL = 'bedrock/anthropic.claude-sonnet-4-v1:0';
+
+/**
+ * One `/model/metrics/exceptions` row, with the proxy's own quirk reproduced:
+ * `total_exceptions` counts *distinct classes* rather than exceptions, because
+ * upstream it is a `COUNT(*)` over a CTE that has already grouped by class. A
+ * mock that reported the honest total here would hide the one trap this route
+ * has.
+ */
+function exceptionRow(
+  deployment: string,
+  model: string,
+  counts: ReadonlyMap<string, number>,
+): GatewayExceptionRecord {
+  const exceptions = [...counts.entries()]
+    .filter(([, count]) => count > 0)
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count);
+  return { deployment, model, exceptions, reportedTotal: exceptions.length };
+}
+
+/**
+ * Where a deployment is addressed. Bedrock rows carry no `api_base` on purpose:
+ * those deployments are addressed by region rather than by URL, so a null there
+ * is a fact about Bedrock rather than a proxy that stripped its details.
+ *
+ * Module-level because two routes have to agree on it exactly: `/health` keys a
+ * deployment by `(model, api_base)` and `/model/metrics/exceptions` keys the
+ * same deployment by the two concatenated, so a base invented twice would make
+ * the join between them silently miss.
+ */
+function deploymentApiBase(provider: string, region: string): string | null {
+  if (provider === 'bedrock') return null;
+  return provider === 'azure'
+    ? `https://nocturne-${region}.openai.azure.com/`
+    : `https://nocturne-${region}.services.ai.azure.com/`;
+}
+
 /** Fixed Lehmer seed — identical output across restarts. */
 const SEED = 1_337_991;
 
@@ -931,12 +991,7 @@ export class MockGatewayClient implements GatewayClient {
    * not a proxy that stripped its details.
    */
   async fetchHealth(): Promise<GatewayHealthSnapshot[]> {
-    const baseOf = (provider: string, region: string): string | null =>
-      provider === 'bedrock'
-        ? null
-        : provider === 'azure'
-          ? `https://nocturne-${region}.openai.azure.com/`
-          : `https://nocturne-${region}.services.ai.azure.com/`;
+    const baseOf = deploymentApiBase;
 
     const deployments: GatewayHealthSnapshot[] = MODELS.map((model) => ({
       id: `dep-${model.id.replace(/[^a-z0-9]+/gi, '-')}-01`,
@@ -1130,6 +1185,135 @@ export class MockGatewayClient implements GatewayClient {
     // the honest reading — "we filled the cap" would say nothing on a window
     // whose cap was never reached and yet whose days were still sampled.
     return { rows, available: true, truncated: rows.length > 0 };
+  }
+
+  /**
+   * Exception counts per deployment — what `GET /model/metrics/exceptions`
+   * answers, and the one thing no other route here can say.
+   *
+   * Generated from the same faults the rest of this generator already plants,
+   * read one level lower and with a reason attached:
+   *
+   *  - **The refusing PTU pool** behind `azure/gpt-4o` produces rate limits and
+   *    nothing else. The router fails every one of them over to the
+   *    pay-as-you-go deployment beside it, so the alias bills normally and its
+   *    `failed_requests` never move — the fault is invisible on every
+   *    spend- and failure-shaped card, and this is the only payload that names
+   *    it. That is the same claim the health snapshot makes, from a second
+   *    source.
+   *  - **The throttled `azure/o4-mini`** is mostly rate limits too, which is
+   *    what the reliability card's steady 7.6% failure rate actually *is*. The
+   *    card can say the deployment is bad; only this can say it is a quota.
+   *  - **The Bedrock incident days** (the 17th and 18th) come back as backend
+   *    faults — `ServiceUnavailableError` and `APIConnectionError` — rather
+   *    than as a bigger version of the ordinary mix.
+   *  - **`azure_ai/phi-4` carries a steady trickle of `AuthenticationError`**:
+   *    a rotated credential on the on-prem-style deployment. It costs almost no
+   *    requests, bills nothing, and is invisible everywhere else on the page.
+   *  - **The dearest model carries `BudgetExceededError`**, which is the one
+   *    class the gateway itself caused: a key that hit the cap the budget card
+   *    is already reporting.
+   *
+   * The counts are deliberately *not* reconciled to the ledger's
+   * `failed_requests`. `LiteLLM_ErrorLogs` and `LiteLLM_DailyUserSpend` are
+   * written by different code paths upstream, error logging is separately
+   * switchable, and the two tables are pruned on their own schedules — a
+   * generator whose two answers agreed to the unit would teach a derivation to
+   * assume something a real proxy does not guarantee. `ERROR_LOG_COVERAGE` is
+   * that gap, made explicit.
+   *
+   * Deterministic arithmetic rather than a random draw: this route answers a
+   * window rather than a day, and asking twice for the same window has to give
+   * the same answer for the same reason re-reading a log table does.
+   */
+  async fetchModelExceptions(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayExceptionPage> {
+    const dates = eachDay(from, to);
+    if (models.length === 0 || dates.length === 0) return { rows: [], available: true };
+
+    const incidentDays = dates.filter((date) =>
+      INCIDENT_DAYS_OF_MONTH.has(Number(date.slice(8, 10))),
+    ).length;
+
+    const rows: GatewayExceptionRecord[] = [];
+
+    for (const alias of models) {
+      const model = MODELS.find((candidate) => candidate.id === alias);
+      // An alias this proxy has never routed records no errors — which is not
+      // the same as recording zero, and is why the caller reports which
+      // aliases it asked about.
+      if (model === undefined) continue;
+
+      const requests = BASE_REQUESTS_PER_DAY * model.weight * dates.length;
+      const ordinary = requests * FAILURE_RATE * (model.failureBias ?? 1) * ERROR_LOG_COVERAGE;
+      const incident =
+        model.provider === INCIDENT_PROVIDER
+          ? BASE_REQUESTS_PER_DAY *
+            model.weight *
+            incidentDays *
+            (INCIDENT_FAILURE_RATE - FAILURE_RATE) *
+            ERROR_LOG_COVERAGE
+          : 0;
+
+      const mix: Record<string, number> =
+        model.failureBias === undefined
+          ? { RateLimitError: 0.16, Timeout: 0.2, APIConnectionError: 0.18, BadRequestError: 0.24, ContextWindowExceededError: 0.16, ContentPolicyViolationError: 0.06 }
+          : // A capacity-constrained deployment's failures are overwhelmingly
+            // one class, which is the whole finding.
+            { RateLimitError: 0.86, Timeout: 0.09, BadRequestError: 0.05 };
+
+      const counts = new Map<string, number>();
+      const add = (type: string, count: number): void => {
+        const rounded = Math.round(count);
+        if (rounded <= 0) return;
+        counts.set(type, (counts.get(type) ?? 0) + rounded);
+      };
+
+      for (const [type, share] of Object.entries(mix)) add(type, ordinary * share);
+      // A region that fell over answers with backend faults, not with more of
+      // everything.
+      add('ServiceUnavailableError', incident * 0.7);
+      add('APIConnectionError', incident * 0.3);
+      if (model.id === UNPRICED_MODEL) add('AuthenticationError', dates.length * 9);
+      if (model.id === BUDGET_REFUSED_MODEL) add('BudgetExceededError', dates.length * 4);
+
+      rows.push(exceptionRow(deploymentExceptionKey(model.id, deploymentApiBase(model.provider, 'weu')), alias, counts));
+
+      // The alias with two deployments behind it: the reserved pool is
+      // refusing, the router fails over, and the ledger shows nothing at all.
+      if (model.id === MULTI_DEPLOYMENT_MODEL) {
+        const ptu = new Map<string, number>();
+        ptu.set('RateLimitError', Math.round(dates.length * PTU_REFUSALS_PER_DAY));
+        ptu.set('Timeout', Math.round(dates.length * PTU_REFUSALS_PER_DAY * 0.04));
+        rows.push(
+          exceptionRow(
+            deploymentExceptionKey(model.id, deploymentApiBase('azure', 'neu-ptu')),
+            alias,
+            ptu,
+          ),
+        );
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          deployments: rows.length,
+          exceptions: rows.reduce(
+            (sum, row) => sum + row.exceptions.reduce((count, entry) => count + entry.count, 0),
+            0,
+          ),
+        },
+      },
+      'mock gateway model exceptions generated',
+    );
+    return { rows, available: true };
   }
 
   /**

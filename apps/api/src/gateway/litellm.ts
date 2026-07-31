@@ -51,6 +51,8 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayExceptionPage,
+  GatewayExceptionRecord,
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
@@ -90,6 +92,14 @@ const PROBE_TIMEOUT_MS = 10_000;
  * a week of a corporate gateway is a real query rather than a lookup.
  */
 const SPEND_LOG_TIMEOUT_MS = 60_000;
+
+/**
+ * `/model/metrics/exceptions` is one grouped scan of `LiteLLM_ErrorLogs` per
+ * alias, over a window of weeks. Errors are a small fraction of traffic, so the
+ * table is small — but the sweep is several sequential calls, and a slow one
+ * should give up rather than hold the whole sweep open.
+ */
+const EXCEPTION_TIMEOUT_MS = 30_000;
 
 /** One probe request's outcome. `body` exists only on a 2xx that decoded. */
 interface ProbeAttempt {
@@ -545,6 +555,38 @@ const spendLogsSchema = z.union([
 
 type SpendLogRow = z.infer<typeof spendLogRowSchema>;
 
+/**
+ * `GET /model/metrics/exceptions?_selected_model_group&startTime&endTime` — a
+ * seventh envelope, and the only one whose *field names are data*.
+ *
+ * The proxy answers
+ *   `{"data": [{"model": "<combined_model_api_base>", "total_exceptions": 2,
+ *               "RateLimitError": 4013, "Timeout": 7}],
+ *     "exception_types": ["RateLimitError", "Timeout"]}`
+ * — the per-class counts are spread onto the same object as the row's own
+ * fields rather than nested under one. So the parse cannot enumerate keys: it
+ * takes `model`, takes `total_exceptions`, and reads *every remaining numeric
+ * key* as an exception class. A non-numeric extra is ignored rather than
+ * coerced, because the only thing that could produce one is a proxy adding a
+ * field this draft has not seen.
+ *
+ * Two things about the payload are worth knowing before trusting it:
+ *
+ *   - **`total_exceptions` is not a total.** The route's SQL takes `COUNT(*)`
+ *     over a CTE already grouped by `(deployment, exception_type)`, so it
+ *     counts distinct classes. Four thousand rate limits and seven timeouts
+ *     report `total_exceptions: 2`. The client sums the class counts itself and
+ *     keeps the proxy's figure only as evidence.
+ *   - **`model` is a deployment, not an alias.** It is
+ *     `CONCAT(litellm_model_name, '-', api_base)`, or the model string alone
+ *     when there is no api_base. The alias is the query parameter, which is why
+ *     the caller has to supply it back.
+ */
+const modelExceptionsSchema = z.object({
+  data: z.array(z.record(z.unknown())).default([]),
+  exception_types: z.array(z.string()).default([]),
+});
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -958,6 +1000,47 @@ function toSpendLogRecord(row: SpendLogRow): GatewaySpendLogRecord | null {
     totalTokens: Math.max(0, Math.round(row.total_tokens ?? 0)),
     cacheHit: toCacheHit(row.cache_hit),
     status: text(row.status),
+  };
+}
+
+/**
+ * One `/model/metrics/exceptions` row → a deployment's exception counts, or
+ * null when the row names no deployment.
+ *
+ * The parse is key-driven because the payload is: `model` and
+ * `total_exceptions` are the row's own fields and *everything else numeric* is
+ * an exception class with its count. Three rules fall out of that:
+ *
+ *   - a zero or negative count is dropped rather than stored, since the proxy
+ *     only emits a class it counted at least one of and a `0` is noise;
+ *   - a non-numeric extra key is ignored, never coerced — the only thing that
+ *     produces one is a proxy carrying a field this draft has not seen; and
+ *   - `total_exceptions` is read and kept but never used as the total, because
+ *     upstream it counts distinct classes rather than exceptions.
+ */
+function toExceptionRecord(
+  row: Record<string, unknown>,
+  model: string,
+): GatewayExceptionRecord | null {
+  const deployment = typeof row['model'] === 'string' ? row['model'].trim() : '';
+  if (deployment === '') return null;
+
+  const exceptions: { type: string; count: number }[] = [];
+  for (const [field, value] of Object.entries(row)) {
+    if (field === 'model' || field === 'total_exceptions') continue;
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    const count = Math.round(value);
+    if (count <= 0) continue;
+    exceptions.push({ type: field, count });
+  }
+
+  const reported = row['total_exceptions'];
+  return {
+    deployment: deployment.slice(0, 400),
+    model,
+    exceptions,
+    reportedTotal:
+      typeof reported === 'number' && Number.isFinite(reported) ? Math.round(reported) : 0,
   };
 }
 
@@ -1560,6 +1643,91 @@ export class LiteLlmGatewayClient implements GatewayClient {
       'litellm spend logs fetched',
     );
     return { rows, available: true, truncated: entries.length > cap };
+  }
+
+  /**
+   * `GET /model/metrics/exceptions` — why the failed calls failed, per
+   * deployment, for one window.
+   *
+   * The second live read in this client, and the one that fills the hole every
+   * other reliability source has: `SpendMetrics` carries `failed_requests` and
+   * no reason at all, and `/spend/logs` carries a `status` and no error class.
+   * This route reads `LiteLLM_ErrorLogs`, which is the only place the proxy
+   * keeps the exception type.
+   *
+   * Three things follow from the route's own shape rather than from choice:
+   *
+   *   - **One call per alias.** The proxy's query filters on `model_group` with
+   *     no wildcard, so a sweep is N sequential requests and the caller decides
+   *     which N. Passing no aliases fetches nothing rather than everything.
+   *   - **A window in datetimes, not dates.** The filter is
+   *     `"startTime" >= $1 AND "endTime" <= $2`, so the end bound has to be the
+   *     end of the last day or the last day's errors fall outside it.
+   *   - **Absent is not empty.** A refused or missing route answers
+   *     `available: false`; a route that answers with no rows recorded no
+   *     errors — which on a proxy running `disable_error_logs` is not the same
+   *     as none happening, and is why nothing derived from this may be
+   *     rendered as a failure count.
+   *
+   * A per-alias failure is fatal to the sweep rather than skipped, with one
+   * exception: the *first* call answering an absent status stands the whole
+   * route down, since a proxy that does not offer it does not offer it for any
+   * alias.
+   */
+  async fetchModelExceptions(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayExceptionPage> {
+    if (models.length === 0) return { rows: [], available: true };
+
+    const rows: GatewayExceptionRecord[] = [];
+    let available = true;
+
+    for (const model of models) {
+      const url = new URL(`${this.root}/model/metrics/exceptions`);
+      url.searchParams.set('_selected_model_group', model);
+      url.searchParams.set('startTime', `${from}T00:00:00`);
+      url.searchParams.set('endTime', `${to}T23:59:59`);
+
+      const body = await this.getJson(url, true, EXCEPTION_TIMEOUT_MS);
+      if (body === null) {
+        available = false;
+        break;
+      }
+
+      const parsed = modelExceptionsSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new Error(
+          `LiteLLM /model/metrics/exceptions returned an unexpected shape: ${describeIssues(
+            parsed.error.issues,
+          )}`,
+        );
+      }
+
+      for (const entry of parsed.data.data) {
+        const record = toExceptionRecord(entry, model);
+        if (record !== null) rows.push(record);
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          available,
+          deployments: rows.length,
+          exceptions: rows.reduce(
+            (sum, row) => sum + row.exceptions.reduce((count, entry) => count + entry.count, 0),
+            0,
+          ),
+        },
+      },
+      'litellm model exceptions fetched',
+    );
+    return { rows, available };
   }
 
   /**

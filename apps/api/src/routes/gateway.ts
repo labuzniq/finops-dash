@@ -10,13 +10,18 @@ import {
   sealGatewayMonth,
 } from '../services/gateway-seal.js';
 import { getGatewayNotifications } from '../services/gateway-notify.js';
-import { SPEND_LOG_MAX_WINDOW_DAYS, SPEND_LOG_ROW_CAP } from '@dash/shared';
+import {
+  EXCEPTION_MAX_WINDOW_DAYS,
+  SPEND_LOG_MAX_WINDOW_DAYS,
+  SPEND_LOG_ROW_CAP,
+} from '@dash/shared';
 import {
   GatewayLogsUnavailableError,
   getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
   getGatewayDeploymentHistory,
+  getGatewayExceptions,
   getGatewayHealth,
   getGatewayModels,
   getGatewaySpendLogs,
@@ -234,6 +239,43 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
     try {
       return await getGatewaySpendLogs(from, to, limit);
+    } catch (error) {
+      if (error instanceof GatewayLogsUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Why the failed calls in a window failed, per deployment.
+   *
+   * Live and storing nothing, like `/logs` and `/probe`. It reads
+   * `LiteLLM_ErrorLogs` — a different table from both the aggregates and the
+   * request log, separately switchable upstream (`disable_error_logs`) and
+   * carrying no denominator of its own — so the counts here are reasons rather
+   * than a failure rate, and the ledger stays the place failures are counted.
+   *
+   * The window is capped at a month because the proxy's own default on this
+   * route is thirty days and the error table is pruned on a schedule of its
+   * own: a wider ask answers a shorter window and does not say so.
+   */
+  app.get('/api/gateway/exceptions', async (request, reply) => {
+    const parsed = rangeQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    const { from, to } = parsed.data;
+    const days = Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1,
+    );
+    if (days > EXCEPTION_MAX_WINDOW_DAYS) {
+      return reply.code(400).send({
+        error: `Exceptions may be read ${EXCEPTION_MAX_WINDOW_DAYS} days at a time — asked for ${days}.`,
+      });
+    }
+    try {
+      return await getGatewayExceptions(from, to);
     } catch (error) {
       if (error instanceof GatewayLogsUnavailableError) {
         return reply.code(503).send({ error: error.message });

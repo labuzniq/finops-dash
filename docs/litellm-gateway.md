@@ -386,6 +386,69 @@ adds these rows up has to say it is adding up a sample — the same shape as an
 reason `crossTabSpendLogs` in `@dash/shared` reports `sampleSpend` rather than a
 total and carries no share column at all.
 
+### The exception log (the only source of *why*)
+
+Everything above counts failures. `SpendMetrics` carries `failed_requests` per
+day and per key, and `LiteLLM_SpendLogs` carries a `status` per request, and
+neither carries a *reason*: a rate limit, an expired Azure credential, a prompt
+over the context window and a Bedrock region falling over are one number in the
+ledger and four different jobs for four different people.
+
+`LiteLLM_ErrorLogs` is where the reason lives, and one admin route reads it:
+
+```
+GET /model/metrics/exceptions?_selected_model_group=&startTime=&endTime=
+  → { "data": [ { "model": "<combined_model_api_base>",
+                  "total_exceptions": 2,
+                  "RateLimitError": 4013,
+                  "Timeout": 7 } ],
+      "exception_types": ["RateLimitError", "Timeout"] }
+```
+
+A **seventh envelope**, and the only one here whose *field names are data*: the
+per-class counts are spread onto the same object as the row's own fields rather
+than nested under one, so the parse takes `model`, takes `total_exceptions`, and
+reads every remaining numeric key as an exception class. A non-numeric extra is
+ignored rather than coerced; a class counted zero of is dropped rather than
+stored.
+
+Four things about it are load-bearing:
+
+- **`total_exceptions` is not a total.** The route's SQL takes `COUNT(*)` over a
+  CTE that has *already* grouped by `(deployment, exception_type)`, so the field
+  counts distinct classes. A pool with four thousand rate limits and seven
+  timeouts reports `total_exceptions: 2`. The client sums the class counts
+  itself and keeps the proxy's figure only as evidence — using it would
+  understate every deployment by three orders of magnitude, with a `200` and no
+  error anywhere. The same family as `summarize` defaulting to `true` on
+  `/spend/logs` and `size` being ignored on `/user/list`.
+- **`model` is a deployment, not an alias.** It is
+  `CONCAT(litellm_model_name, '-', api_base)`, or the model string alone when
+  there is no `api_base` — the same resolution `gateway_deployment_health` is
+  keyed at, and the resolution at which a throttled reserved-throughput pool is
+  distinguishable from the pay-as-you-go deployment beside it. Both halves
+  contain hyphens, so the key is never parsed back into its parts: the join runs
+  the other way, with `deploymentExceptionKey(backend, apiBase)` in
+  `@dash/shared` rebuilding the same string from a health row.
+- **The query filters on one `model_group` at a time**, with no wildcard. There
+  is no "everything" call to make: a sweep is one HTTP round trip per alias, the
+  API picks the aliases from the window's own `model` usage ranked by spend
+  (`EXCEPTION_MODEL_CAP`, 12), and the ones it skipped are reported. An alias
+  nobody asked about is *unread*, not clean.
+- **The window is a pair of datetimes** filtered as
+  `"startTime" >= $1 AND "endTime" <= $2`, so the end bound has to be the end of
+  the last day or that day's errors fall outside it.
+
+And the rule everything built on it follows: **an error log is a reason, not a
+count.** `LiteLLM_ErrorLogs` is written by a different code path from the daily
+aggregates, is separately switchable (`disable_error_logs` is the twin of
+`disable_spend_logs`), and is pruned on its own schedule — so its totals may
+legitimately disagree with the same window's `failed_requests`, an empty answer
+means "no errors recorded" rather than "no errors", and nothing derived from it
+may be rendered as a failure rate. The mock reproduces that gap deliberately
+(`ERROR_LOG_COVERAGE`), because a generator whose two tables agreed to the unit
+would teach a derivation to assume something no proxy guarantees.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -636,6 +699,17 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   Nothing stores these rows either — the route is live, because a
   copy of the proxy's request log is not a thing this dashboard should be the
   system of record for.
+- **An error log is a reason, not a count.** `/model/metrics/exceptions` reads
+  `LiteLLM_ErrorLogs`, which is written by a different code path from the daily
+  aggregates, is switchable on its own (`disable_error_logs`) and is pruned on
+  its own schedule — so its totals may disagree with the same window's
+  `failed_requests` and nothing derived from it may be rendered as a failure
+  rate or a share of traffic: this table carries no denominator at all. An
+  answer with no rows means "no errors *recorded*", which is a weaker claim than
+  "no errors". And the proxy's own `total_exceptions` is never read as a total:
+  upstream it counts distinct exception classes, so a pool with four thousand
+  rate limits and seven timeouts reports `2`. The count is ours, summed from the
+  classes, with the proxy's figure carried beside it as evidence.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
@@ -898,6 +972,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `POST` | `/api/gateway/months/:month/seal` | Seal a closed month by hand. `400` for a month still in flight or with holes in it, `409` for one already sealed — `?force=true` re-seals and replaces the statement that was issued. |
 | `GET` | `/api/gateway/notifications?days=` | `{ notifications, deliveryConfigured, open, pending, evaluatedAt }` — governance findings and whether they left the building. Every open episode plus the ones that closed inside `days` (default 30, max 365). The only gateway read about the dashboard's own behaviour rather than the proxy's. |
 | `GET` | `/api/gateway/logs?from=&to=&limit=` | `{ from, to, rows, available, truncated, fetchedAt }` — a sample of individual requests, fetched **live** from `/spend/logs` and stored nowhere. The joint-keyed evidence layer: every dimension on one row, plus the deployment that served it and how long it took. Window capped at 7 days, rows at 5,000 (`limit` may lower it, never raise it); `400` for a wider window or an inverted one, `503` while the source is `off`. `available: false` means the proxy keeps no logs, which is a supported way to run one — not an error, and not "no requests". |
+| `GET` | `/api/gateway/exceptions?from=&to=` | `{ from, to, models, skippedModels, deployments, available, fetchedAt }` — why the failed calls in a window failed, per deployment, fetched **live** from `/model/metrics/exceptions` and stored nowhere. One proxy call per alias (the route has no wildcard), aliases taken from the window's own `model` usage ranked by spend and capped at `EXCEPTION_MODEL_CAP` (12) with the rest reported as `skippedModels`. Window capped at `EXCEPTION_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. `available: false` means the route was refused or is absent; an empty answer means no errors were *recorded*, which on a proxy running `disable_error_logs` is a different claim from none happening. |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -2533,6 +2608,32 @@ question below. It is, though, the harness for answering it: drop a captured
 response from the real gateway into a handler and the assertions become a
 conformance check of the proxy rather than of the client.
 
+`apps/api/scripts/verify-gateway-exceptions.ts` covers the exception layer in
+the same two halves. The **pure** half pins the classification — every LiteLLM
+exception class maps to the party that can act on it, a prefixed
+`litellm.RateLimitError` is the same fault as a bare one, a
+`ContextWindowExceededError` is the *caller's* fault rather than a capacity one
+(it is a 400), and a class this build has never seen is `other` under its own
+name rather than a near-match — and the roll-up: the class counts partition the
+window exactly, a class spanning two deployments is added across them and
+reports how many produced it, and the total is ours rather than the proxy's
+`total_exceptions`, which the fixture reproduces as the class count it really
+is. The **mock** half drives `fetchModelExceptions` and checks the claim the
+layer exists for, which is a claim about the *other* cards: the refusing
+reserved-throughput pool behind `azure/gpt-4o` produces thousands of rate limits
+while the alias in front of it stays unremarkable in the ledger — below the 1.5×
+materiality gate the reliability card would need to badge it — and bills
+normally every day. The contrast case is checked beside it: the throttled
+`azure/o4-mini` is elevated in the ledger *and* named as a quota here, which is
+the difference between a finding and its reason. Two classes that appear nowhere
+else on the page are pinned (a rotated credential as `auth`, an enforced cap as
+`budget`), the incident days come back as backend faults rather than as more of
+the ordinary mix, an alias the proxy never routed records nothing, and the same
+window asked twice answers identically. The last check is the invariant itself:
+the exception total and the ledger's `failed_requests` disagree, on purpose. Run
+it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exceptions.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -2671,6 +2772,22 @@ job's error string.
     slow the answer is a narrower window, not a stored copy — a mirror of the
     proxy's request log is a different integration with a different owner.
 
+17. **Does this proxy write error logs, and is `/model/metrics/exceptions`
+    granted to this credential?** `disable_error_logs` is the twin of
+    `disable_spend_logs`, the route is admin-scoped, and both answers are
+    legitimate — but they are indistinguishable from the outside once the route
+    answers: a proxy that logs no errors and a gateway with no errors both
+    return an empty list. If error logging is off, the exception layer says
+    nothing and the reliability card remains the only reliability reading there
+    is.
+
+18. **Does `total_exceptions` still count classes rather than exceptions?** It
+    does in the current source (a `COUNT(*)` over a CTE already grouped by
+    class), and the client therefore sums the class counts itself. If a later
+    version fixes it, nothing here breaks — the field is carried as evidence and
+    never read as a total — but the two figures agreeing would become the
+    signal that the upstream bug is gone.
+
 ## Not yet built
 
 Governance is now rendered end to end across all four scopes
@@ -2780,6 +2897,21 @@ Governance is now rendered end to end across all four scopes
   standing-outage alert raises — does a deployment failing three nights running
   mean anything on a proxy nobody has looked at yet — needs a real proxy to
   answer.
+
+- **A view on the exception classes.** `GET /api/gateway/exceptions` is built,
+  contract-checked and rendered by nothing: the API answers per-deployment
+  exception counts with each class attributed to the party that can act on it,
+  and the page has no card for it yet. The shape it is already forced into is
+  worth stating, because the layer's own rules decide it: it must be read on a
+  press rather than on mount (a sweep is one proxy round trip per alias, the
+  same argument the request-log card follows), it may not draw a rate or a share
+  of traffic (the table carries no denominator), and it has to sit beside the
+  reliability card rather than replace it — the ledger says *how many* and this
+  says *which kind*, and a reader given only the second will read an exception
+  count as a failure count. What it adds that nothing else can: a deployment
+  failing behind an alias that bills and fails normally, named as a quota rather
+  than as a mystery, and two classes (`auth`, `budget`) that appear on no other
+  surface at all.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

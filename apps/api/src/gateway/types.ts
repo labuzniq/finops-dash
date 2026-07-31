@@ -174,6 +174,38 @@ export interface GatewaySpendLogPage {
   truncated: boolean;
 }
 
+/**
+ * One deployment's exception counts for a window, as
+ * `GET /model/metrics/exceptions` reported them.
+ *
+ * The one snapshot here that carries no money at all, so it needs no storage
+ * units: an error log is a reason and a count of reasons, nothing else. The
+ * shape matches the shared read model exactly and is re-declared on this side
+ * only so the client keeps owning the wire format.
+ */
+export interface GatewayExceptionRecord {
+  /** LiteLLM's `combined_model_api_base`, verbatim and never parsed. */
+  deployment: string;
+  /** The alias the read was scoped to — the query parameter, not the row. */
+  model: string;
+  exceptions: { type: string; count: number }[];
+  /** The proxy's own `total_exceptions`, which counts classes rather than exceptions. */
+  reportedTotal: number;
+}
+
+/**
+ * What one `/model/metrics/exceptions` sweep answered.
+ *
+ * `available: false` is a first-class result for the same reason it is on
+ * `/spend/logs`: error logging is separately switchable upstream
+ * (`disable_error_logs`) and the route is admin-scoped, so a proxy that bills
+ * and fails perfectly may still refuse it.
+ */
+export interface GatewayExceptionPage {
+  rows: GatewayExceptionRecord[];
+  available: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -219,6 +251,23 @@ export interface GatewayClient {
    * error: `available: false` is what a proxy that keeps no logs answers.
    */
   fetchSpendLogs(from: string, to: string, limit: number): Promise<GatewaySpendLogPage>;
+  /**
+   * Exception counts per deployment for a window, for the aliases named.
+   *
+   * Live and stored nowhere, like `fetchSpendLogs`, and asked one alias at a
+   * time because the proxy's own query filters on `model_group` — there is no
+   * "everything" call to make. The caller decides which aliases are worth a
+   * round trip and reports the ones it skipped.
+   *
+   * Optional like the management routes, and `available: false` is a supported
+   * configuration rather than a fault: `disable_error_logs` is the twin of
+   * `disable_spend_logs`, and this route is admin-scoped besides.
+   */
+  fetchModelExceptions(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayExceptionPage>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

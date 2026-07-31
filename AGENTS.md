@@ -412,7 +412,23 @@ heat scale taken over the drawn cells only. The deployment table under it is the
 the only join to `gateway_deployment_health`, so this is where a `degraded` alias becomes a number of
 requests and dollars, a deployment under a 20-request floor shows no rate at all, and a request naming
 no deployment is counted as *unjoinable* rather than filed under a shared null. Not-read-yet, refused
-and answered-with-nothing are three separate states, and only the middle one is even a fault.
+and answered-with-nothing are three separate states, and only the middle one is even a fault. `GET /api/gateway/exceptions?from=&to=` is the second live read and the only
+source of *why* a call failed: `/model/metrics/exceptions` over
+`LiteLLM_ErrorLogs`, a seventh envelope whose *field names are data* (the per-class counts are
+spread onto the row beside `model` and `total_exceptions`, so every remaining numeric key is a
+class). Three of its rules are load-bearing: `total_exceptions` counts distinct classes rather than
+exceptions — a `COUNT(*)` over a CTE already grouped by class, so a pool with four thousand rate
+limits reports `2` — and is carried as evidence while the count is ours; the row key is a
+*deployment* (`CONCAT(litellm_model_name, '-', api_base)`), the resolution
+`gateway_deployment_health` is keyed at and the one at which a refusing PTU pool is distinguishable
+from the sibling covering for it, joined only by rebuilding the key with `deploymentExceptionKey`
+rather than by splitting it; and the query filters on one `model_group` at a time with no wildcard,
+so a sweep is a round trip per alias, the API picks them from the window's own `model` usage ranked
+by spend (`EXCEPTION_MODEL_CAP`, 12) and reports the ones it skipped. `classifyGatewayException` in
+`@dash/shared` is the single mapping from LiteLLM's exception names to the party that can act on the
+fault (rate-limit, auth, budget, timeout, backend, request, content), which is the whole point of the
+layer: `RateLimitError` and `AuthenticationError` are one `failed_requests` in the ledger and two
+unrelated pieces of work.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
@@ -471,6 +487,12 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   cannot see how thin the sample is will read the matrix as the window. Nothing stores those rows
   either: the route is live, because a copy of the proxy's request log is not something this dashboard
   should be the system of record for.
+- **An error log is a reason, not a count.** `/model/metrics/exceptions` reads a different table
+  again (`LiteLLM_ErrorLogs`), switchable on its own (`disable_error_logs`) and pruned on its own
+  schedule, and it carries no denominator at all — so its totals may disagree with the same window's
+  `failed_requests`, nothing derived from it may be rendered as a failure rate or a share of
+  traffic, and an answer with no rows means "no errors *recorded*". The proxy's `total_exceptions`
+  is never read as a total: upstream it counts distinct exception classes.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to
