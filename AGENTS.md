@@ -195,7 +195,20 @@ unobserved day is unknown rather than unchanged and is never interpolated, a clo
 `observedTotal` is a *floor* (the counter is read once a day, the reset is on the proxy's clock), and the
 window is clamped forward to `recordingSince` rather than padded with empty days. A cap *lowered* under a
 standing spend produces a crossing with no spend at all, which is why a crossing is measured against the
-previous reading's own cap and sits on the same day as the cap change explaining it. **It is a draft against
+previous reading's own cap and sits on the same day as the cap change explaining it.
+`lib/metrics/gatewayAlerts.ts` is the page's only derivation *of derivations* and the reason the other
+thirteen cards are findable: it reads the already-derived summaries — budgets, budget history,
+anomalies, reliability, cache, coverage — and lists their findings at the top with a button that scrolls
+to the card that made each one. It **adds no threshold of its own**; it can only repeat a state a source
+already flagged, with that source's own numbers, because a digest able to disagree with the card it
+points at gives the reader two answers and no way to choose. Severity is editorial (`critical` is calls
+being rejected or money already past a line, `warning` is a decision somebody owes, `info` is a standing
+inefficiency with no deadline) and within a band each source's own ranking survives untouched. It
+carries **no total** — a budget counter, a day's overrun and a token count share no denominator, the
+same rule as the budget card — never merges two findings about one key, and never reads an empty list as
+health: an input it could not read (refused management routes, a history too short to show a crossing,
+coverage that has not answered) is named as a blind spot, and only "nothing to report *and* nothing
+unread" renders no card. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
 page) are the affordance for closing them: a live connection check that calls every route the sync needs

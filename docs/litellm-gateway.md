@@ -475,6 +475,7 @@ What it shows, and why each one is there:
 
 | Element | Reads |
 | --- | --- |
+| Needs attention | Every finding the cards below have already made, in one list at the top: severity, what it is, the numbers the source card carries, and a button that scrolls to it — plus a **Not checked** footer naming the inputs that could not be read. Renders nothing when there is nothing to report *and* nothing unread |
 | KPI row 1 | Gateway spend · requests (with success rate) · tokens (in / out) · blended $/1M tokens |
 | KPI row 2 | Prompt-cache hit rate · cost per request · failed requests |
 | Trends | Daily spend, daily tokens, daily requests — the same hand-rolled 900×240 SVG as every other chart in the console |
@@ -495,7 +496,7 @@ What it shows, and why each one is there:
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Eighteen decisions worth keeping:
+Nineteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -928,6 +929,48 @@ Eighteen decisions worth keeping:
   reading a hair's fall as a period boundary would invent a one-day period every
   time it happened.
 
+- **The digest at the top owns no threshold, and never reads silence as
+  health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
+  derivations*: it takes the already-derived summaries — budgets, budget
+  history, anomalies, reliability, cache, coverage — and puts their findings in
+  one list, because thirteen cards each flagging their own faults means every
+  fault is below the fold. It never re-reads the payload and never decides
+  anything is interesting: it can only surface a state a source module already
+  flagged, with that module's own numbers. A digest that could disagree with the
+  card it points at would leave the reader with two answers and no way to
+  choose, and it is also what makes the list checkable in both directions —
+  every row must trace to a flagged row, and every flagged row must produce a
+  row.
+
+  Severity is an editorial mapping from a state to an urgency, not a second
+  test: `critical` is calls being rejected or money already past a line
+  (nothing improves by waiting), `warning` is something a person has to decide
+  about, `info` is a standing inefficiency with no deadline — a churning cache
+  costs the same tomorrow. Within a band the source's own ranking survives
+  untouched, since those rankings were chosen for their own cards.
+
+  Three things it deliberately does not do. It **carries no total**: the dollars
+  on these rows come from different denominators — a budget counter covers that
+  row's own period, an anomaly's excess covers one day, a cache row is not
+  dollars at all — so there is nothing to sum, exactly as on the budget card,
+  and it counts findings instead. It **does not merge findings about one key**,
+  because a key over its budget that is also failing is two problems with two
+  fixes. And it **does not read an empty list as an all-clear**: every input it
+  could not read (a proxy that refused the management routes, a history too
+  short to show a crossing, coverage that has not answered) is named in a
+  *Not checked* footer, because "nothing to report" and "nothing was read" look
+  identical from a list and mean opposite things. `allClear` — nothing to report
+  *and* nothing unread — is the only state that renders no card at all; an
+  all-clear banner on a healthy proxy is furniture people learn to scroll past,
+  including the week it matters.
+
+  Two consequences of the sources. Reliability and cache follow the page's
+  breakdown switcher, so the digest does too and says so — switching the
+  dimension can legitimately rename those findings while every other row stays
+  put. And a row currently over its cap is not *also* reported as a historical
+  crossing: the state finding already says so, and saying it twice would be the
+  digest disagreeing with itself about how many problems there are.
+
 `apps/api/scripts/verify-gateway-seal-history.ts` covers both halves of that.
 The pure half is `diffSeals`: the sub-cent settle that is not a change, the
 alias that does not make a new payer, an arrival and a departure, the sample
@@ -1212,6 +1255,34 @@ and the case the gate exists for — a flat bill hiding $20 of volume against $2
 of rate, which must still render. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-mix.ts`.
 
+`apps/api/scripts/verify-gateway-alerts.ts` covers the attention digest, and
+what it has to prove is different from every other script here: not that a
+number is right, but that the list says exactly what the cards below it say —
+which is two assertions in opposite directions. **Nothing invented**: every
+alert traces back to a row of the summary it claims to come from, in the state
+it claims — a budget row that really is blocked, over, past its soft budget or
+projected over, an anomaly date the detector really flagged, a reliability key
+the two gates really badged, a churning cache row, a gap that really is on the
+coverage report. **Nothing dropped**: the count of each kind equals the number of
+flagged rows that source holds, so the digest cannot quietly stop reporting a
+category. Then the two self-consistency rules — a key that is over its cap now
+does not also appear as a historical crossing, while a state finding and a pace
+finding about one row are two different claims and both belong — the documented
+ordering (severity, then editorial kind order, then each source's own ranking
+untouched, which is `Array.sort` being stable), the cap costing visibility and
+never accuracy (identical counts capped and uncapped, with `truncated` closing
+the gap), ids unique and stable across two derivations, and the completeness of
+the kind tables, since a kind missing from the order table would silently sort
+to the front of its band. Finally the honesty checks: an unread gateway reports
+no findings, is **not** all clear and names its blind spots; a gateway that was
+read and is healthy is all clear; a one-reading history says the crossing
+question is unanswerable rather than answering it; and switching the breakdown
+dimension moves the reliability and cache rows and nothing else. The budget
+history it needs cannot come from the mock (that table accrues from real sync
+runs on distinct days), so the crossing case is planted the way earlier syncs
+would have written it. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-alerts.ts`.
+
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a
 throwaway HTTP server answering the envelope documented above and points
@@ -1312,9 +1383,12 @@ missing on this side of the gateway:
   answers "was this key already over last week" — but only back to the first
   sync that wrote it, and only at daily resolution. Neither limit can be lifted
   from here: the proxy serves current state and has nothing older to give, and a
-  finer sample would mean syncing more often for no other reason. The one thing
-  that *could* be added is an alert on the crossings the card already derives —
-  a key going over is currently something someone has to open a row to see.
+  finer sample would mean syncing more often for no other reason. A crossing no
+  longer has to be found by opening a row — the attention digest at the top of
+  the page carries it — but it is still only *on the page*: nothing leaves the
+  dashboard. Sending it somewhere (mail, Slack, a webhook) needs a scheduler
+  hook, a delivery target and a de-duplication story, none of which the console
+  has today.
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.

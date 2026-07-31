@@ -15,6 +15,7 @@ import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } fr
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
 import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.js';
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
+import { buildGatewayAlerts } from '../../lib/metrics/gatewayAlerts.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
@@ -59,6 +60,7 @@ import { DateRangePicker } from '../DateRangePicker.js';
 import { GatewayAdoptionCard } from './GatewayAdoptionCard.js';
 import { GatewayAgentsCard } from './GatewayAgentsCard.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
+import { GatewayAttentionCard } from './GatewayAttentionCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
@@ -478,6 +480,24 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.daily, usageQuery.data],
   );
 
+  // Everything the cards below have already flagged, in one list at the top.
+  // It reads the derived summaries rather than the payload on purpose: the
+  // digest must not be able to disagree with the card it points at, so it owns
+  // no threshold of its own and can only repeat a finding somebody else made.
+  const attention = useMemo(
+    () =>
+      buildGatewayAlerts({
+        budgets,
+        budgetsLoaded: !budgetsQuery.isPending,
+        history: budgetHistory,
+        anomalies,
+        reliability,
+        cache,
+        coverage,
+      }),
+    [budgets, budgetsQuery.isPending, budgetHistory, anomalies, reliability, cache, coverage],
+  );
+
   const selectedDaily = useMemo(
     () =>
       selectedRow === null
@@ -573,11 +593,22 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
       {configured && !usageQuery.error && !usageQuery.isPending && hasData && (
         <>
-          <GatewayCoverageNote
-            coverage={coverage}
-            onBackfill={(window) => sync.sync(window)}
-            isSyncing={sync.isRunning}
-          />
+          {/*
+            The anchors the digest scrolls to. Wrapper elements rather than ids
+            on the cards themselves, because a card that stands itself down —
+            the cache card on a gateway with no cache activity — would take its
+            anchor with it, and a jump button pointing at nothing is worse than
+            no button.
+          */}
+          <div id="gateway-coverage">
+            <GatewayCoverageNote
+              coverage={coverage}
+              onBackfill={(window) => sync.sync(window)}
+              isSyncing={sync.isRunning}
+            />
+          </div>
+
+          <GatewayAttentionCard digest={attention} />
 
           {compared !== null && (
             <div className={styles.compareNote}>
@@ -697,13 +728,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
           {forecast !== null && <GatewayForecastCard forecast={forecast} />}
 
-          <GatewayBudgetCard
-            scopes={budgets.scopes}
-            scope={budgetScope}
-            onScope={setBudgetScope}
-            loaded={!budgetsQuery.isPending}
-            history={budgetHistory}
-          />
+          <div id="gateway-budgets">
+            <GatewayBudgetCard
+              scopes={budgets.scopes}
+              scope={budgetScope}
+              onScope={setBudgetScope}
+              loaded={!budgetsQuery.isPending}
+              history={budgetHistory}
+            />
+          </div>
 
           <GatewayChargebackCard
             statement={statement}
@@ -724,17 +757,21 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
           <GatewayTrendCard title="Daily requests" sub="successes + failures" chart={charts.requests} />
 
-          <GatewayAnomalyCard
-            anomalies={anomalies}
-            dimension={activeDimension}
-            selectedDate={openAnomaly}
-            onSelect={(date) => setSelectedDay((current) => (current === date ? null : date))}
-            attribution={attribution}
-          />
+          <div id="gateway-anomalies">
+            <GatewayAnomalyCard
+              anomalies={anomalies}
+              dimension={activeDimension}
+              selectedDate={openAnomaly}
+              onSelect={(date) => setSelectedDay((current) => (current === date ? null : date))}
+              attribution={attribution}
+            />
+          </div>
 
-          <GatewayReliabilityCard summary={reliability} />
+          <div id="gateway-reliability">
+            <GatewayReliabilityCard summary={reliability} />
+          </div>
 
-          {hasCacheActivity(cache) && <GatewayCacheCard summary={cache} />}
+          <div id="gateway-cache">{hasCacheActivity(cache) && <GatewayCacheCard summary={cache} />}</div>
 
           {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
 
