@@ -375,27 +375,48 @@ export const gatewayBudget = pgTable(
  * every one of its days stored (`resolveMonthSeal` in @dash/shared). Re-sealing
  * is a deliberate, explicit act, never a side effect of another sync.
  */
-export const gatewayMonth = pgTable('gateway_month', {
-  /** `YYYY-MM`. */
-  month: varchar('month', { length: 7 }).primaryKey(),
-  monthStart: date('month_start').notNull(),
-  monthEnd: date('month_end').notNull(),
-  /** Days sealed — the month's calendar length, since a short month cannot be sealed. */
-  days: integer('days').notNull(),
-  sealedAt: timestamp('sealed_at', { withTimezone: true }).notNull().defaultNow(),
-  /** See GATEWAY_SEAL_ORIGINS in @dash/shared — `scheduler` or `manual`. */
-  sealedBy: varchar('sealed_by', { length: 20 }).notNull(),
-  /** USD × 1e9. */
-  spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
-  requests: bigint('requests', { mode: 'number' }).notNull(),
-  successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
-  failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
-  promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
-  completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
-  totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
-  cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
-  cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
-});
+export const gatewayMonth = pgTable(
+  'gateway_month',
+  {
+    /** `YYYY-MM`. */
+    month: varchar('month', { length: 7 }).notNull(),
+    /**
+     * Which statement of that month this row is — `1` for the first seal, one
+     * more for each re-seal. A re-seal inserts rather than replaces: the
+     * statement that was issued is evidence, and overwriting it would leave a
+     * corrected bill with nothing to be corrected *from*.
+     */
+    revision: integer('revision').notNull().default(1),
+    /** Set when a later revision replaced this one; null on the current statement. */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    monthStart: date('month_start').notNull(),
+    monthEnd: date('month_end').notNull(),
+    /** Days sealed — the month's calendar length, since a short month cannot be sealed. */
+    days: integer('days').notNull(),
+    sealedAt: timestamp('sealed_at', { withTimezone: true }).notNull().defaultNow(),
+    /** See GATEWAY_SEAL_ORIGINS in @dash/shared — `scheduler` or `manual`. */
+    sealedBy: varchar('sealed_by', { length: 20 }).notNull(),
+    /** USD × 1e9. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: bigint('requests', { mode: 'number' }).notNull(),
+    successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
+    failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.month, table.revision] }),
+    // At most one *current* statement per month, enforced here rather than by a
+    // read-then-write: a re-seal that failed to supersede its predecessor would
+    // otherwise leave two statements both claiming to be the bill.
+    uniqueIndex('gateway_month_current_idx')
+      .on(table.month)
+      .where(sql`${table.supersededAt} is null`),
+  ],
+);
 
 /**
  * One payer's line on a sealed month — the statement itself, not a re-slice of
@@ -411,6 +432,8 @@ export const gatewayMonthLine = pgTable(
   'gateway_month_line',
   {
     month: varchar('month', { length: 7 }).notNull(),
+    /** The revision of `gateway_month` these lines belong to. */
+    revision: integer('revision').notNull().default(1),
     dimension: varchar('dimension', { length: 20 }).notNull(),
     key: varchar('key', { length: 200 }).notNull(),
     label: varchar('label', { length: 200 }),
@@ -424,7 +447,7 @@ export const gatewayMonthLine = pgTable(
     cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
     cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.month, table.dimension, table.key] })],
+  (table) => [primaryKey({ columns: [table.month, table.revision, table.dimension, table.key] })],
 );
 
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */

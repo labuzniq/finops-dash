@@ -4,6 +4,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
+  GatewaySealHistory,
   GatewaySeals,
   GatewayUsage,
 } from '@dash/shared';
@@ -11,6 +12,7 @@ import {
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayProbe,
+  fetchGatewaySealHistory,
   fetchGatewaySeals,
   fetchGatewayStatus,
   fetchGatewayUsage,
@@ -142,6 +144,22 @@ export function useGatewaySeals(enabled: boolean) {
   return useQuery<GatewaySeals>({
     queryKey: ['gateway', 'months'],
     queryFn: fetchGatewaySeals,
+    enabled,
+  });
+}
+
+/**
+ * Every statement one month has carried, for a month that has been re-sealed.
+ *
+ * Deliberately gated on that: `enabled` is the caller's answer to "does this
+ * month have more than one revision", which the seal list already carries, so
+ * an ordinary month costs no extra request. Cached per month under the same
+ * `gateway` prefix the sync invalidates.
+ */
+export function useGatewaySealHistory(month: string, enabled: boolean) {
+  return useQuery<GatewaySealHistory>({
+    queryKey: ['gateway', 'months', month, 'revisions'],
+    queryFn: () => fetchGatewaySealHistory(month),
     enabled,
   });
 }

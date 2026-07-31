@@ -5,6 +5,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
+  GatewaySealHistory,
   GatewaySeals,
   GatewaySource,
   GatewayUsage,
@@ -260,6 +261,18 @@ export function fetchGatewayCoverage(): Promise<GatewayCoverage> {
  */
 export function fetchGatewaySeals(): Promise<GatewaySeals> {
   return request<GatewaySeals>('/gateway/months');
+}
+
+/**
+ * Every statement one month has carried, with what each re-seal changed.
+ *
+ * Fetched only for a month that has been re-sealed — a month sealed once has
+ * nothing to compare — which is why it is a second call rather than part of
+ * the seal list: the list is on every visit, this is on the rare month whose
+ * bill was corrected.
+ */
+export function fetchGatewaySealHistory(month: string): Promise<GatewaySealHistory> {
+  return request<GatewaySealHistory>(`/gateway/months/${month}/revisions`);
 }
 
 /**

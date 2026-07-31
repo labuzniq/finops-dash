@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { GATEWAY_DIMENSION_LABELS, sealDrift } from '@dash/shared';
-import type { GatewaySeal } from '@dash/shared';
+import type { GatewaySeal, GatewaySealHistory } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, EMPTY, percent, usd } from '../../lib/format.js';
 import { downloadChargebackCsv } from '../../lib/exportCsv.js';
@@ -52,6 +53,12 @@ interface GatewayChargebackCardProps {
    * storing days).
    */
   seal: GatewaySeal | null;
+  /**
+   * Every statement this month has carried, when it has carried more than one.
+   * Null for a month sealed once — there is nothing to compare — and while the
+   * request for a revised month is still in flight.
+   */
+  history: GatewaySealHistory | null;
   loading: boolean;
 }
 
@@ -62,8 +69,10 @@ export function GatewayChargebackCard({
   onDimension,
   available,
   seal,
+  history,
   loading,
 }: GatewayChargebackCardProps) {
+  const [showRevisions, setShowRevisions] = useState(false);
   const dimensionLabel = GATEWAY_DIMENSION_LABELS[statement.dimension];
   const max = statement.lines.reduce((peak, line) => Math.max(peak, line.metrics.spend), 0);
   const unallocatedShare =
@@ -84,6 +93,13 @@ export function GatewayChargebackCard({
   // was issued. A month whose daily rows have been revised since is the only
   // case worth interrupting the reader for.
   const drift = seal === null ? null : sealDrift(seal, statement.total);
+  // A revised month is the only case where the seal alone is not the whole
+  // story: the statement on screen is the current one, and someone is holding
+  // the one it replaced.
+  const revised = seal !== null && seal.revision > 1;
+  const latestDiff = history?.diffs[0] ?? null;
+  const diffForDimension =
+    latestDiff?.dimensions.find((entry) => entry.dimension === statement.dimension) ?? null;
 
   return (
     <Card padded={false} className={styles.card}>
@@ -97,6 +113,7 @@ export function GatewayChargebackCard({
                 title={`Sealed ${new Date(seal.sealedAt).toLocaleString()} · ${seal.days} days · ${seal.sealedBy}`}
               >
                 {drift?.matches === false ? 'Sealed — revised since' : 'Sealed'}
+                {seal.revision > 1 && ` · rev ${seal.revision}`}
               </span>
             )}
           </div>
@@ -204,6 +221,114 @@ export function GatewayChargebackCard({
           {drift.spendDelta >= 0 ? 'rise' : 'fall'} of {usd(Math.abs(drift.spendDelta), 2)} since
           the statement was issued. The figures below are the current ones; re-seal the month to
           issue them.
+        </div>
+      )}
+
+      {revised && seal !== null && (
+        <div className={styles.revisions}>
+          <button
+            type="button"
+            className={styles.revisionsToggle}
+            aria-expanded={showRevisions}
+            onClick={() => setShowRevisions((open) => !open)}
+          >
+            {showRevisions ? '▾' : '▸'} This month has been billed {seal.revision} times — revision{' '}
+            {seal.revision} was issued {seal.sealedAt.slice(0, 10)}
+            {latestDiff !== null &&
+              `, ${latestDiff.spendDelta >= 0 ? 'up' : 'down'} ${usd(
+                Math.abs(latestDiff.spendDelta),
+                2,
+              )} on revision ${latestDiff.previousRevision}`}
+          </button>
+
+          {showRevisions && history !== null && (
+            <div className={styles.revisionBody}>
+              {history.revisions.map((entry) => {
+                // The diff *into* this revision — what changed when it was
+                // issued. The first revision has none by definition.
+                const change = history.diffs.find((diff) => diff.revision === entry.revision);
+                return (
+                  <div key={entry.revision} className={styles.revisionRow}>
+                    <div className={styles.revisionName}>
+                      <span className={styles.key}>rev {entry.revision}</span>
+                      <span className={styles.label}>
+                        {entry.supersededAt === null
+                          ? 'current statement'
+                          : `replaced ${entry.supersededAt.slice(0, 10)}`}{' '}
+                        · {entry.sealedBy}
+                      </span>
+                    </div>
+                    <div className={styles.right}>{usd(entry.total.spend, 2)}</div>
+                    <div className={styles.right}>
+                      {change === undefined ? (
+                        <span className={styles.muted}>first issue</span>
+                      ) : (
+                        <span
+                          className={cx(
+                            styles.change,
+                            change.spendDelta >= 0 ? styles.up : styles.down,
+                          )}
+                        >
+                          {change.spendDelta >= 0 ? '+' : '−'}
+                          {usd(Math.abs(change.spendDelta), 2)}
+                        </span>
+                      )}
+                    </div>
+                    <div className={cx(styles.right, styles.muted)}>
+                      {entry.sealedAt.slice(0, 10)}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {diffForDimension !== null && (
+                <div className={styles.movers}>
+                  <div className={styles.moversTitle}>
+                    What moved into revision {latestDiff?.revision}, by{' '}
+                    {dimensionLabel.toLowerCase()}
+                    {diffForDimension.movedLines === 0 && ' — no line moved'}
+                  </div>
+                  {diffForDimension.lines.map((line) => (
+                    <div key={line.key} className={styles.moverRow}>
+                      <div className={styles.revisionName}>
+                        <span className={styles.key}>{line.key}</span>
+                        {line.change !== 'changed' && (
+                          <span className={styles.label}>{line.change} in this revision</span>
+                        )}
+                      </div>
+                      <div className={cx(styles.right, styles.muted)}>
+                        {usd(line.previousSpend, 2)}
+                      </div>
+                      <div className={styles.right}>{usd(line.spend, 2)}</div>
+                      <div className={styles.right}>
+                        <span
+                          className={cx(
+                            styles.change,
+                            line.spendDelta >= 0 ? styles.up : styles.down,
+                          )}
+                        >
+                          {line.spendDelta >= 0 ? '+' : '−'}
+                          {usd(Math.abs(line.spendDelta), 2)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {diffForDimension.linesTruncated && (
+                    <div className={styles.moversNote}>
+                      {diffForDimension.movedLines} lines moved; the largest are shown.
+                    </div>
+                  )}
+                  {Math.abs(diffForDimension.unattributedDelta) >= 0.005 && (
+                    <div className={styles.moversNote}>
+                      {usd(Math.abs(diffForDimension.unattributedDelta), 2)} of the movement carried
+                      no {dimensionLabel.toLowerCase()} in one revision or the other, so it lands on
+                      the unallocated line rather than on anybody's.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

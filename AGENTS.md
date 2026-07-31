@@ -158,7 +158,15 @@ a backfill deliberately does not seal, and a month that quietly re-agreed with t
 destroyed the only evidence that it was revised. The chargeback card still derives what it renders from
 `gateway_daily`; the seal is what it is *compared against* (`sealDrift`), which is how the badge reads
 `Sealed` or `Sealed — revised since` and the CSV preamble can state the drift. `force` re-issues a
-statement but does not waive completeness: sealing a month with a hole in it would book a short bill.
+statement but does not waive completeness: sealing a month with a hole in it would book a short bill. A
+re-seal **adds a revision** rather than overwriting one — the tables are keyed by `(month, revision)`, the
+replaced statement is stamped `superseded_at`, and a partial unique index keeps exactly one current — because
+a corrected bill is only auditable next to the bill it corrected. `GET /api/gateway/months/:month/revisions`
+serves the chain with `diffSeals` (`@dash/shared`) between each pair: pure, since both sides are records
+rather than derivations, matching lines on `dimension + key` so a resolved alias is not a new payer,
+suppressing sub-cent settles from the list while still counting them in `unattributedDelta` — the movement
+the dimension's lines do not account for, reported and never spread, for the same reason the statement's
+`unallocated` row is.
 Everything above is
 *usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's

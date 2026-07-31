@@ -43,6 +43,7 @@ import {
   useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayCoverage,
+  useGatewaySealHistory,
   useGatewaySeals,
   useGatewayData,
   useGatewayForecastData,
@@ -383,6 +384,13 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   // or none, for a month still in flight.
   const activeSeal =
     (sealsQuery.data?.seals ?? []).find((seal) => seal.month === activeMonth) ?? null;
+  // Only a month that has been billed more than once has a history worth
+  // fetching, and the seal list already says which those are — so an ordinary
+  // month costs no extra request.
+  const sealHistoryQuery = useGatewaySealHistory(
+    activeMonth,
+    (activeSeal?.revision ?? 1) > 1,
+  );
 
   const latestJob = latestJobQuery.data ?? null;
   const hasData = totals.requests > 0 || totals.spend > 0;
@@ -680,6 +688,7 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             onDimension={setBillDimension}
             available={billDimensions}
             seal={activeSeal}
+            history={sealHistoryQuery.data ?? null}
             loading={billQuery.isPending}
           />
 

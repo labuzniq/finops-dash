@@ -674,6 +674,18 @@ export interface GatewaySeal {
   sealedAt: string;
   /** `scheduler` for the automatic seal at month close, `manual` for the route. */
   sealedBy: GatewaySealOrigin;
+  /**
+   * Which statement this is: `1` for the month's first seal, `2` for the one
+   * that replaced it, and so on. A re-seal does not overwrite — the statement
+   * that was issued is kept beside the one that replaced it, because "we billed
+   * £X in June, then corrected it to £Y" is the question a revision raises.
+   */
+  revision: number;
+  /**
+   * When a later revision replaced this one; `null` on the current statement.
+   * Exactly one revision of a month is current at a time.
+   */
+  supersededAt: string | null;
   /** The month's gateway-wide totals, as sealed. */
   total: GatewayMetrics;
 }
@@ -825,4 +837,176 @@ export interface GatewaySealDrift {
 export function sealDrift(seal: Readonly<GatewaySeal>, live: Readonly<GatewayMetrics>): GatewaySealDrift {
   const spendDelta = live.spend - seal.total.spend;
   return { spendDelta, matches: Math.abs(spendDelta) < 0.005 };
+}
+
+/* ---------------------------------------------------------------------------
+ * Seal revisions — what changed between two statements of the same month.
+ * ------------------------------------------------------------------------ */
+
+/** How many changed lines a diff enumerates per dimension before it is a sample. */
+const MAX_SEAL_DIFF_LINES = 12;
+
+/** Dollars below which two spend figures are the same statement line. */
+const CENT = 0.005;
+
+/** One payer's line as it moved between two revisions of a month. */
+export interface GatewaySealLineChange {
+  dimension: GatewayPayerDimension;
+  key: string;
+  label: string | null;
+  /** The line as first issued; `0` when the payer is new to the revision. */
+  previousSpend: number;
+  /** The line as re-issued; `0` when the payer vanished from it. */
+  spend: number;
+  /** `spend − previousSpend`. */
+  spendDelta: number;
+  change: 'added' | 'removed' | 'changed';
+}
+
+/** How one payer dimension's lines moved between two revisions. */
+export interface GatewaySealDimensionDiff {
+  dimension: GatewayPayerDimension;
+  /** Lines that moved by at least a cent, appeared, or vanished. */
+  movedLines: number;
+  /** The biggest movers first, capped — `movedLines` stays the true count. */
+  lines: GatewaySealLineChange[];
+  linesTruncated: boolean;
+  /**
+   * The month's movement this dimension does not account for: the gateway
+   * total moved by `spendDelta`, its lines by the sum of their own deltas, and
+   * the difference is spend the proxy attributed to nobody in one revision or
+   * the other. It is reported rather than spread, for the same reason the
+   * statement's `unallocated` row is.
+   *
+   * Measured over *every* line, including the sub-cent settles `lines` does
+   * not show — so it stays the honest "billed to nobody" figure rather than
+   * absorbing display noise, and the visible rows plus this number land within
+   * a cent per suppressed line of the month's movement.
+   */
+  unattributedDelta: number;
+}
+
+/**
+ * What one re-seal changed — the audit trail a revision needs to be auditable.
+ *
+ * A seal alone is enough to *notice* that a month moved (`sealDrift` compares
+ * it with the live rows). It is not enough to say who moved: a department
+ * arguing with a corrected bill needs its own line before and after, not the
+ * gateway's total. This is that, per payer dimension, on the statement's own
+ * terms — and it is pure, because both sides are records rather than
+ * derivations, so nothing about it can drift with the daily rows.
+ */
+export interface GatewaySealRevisionDiff {
+  month: string;
+  /** The newer revision's number, and the one it replaced. */
+  revision: number;
+  previousRevision: number;
+  /** When the newer revision was taken. */
+  sealedAt: string;
+  /** `newer.total.spend − older.total.spend`. */
+  spendDelta: number;
+  /** `newer.days − older.days` — a re-seal after a backfill moves this. */
+  daysDelta: number;
+  dimensions: GatewaySealDimensionDiff[];
+}
+
+/** Every revision of one month, newest first, with what each one changed. */
+export interface GatewaySealHistory {
+  month: string;
+  /** Newest revision first; the current statement is `revisions[0]`. */
+  revisions: GatewaySeal[];
+  /** One entry per consecutive pair, newest first. Empty for a month sealed once. */
+  diffs: GatewaySealRevisionDiff[];
+}
+
+/**
+ * Compare two revisions of the same month, line by line.
+ *
+ * Lines are matched on `dimension + key`, never on the label: an alias is
+ * resolved per day and a key whose alias was filled in between two seals is
+ * the same payer, not a new one plus a vanished one.
+ *
+ * A line that moved by less than a cent is not a change — the seal stores
+ * nano-dollars and a re-fetched day settles the last digits routinely, which
+ * would otherwise fill the diff with rows nobody can act on. Appearing and
+ * vanishing are always reported, however small: a payer whose line is gone
+ * from the re-issued bill is a fact about the bill, not about the amount.
+ */
+export function diffSeals(
+  previous: Readonly<GatewaySealedMonth>,
+  current: Readonly<GatewaySealedMonth>,
+): GatewaySealRevisionDiff {
+  const dimensions: GatewaySealDimensionDiff[] = [];
+
+  for (const dimension of GATEWAY_PAYER_DIMENSIONS) {
+    const before = previous.lines.filter((line) => line.dimension === dimension);
+    const after = current.lines.filter((line) => line.dimension === dimension);
+    const beforeByKey = new Map(before.map((line) => [line.key, line]));
+    const afterByKey = new Map(after.map((line) => [line.key, line]));
+
+    const changes: GatewaySealLineChange[] = [];
+    let attributedDelta = 0;
+
+    for (const [key, line] of afterByKey) {
+      const prior = beforeByKey.get(key);
+      const previousSpend = prior?.spend ?? 0;
+      const spendDelta = line.spend - previousSpend;
+      attributedDelta += spendDelta;
+      if (prior === undefined) {
+        changes.push({
+          dimension,
+          key,
+          label: line.label,
+          previousSpend: 0,
+          spend: line.spend,
+          spendDelta,
+          change: 'added',
+        });
+      } else if (Math.abs(spendDelta) >= CENT) {
+        changes.push({
+          dimension,
+          key,
+          label: line.label ?? prior.label,
+          previousSpend,
+          spend: line.spend,
+          spendDelta,
+          change: 'changed',
+        });
+      }
+    }
+
+    for (const [key, line] of beforeByKey) {
+      if (afterByKey.has(key)) continue;
+      attributedDelta -= line.spend;
+      changes.push({
+        dimension,
+        key,
+        label: line.label,
+        previousSpend: line.spend,
+        spend: 0,
+        spendDelta: -line.spend,
+        change: 'removed',
+      });
+    }
+
+    changes.sort((a, b) => Math.abs(b.spendDelta) - Math.abs(a.spendDelta));
+
+    dimensions.push({
+      dimension,
+      movedLines: changes.length,
+      lines: changes.slice(0, MAX_SEAL_DIFF_LINES),
+      linesTruncated: changes.length > MAX_SEAL_DIFF_LINES,
+      unattributedDelta: current.total.spend - previous.total.spend - attributedDelta,
+    });
+  }
+
+  return {
+    month: current.month,
+    revision: current.revision,
+    previousRevision: previous.revision,
+    sealedAt: current.sealedAt,
+    spendDelta: current.total.spend - previous.total.spend,
+    daysDelta: current.days - previous.days,
+    dimensions,
+  };
 }

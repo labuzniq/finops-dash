@@ -265,3 +265,80 @@
     display: none;
   }
 }
+
+/* Revision history — drawn as a disclosure rather than a card, because it is
+   evidence about the statement above it and not a second statement. */
+.revisions {
+  margin: 0 20px 12px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--card2);
+}
+
+.revisionsToggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text2);
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.revisionsToggle:hover {
+  color: var(--text);
+}
+
+.revisionBody {
+  padding: 2px 12px 10px;
+  border-top: 1px solid var(--border2);
+}
+
+.revisionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 110px 92px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12.5px;
+}
+
+.revisionName {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.movers {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border2);
+}
+
+.moversTitle {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+
+.moverRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 90px 112px;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+.moversNote {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+}

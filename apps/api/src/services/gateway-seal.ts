@@ -1,11 +1,13 @@
-import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
-import { GATEWAY_PAYER_DIMENSIONS, resolveMonthSeal } from '@dash/shared';
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { GATEWAY_PAYER_DIMENSIONS, diffSeals, resolveMonthSeal } from '@dash/shared';
 import type {
   GatewayPayerDimension,
   GatewaySeal,
   GatewaySealCheck,
+  GatewaySealHistory,
   GatewaySealLine,
   GatewaySealOrigin,
+  GatewaySealRevisionDiff,
   GatewaySealedMonth,
 } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -38,6 +40,11 @@ const log = moduleLogger('services.gateway-seal');
  *   month is newly complete; nothing re-seals implicitly. Re-sealing is a
  *   separate, explicit request, because a statement that quietly agrees with
  *   the daily rows again has destroyed the only evidence that they moved.
+ * - **A re-seal adds a revision, it does not overwrite one.** Every statement
+ *   the month has ever carried stays in `gateway_month`, the replaced ones
+ *   stamped with `superseded_at`, because a corrected bill is only auditable
+ *   next to the bill it corrected — "we invoiced this, then this" is the whole
+ *   question a revision raises, and an overwrite answers it with silence.
  * - **A seal is never read *instead of* the daily rows.** The chargeback card
  *   still derives its statement from `GET /api/gateway`; the seal is what it is
  *   compared against. That keeps one derivation on screen and turns the seal
@@ -78,6 +85,8 @@ function toSeal(row: GatewayMonthRow): GatewaySeal {
     monthEnd: row.monthEnd,
     days: row.days,
     sealedAt: row.sealedAt.toISOString(),
+    revision: row.revision,
+    supersededAt: row.supersededAt === null ? null : row.supersededAt.toISOString(),
     // The column is a varchar rather than an enum (one fewer migration-time
     // type to keep in step with @dash/shared); anything the service did not
     // write reads as a manual seal, which is the conservative label.
@@ -117,25 +126,52 @@ function toLine(row: GatewayMonthLineRow): GatewaySealLine | null {
   };
 }
 
-/** Every sealed month, newest first. Headers only — the lines are per-month. */
+/**
+ * Every sealed month, newest first — the *current* statement of each.
+ *
+ * Superseded revisions are deliberately not in this list: it answers "what is
+ * the bill for each month", and a month has one of those at a time. The
+ * statements it replaced are one route down, under the month's history.
+ */
 export async function listGatewaySeals(): Promise<GatewaySeal[]> {
-  const rows = await db.select().from(gatewayMonth).orderBy(desc(gatewayMonth.month));
+  const rows = await db
+    .select()
+    .from(gatewayMonth)
+    .where(isNull(gatewayMonth.supersededAt))
+    .orderBy(desc(gatewayMonth.month));
   return rows.map(toSeal);
 }
 
-/** One sealed month with its lines, or null when the month was never sealed. */
-export async function getGatewaySeal(month: string): Promise<GatewaySealedMonth | null> {
+/**
+ * One sealed month with its lines, or null when the month was never sealed.
+ *
+ * `revision` quotes an *older* statement — the one a recipient is holding —
+ * rather than the current bill. Omitted, it answers with the current one.
+ */
+export async function getGatewaySeal(
+  month: string,
+  revision?: number,
+): Promise<GatewaySealedMonth | null> {
   if (!MONTH_RE.test(month)) {
     throw new GatewaySealError(`"${month}" is not a month — expected YYYY-MM`, 'invalid_month');
   }
 
-  const [header] = await db.select().from(gatewayMonth).where(eq(gatewayMonth.month, month));
+  const [header] = await db
+    .select()
+    .from(gatewayMonth)
+    .where(
+      revision === undefined
+        ? and(eq(gatewayMonth.month, month), isNull(gatewayMonth.supersededAt))
+        : and(eq(gatewayMonth.month, month), eq(gatewayMonth.revision, revision)),
+    );
   if (header === undefined) return null;
 
   const lineRows = await db
     .select()
     .from(gatewayMonthLine)
-    .where(eq(gatewayMonthLine.month, month))
+    .where(
+      and(eq(gatewayMonthLine.month, month), eq(gatewayMonthLine.revision, header.revision)),
+    )
     .orderBy(asc(gatewayMonthLine.dimension), desc(gatewayMonthLine.spendNano));
 
   const lines: GatewaySealLine[] = [];
@@ -145,6 +181,62 @@ export async function getGatewaySeal(month: string): Promise<GatewaySealedMonth 
   }
 
   return { ...toSeal(header), lines };
+}
+
+/**
+ * Every revision of one month, newest first, with what each re-seal changed.
+ *
+ * The diffs are computed here rather than stored, and they are pure: both
+ * sides are recorded statements, so unlike `sealDrift` — which compares a seal
+ * against daily rows that move — this answer cannot change once the two
+ * revisions exist. Storing it would only be a second copy of a subtraction.
+ *
+ * Returns null for a month that was never sealed, which is the same absence
+ * `getGatewaySeal` reports; a month sealed once returns its single revision
+ * and no diffs.
+ */
+export async function getGatewaySealHistory(month: string): Promise<GatewaySealHistory | null> {
+  if (!MONTH_RE.test(month)) {
+    throw new GatewaySealError(`"${month}" is not a month — expected YYYY-MM`, 'invalid_month');
+  }
+
+  const headers = await db
+    .select()
+    .from(gatewayMonth)
+    .where(eq(gatewayMonth.month, month))
+    .orderBy(desc(gatewayMonth.revision));
+  if (headers.length === 0) return null;
+
+  const lineRows = await db
+    .select()
+    .from(gatewayMonthLine)
+    .where(eq(gatewayMonthLine.month, month))
+    .orderBy(asc(gatewayMonthLine.dimension), desc(gatewayMonthLine.spendNano));
+
+  const linesByRevision = new Map<number, GatewaySealLine[]>();
+  for (const row of lineRows) {
+    const line = toLine(row);
+    if (line === null) continue;
+    const bucket = linesByRevision.get(row.revision);
+    if (bucket === undefined) linesByRevision.set(row.revision, [line]);
+    else bucket.push(line);
+  }
+
+  const sealed: GatewaySealedMonth[] = headers.map((header) => ({
+    ...toSeal(header),
+    lines: linesByRevision.get(header.revision) ?? [],
+  }));
+
+  // Newest first, so each pair is (this revision, the one it replaced).
+  const diffs: GatewaySealRevisionDiff[] = [];
+  for (let index = 0; index + 1 < sealed.length; index += 1) {
+    const current = sealed[index];
+    const previous = sealed[index + 1];
+    if (current === undefined || previous === undefined) continue;
+    diffs.push(diffSeals(previous, current));
+  }
+
+  return { month, revisions: sealed.map(({ lines: _lines, ...seal }) => seal), diffs };
 }
 
 /**
@@ -202,16 +294,28 @@ export async function sealGatewayMonth(
   }
 
   const existing = await db
-    .select({ month: gatewayMonth.month, sealedAt: gatewayMonth.sealedAt })
+    .select({
+      month: gatewayMonth.month,
+      revision: gatewayMonth.revision,
+      sealedAt: gatewayMonth.sealedAt,
+    })
     .from(gatewayMonth)
-    .where(eq(gatewayMonth.month, month));
+    .where(and(eq(gatewayMonth.month, month), isNull(gatewayMonth.supersededAt)));
   const priorSeal = existing[0];
   if (priorSeal !== undefined && options.force !== true) {
     throw new GatewaySealError(
-      `${month} was already sealed at ${priorSeal.sealedAt.toISOString()} — re-sealing replaces the statement that was issued`,
+      `${month} was already sealed at ${priorSeal.sealedAt.toISOString()} (revision ${priorSeal.revision}) — re-sealing issues a new revision beside the statement already sent out`,
       'sealed',
     );
   }
+  // The next revision counts every statement this month has ever carried, not
+  // just the current one, so a number can never be re-used: a recipient
+  // quoting "June revision 2" must always mean the same document.
+  const [highest] = await db
+    .select({ revision: sql<number>`coalesce(max(${gatewayMonth.revision}), 0)` })
+    .from(gatewayMonth)
+    .where(eq(gatewayMonth.month, month));
+  const revision = Number(highest?.revision ?? 0) + 1;
 
   const sealedBy: GatewaySealOrigin = options.sealedBy ?? 'manual';
   const [days, breakdownRows] = await Promise.all([
@@ -235,6 +339,8 @@ export async function sealGatewayMonth(
 
   const header: GatewayMonthInsert = {
     month,
+    revision,
+    supersededAt: null,
     monthStart: check.monthStart,
     monthEnd: check.monthEnd,
     days: days.length,
@@ -258,6 +364,7 @@ export async function sealGatewayMonth(
     if (bucket === undefined) {
       buckets.set(id, {
         month,
+        revision,
         dimension: row.dimension,
         key: row.key,
         label: row.label,
@@ -288,12 +395,17 @@ export async function sealGatewayMonth(
   }
   const lines = [...buckets.values()];
 
-  // Delete-then-insert inside one transaction, scoped to this month: a re-seal
-  // must not leave a vanished payer's line standing next to the new ones, and
-  // no other month is touched.
+  // Supersede-then-insert inside one transaction, scoped to this month: the
+  // statement that was already issued is kept, marked as replaced, and the new
+  // revision goes in beside it. Nothing is deleted and no other month is
+  // touched — the partial unique index is what guarantees exactly one of the
+  // month's revisions is left current.
+  const supersededAt = new Date();
   await db.transaction(async (tx) => {
-    await tx.delete(gatewayMonthLine).where(eq(gatewayMonthLine.month, month));
-    await tx.delete(gatewayMonth).where(eq(gatewayMonth.month, month));
+    await tx
+      .update(gatewayMonth)
+      .set({ supersededAt })
+      .where(and(eq(gatewayMonth.month, month), isNull(gatewayMonth.supersededAt)));
     await tx.insert(gatewayMonth).values(header);
     for (const rows of chunk(lines, CHUNK_SIZE)) {
       await tx.insert(gatewayMonthLine).values(rows);
@@ -305,6 +417,7 @@ export async function sealGatewayMonth(
       'event.action': 'gateway-month-sealed',
       dash: {
         month,
+        revision,
         days: header.days,
         lines: lines.length,
         sealedBy,

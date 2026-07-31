@@ -330,11 +330,17 @@ if (client === null) {
       seals.every((seal, index) => index === 0 || (seals[index - 1]?.month ?? '') >= seal.month),
       'the seal list is not newest-first',
     );
-    // One row per month, whatever happened above.
-    const rows = await db.select({ month: gatewayMonth.month }).from(gatewayMonth);
+    // One *current* row per month, whatever happened above. The superseded
+    // revisions stay — that is what verify-gateway-seal-history.ts is about —
+    // but exactly one of them may claim to be the bill.
+    const rows = await db
+      .select({ month: gatewayMonth.month, supersededAt: gatewayMonth.supersededAt })
+      .from(gatewayMonth);
+    const current = rows.filter((row) => row.month === month && row.supersededAt === null);
+    check(current.length === 1, `${month} carries ${current.length} current seal rows`);
     check(
-      rows.filter((row) => row.month === month).length === 1,
-      `${month} carries ${rows.filter((row) => row.month === month).length} seal rows`,
+      seals.filter((entry) => entry.month === month).length === 1,
+      `${month} appears more than once in the seal list`,
     );
   }
 }

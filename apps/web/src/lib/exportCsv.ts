@@ -105,6 +105,13 @@ export function buildChargebackCsv(
           ['# seal_status', drift?.matches === true ? 'sealed' : 'sealed — daily rows have since changed'],
           ['# sealed_at', seal.sealedAt],
           ['# sealed_by', seal.sealedBy],
+          // Which statement of this month the recipient is holding. Two people
+          // comparing exported files across a correction need this line to
+          // know they are not looking at the same bill.
+          ['# seal_revision', String(seal.revision)],
+          ...(seal.revision > 1
+            ? [['# seal_supersedes_revision', String(seal.revision - 1)]]
+            : []),
           ['# sealed_gateway_spend_usd', seal.total.spend.toFixed(2)],
           ...(drift?.matches === true
             ? []

@@ -5,6 +5,7 @@ import {
   GatewaySealError,
   checkMonthSeal,
   getGatewaySeal,
+  getGatewaySealHistory,
   listGatewaySeals,
   sealGatewayMonth,
 } from '../services/gateway-seal.js';
@@ -18,6 +19,10 @@ import {
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const monthParams = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) });
+
+const revisionQuery = z.object({
+  revision: z.coerce.number().int().positive().optional(),
+});
 
 /**
  * A refusal to seal maps to the status that says what the caller should do:
@@ -112,13 +117,53 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     if (!parsed.success) {
       return reply.code(400).send({ error: 'Invalid month', issues: parsed.error.issues });
     }
-    const sealed = await getGatewaySeal(parsed.data.month);
+    const query = revisionQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({ error: 'Invalid revision', issues: query.error.issues });
+    }
+    // `?revision=` quotes a statement that has since been replaced — the one a
+    // recipient is holding — which is a different question from "what is this
+    // month's bill" and must not silently answer with the current one.
+    const revision = query.data.revision;
+    const sealed =
+      revision === undefined
+        ? await getGatewaySeal(parsed.data.month)
+        : await getGatewaySeal(parsed.data.month, revision);
     if (sealed === null) {
-      return reply
-        .code(404)
-        .send({ error: `${parsed.data.month} has not been sealed`, check: await checkMonthSeal(parsed.data.month) });
+      return reply.code(404).send({
+        error:
+          revision === undefined
+            ? `${parsed.data.month} has not been sealed`
+            : `${parsed.data.month} has no revision ${revision}`,
+        check: await checkMonthSeal(parsed.data.month),
+      });
     }
     return sealed;
+  });
+
+  /**
+   * Every statement this month has ever carried, newest first, with what each
+   * re-seal changed.
+   *
+   * `sealDrift` says a month has moved since it was billed; this says *who*
+   * moved, which is what a department disputing a corrected invoice actually
+   * needs. The diffs are computed from two recorded statements, so unlike the
+   * drift check they are stable — nothing about a past revision can change
+   * again.
+   */
+  app.get('/api/gateway/months/:month/revisions', async (request, reply) => {
+    const parsed = monthParams.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid month', issues: parsed.error.issues });
+    }
+    const history = await getGatewaySealHistory(parsed.data.month);
+    if (history === null) {
+      return reply.code(404).send({
+        error: `${parsed.data.month} has not been sealed`,
+        check: await checkMonthSeal(parsed.data.month),
+      });
+    }
+    return history;
   });
 
   /**
