@@ -26,6 +26,7 @@ import {
   getGatewayExceptions,
   getGatewayHealth,
   getGatewayLatency,
+  getGatewayLatencyHistory,
   getGatewayModels,
   getGatewayExceptionHistory,
   getGatewaySlowResponseHistory,
@@ -352,6 +353,29 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
   });
 
   /**
+   * What the nightly latency sweep read on each of the last `days` nights.
+   *
+   * The stored twin of the route above, and the third history any of the four
+   * live reads has — kept on a narrower licence than the other two. Those store
+   * counts, which add across a sweep and across nights; this stores an average
+   * the proxy took over request counts it discarded, so the rows may be compared
+   * and never pooled. Every window figure derived from them is a median of
+   * nightly readings.
+   *
+   * Nothing is filled in for a night the sweep did not run, was refused, or
+   * found the request log switched off: an unread night is unknown, never a
+   * night the gateway answered quickly. Same window rules as the three other
+   * history routes.
+   */
+  app.get('/api/gateway/latency/history', async (request, reply) => {
+    const parsed = historyQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewayLatencyHistory(parsed.data.days);
+  });
+
+  /**
    * How many calls hung over a window, per endpoint.
    *
    * Live and storing nothing, like `/logs`, `/exceptions` and `/latency`. It is
@@ -396,7 +420,8 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * their own denominator, and counts add — across the aliases of one sweep and
    * across nights. An average (`/model/metrics`) and a table with no denominator
    * (`/model/metrics/exceptions`) cannot be accumulated into anything a reader
-   * could act on, which is why neither has one of these.
+   * could act on. `/model/metrics` is stored too, one route above, but its
+   * readings may only be compared — a median of nights, never a total.
    *
    * Nothing is filled in for a night the sweep did not run, was refused, or
    * found the request log switched off: an unread night is unknown, never a

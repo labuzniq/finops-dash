@@ -1,7 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { resolveDeploymentModel } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
-import { EXCEPTION_MODEL_CAP, SLOW_RESPONSE_MODEL_CAP } from './gateway.js';
+import { EXCEPTION_MODEL_CAP, LATENCY_MODEL_CAP, SLOW_RESPONSE_MODEL_CAP } from './gateway.js';
 import { db } from '../db/client.js';
 import {
   gatewayBreakdownDaily,
@@ -12,6 +12,7 @@ import {
   gatewayDeploymentHealthHistory,
   gatewayExceptionDaily,
   gatewayExceptionSweep,
+  gatewayLatencyDaily,
   gatewayModel,
   gatewaySlowResponseDaily,
 } from '../db/schema.js';
@@ -24,6 +25,7 @@ import type {
   GatewayDeploymentHealthInsert,
   GatewayExceptionDailyInsert,
   GatewayExceptionSweepInsert,
+  GatewayLatencyDailyInsert,
   GatewayModelInsert,
   GatewaySlowResponseDailyInsert,
 } from '../db/schema.js';
@@ -32,6 +34,7 @@ import type {
   GatewayBudgetSnapshot,
   GatewayExceptionRecord,
   GatewayHealthSnapshot,
+  GatewayLatencyRecord,
   GatewayModelSnapshot,
   GatewaySlowResponseRecord,
   GatewaySnapshot,
@@ -178,6 +181,7 @@ async function persist(
   health: GatewayHealthSnapshot[] | null,
   slowResponses: GatewaySlowResponseDailyInsert[] | null,
   exceptions: ExceptionSweepResult | null,
+  latency: GatewayLatencyDailyInsert[] | null,
   observedOn: string,
   observedAt: Date,
 ): Promise<void> {
@@ -348,6 +352,32 @@ async function persist(
           },
         });
     }
+    // The latency reading is the third live read to be kept and the only one
+    // whose rows may never be *added* to anything: they are averages the proxy
+    // took over request counts it then discarded. Written on the same terms as
+    // the two sweeps above — keyed on the night it covers, upserted, and absent
+    // for a backfill, a refusal, a proxy with the request log switched off or a
+    // swallowed failure — so an unread night stays unread rather than landing as
+    // a night the gateway was fast.
+    if (latency !== null && latency.length > 0) {
+      const latencyRows = latency.map((row) => ({ ...row, observedAt }));
+      for (const rows of chunk(latencyRows, CHUNK_SIZE)) {
+        await tx
+          .insert(gatewayLatencyDaily)
+          .values(rows)
+          .onConflictDoUpdate({
+            target: [
+              gatewayLatencyDaily.date,
+              gatewayLatencyDaily.model,
+              gatewayLatencyDaily.deploymentKey,
+            ],
+            set: {
+              secondsPerTokenNano: sql`excluded.seconds_per_token_nano`,
+              observedAt: sql`excluded.observed_at`,
+            },
+          });
+      }
+    }
     if (budgets !== null) {
       await tx.delete(gatewayBudget);
       for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
@@ -401,6 +431,7 @@ async function persist(
         slowResponseRows: slowResponses?.length ?? 0,
         exceptionRows: exceptions?.rows.length ?? 0,
         exceptionsSwept: exceptions === null ? 0 : exceptions.sweep.models,
+        latencyRows: latency?.length ?? 0,
         observedOn,
       },
     },
@@ -416,7 +447,8 @@ async function persist(
  * sweeps whose payload survives being kept: it answers counts of disjoint
  * request-log rows beside the number of rows it counted them out of, and counts
  * add. The exception sweep carries no denominator and `/model/metrics` answers
- * an average with its counts already discarded, so neither can be accumulated
+ * an average with its counts already discarded, so that one is kept as a
+ * sequence of readings to compare rather than accumulated
  * into anything a reader could act on.
  *
  * The day swept is the *last day of the window* rather than today: today is
@@ -565,6 +597,83 @@ async function readExceptions(
     };
   } catch (error) {
     log.error({ err: error }, 'sweeping gateway exceptions failed — usage sync unaffected');
+    return null;
+  }
+}
+
+/**
+ * Sweep `/model/metrics` for one day, and never let it fail the sync.
+ *
+ * The third live read to be kept, and the one stored on a different licence
+ * from the other two. Those are counts of disjoint log rows, so they add — over
+ * a sweep and over nights — and a stored total means something. Nothing here
+ * adds: the proxy answers `AVG(seconds / completion_tokens)` and throws away the
+ * request counts behind it, so two nights' readings can be compared and never
+ * pooled. What the table buys is the thing the live route structurally cannot
+ * answer — whether a deployment has been reading slow all week or only tonight —
+ * which is precisely why `gateway_deployment_health_history` exists beside a
+ * snapshot that is also un-aggregatable.
+ *
+ * Every other rule is the two sibling sweeps', for the same reasons. The day
+ * swept is the window's last rather than today, so the reading covers a settled
+ * day. The alias list comes from the snapshot already in memory, ranked by that
+ * day's spend and capped like the live route, because the proxy's query filters
+ * on one `model_group` at a time with no wildcard and defaults it to a literal
+ * `gpt-4-32k` when it is left out. Failures are swallowed — this reads
+ * `LiteLLM_SpendLogs`, which can be switched off entirely, is pruned on its own
+ * schedule, and is not worth failing a job that has already fetched ninety days
+ * of usage over. A ranged sync records nothing, because the request log behind
+ * this route may well have pruned the days a backfill is repairing.
+ *
+ * The one shape difference from the hang sweep: this route answers a *series*
+ * per key rather than one number, so the reading for the swept day is picked out
+ * of it by date. A row for another day is dropped rather than filed — a sweep
+ * that asked about one day and stored three would file two nights nobody asked
+ * about under tonight's `observed_at`.
+ */
+async function readLatency(
+  client: {
+    fetchModelLatency: (
+      from: string,
+      to: string,
+      models: readonly string[],
+    ) => Promise<{ rows: GatewayLatencyRecord[]; available: boolean }>;
+  },
+  ranged: boolean,
+  snapshot: GatewaySnapshot,
+  day: string,
+): Promise<GatewayLatencyDailyInsert[] | null> {
+  if (ranged) return null;
+
+  const models = rankSnapshotModels(snapshot, day, LATENCY_MODEL_CAP);
+  if (models.length === 0) return null;
+
+  try {
+    const page = await client.fetchModelLatency(day, day, models);
+    // A refusal, an absent route or a proxy with the request log switched off
+    // must not land as a night of fast answers — the night stays unread.
+    if (!page.available) return null;
+
+    // One reading per (alias, key): the proxy already collapsed two backend
+    // models behind one endpoint into one column, and a second row for the same
+    // pair on the same night can only come from a duplicate. Last wins, never a
+    // mean — averaging two readings is the pooling this layer does not permit.
+    const readings = new Map<string, GatewayLatencyDailyInsert>();
+    for (const row of page.rows) {
+      if (row.date !== day) continue;
+      if (!Number.isFinite(row.secondsPerToken) || row.secondsPerToken <= 0) continue;
+      readings.set(`${row.model}\u0000${row.key}`, {
+        date: day,
+        model: row.model,
+        deploymentKey: row.key,
+        // The rate at 1e9 scale, rounded once here so the column is exact and
+        // the float never reaches Postgres.
+        secondsPerTokenNano: BigInt(Math.round(row.secondsPerToken * 1e9)),
+      });
+    }
+    return [...readings.values()].filter((row) => row.secondsPerTokenNano > 0n);
+  } catch (error) {
+    log.error({ err: error }, 'sweeping gateway latency failed — usage sync unaffected');
     return null;
   }
 }
@@ -729,11 +838,25 @@ export async function startGatewaySync(
       // receipt: this route answers only what failed, so a night it found
       // nothing has to be recorded as swept or it reads as a night nobody read.
       const exceptions = await readExceptions(client, ranged, snapshot, to);
+      // And the same day again, for the rate. Kept on a narrower licence than
+      // the two sweeps above: these readings may be compared across nights and
+      // never pooled into one.
+      const latency = await readLatency(client, ranged, snapshot, to);
       // The observation is stamped with the day the *reading* was taken, which
       // is today — not with the last day of the usage window. A budget counter
       // describes the period in flight right now, and filing it under yesterday
       // would make the history disagree with the snapshot it came from.
-      await persist(snapshot, budgets, models, health, slowResponses, exceptions, utcDay(0), new Date());
+      await persist(
+        snapshot,
+        budgets,
+        models,
+        health,
+        slowResponses,
+        exceptions,
+        latency,
+        utcDay(0),
+        new Date(),
+      );
       await sealNewlyClosedMonths(ranged);
       await notifyFindings(ranged);
       return snapshot.dates.length;

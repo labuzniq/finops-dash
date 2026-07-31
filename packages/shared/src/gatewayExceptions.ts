@@ -358,9 +358,10 @@ export function summarizeGatewayExceptions(payload: GatewayExceptions): GatewayE
  * The second of the four live reads to be stored, and it is stored for the same
  * arithmetic reason as the first: these are counts of *disjoint* `LiteLLM_ErrorLogs`
  * rows, so they add across the aliases of one sweep and across nights.
- * `/model/metrics` cannot follow, because it answers a mean of per-request
- * ratios with its counts already discarded — an average of nightly averages is
- * a number with no referent.
+ * `/model/metrics` is stored too, and on a narrower licence: it answers a mean
+ * of per-request ratios with its counts already discarded, so its nights may be
+ * compared and never added — an average of nightly averages is a number with no
+ * referent.
  *
  * What does **not** follow from the hang table is a rate. That route carries
  * `total_count` beside `slow_count`; this one carries no denominator at all, so

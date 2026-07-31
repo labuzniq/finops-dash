@@ -30,4 +30,5 @@ export type {
   GatewayModelSnapshot,
   GatewaySlowResponseRecord,
   GatewayExceptionRecord,
+  GatewayLatencyRecord,
 } from './types.js';

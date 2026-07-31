@@ -774,9 +774,10 @@ export const gatewaySlowResponseDaily = pgTable(
  *
  * The second *live* read to get a table, licensed by the same arithmetic as the
  * first: `LiteLLM_ErrorLogs` rows are disjoint, so counting them adds across the
- * aliases of one sweep and across nights. `/model/metrics` still has no table
- * and cannot have one — it answers a mean of per-request ratios with the counts
- * behind them already discarded.
+ * aliases of one sweep and across nights. `gateway_latency_daily` is stored too
+ * but on a narrower licence: `/model/metrics` answers a mean of per-request
+ * ratios with the counts behind them already discarded, so those readings may be
+ * compared night to night and never added to anything.
  *
  * What it does *not* inherit from `gateway_slow_response_daily` is a
  * denominator. This route carries none at all, so nothing read off this table
@@ -854,6 +855,70 @@ export const gatewayExceptionSweep = pgTable('gateway_exception_sweep', {
   exceptions: integer('exceptions').notNull(),
   observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * How slowly each deployment answered, kept — one reading per deployment key per
+ * alias per UTC day.
+ *
+ * The third *live* read to get a table, and the one whose licence is different
+ * from the other two. `gateway_slow_response_daily` and
+ * `gateway_exception_daily` are stored because their counts **add**: disjoint
+ * request-log and error-log rows may be summed across a sweep and across nights.
+ * Nothing here adds. `/model/metrics` answers `AVG(seconds / completion_tokens)`
+ * with the request counts behind it already discarded, so two nights' readings
+ * may not be pooled, weighted or totalled — the arithmetic that licensed those
+ * two tables is unavailable here and always will be.
+ *
+ * What licenses this one is the *other* precedent in this integration:
+ * `gateway_deployment_health_history`, which stores a nightly reading that
+ * cannot be aggregated either. A sequence of readings is legitimate on its own
+ * terms — it answers "has this endpoint been slow all week or only tonight",
+ * which the live route structurally cannot, because it answers one window and
+ * has no memory. So the rule this table carries is narrower than the hang
+ * table's: the rows may be **kept and compared**, never **pooled**. Every window
+ * figure derived from them is a median of nightly readings, unweighted and
+ * stated as such, and no number read off this table is a duration, a percentile
+ * or an SLA figure — the same three things the live layer already refuses.
+ *
+ * Grain is (date, model, key) and, unlike the hang table, the alias may *not* be
+ * summed away. There the two aliases behind one endpoint answer two disjoint
+ * counts that add to the endpoint's traffic; here they answer two averages over
+ * two different workloads, and their mean would be a number describing neither.
+ * The live layer keys per (alias, key) pair for exactly this reason and the
+ * stored one matches it, so the card and the history cannot disagree.
+ *
+ * `seconds_per_token_nano` is the rate at 1e9 scale for the same reason money is
+ * integer cents: a float column drifts, and the readings are small (a few
+ * milliseconds per token is 1e6 here). It is never zero — the client drops a
+ * non-positive average, since a rate of zero is a parse failure rather than an
+ * instant deployment.
+ *
+ * Written by full syncs only, for the window's last day, upserted on the grain.
+ * A backfill records nothing: this reads the request log, which is pruned on its
+ * own schedule and may be switched off entirely, so asking it about six days in
+ * May would file whatever survived pruning as those nights' readings. A day with
+ * no rows is a day nobody read — never a night the gateway was fast.
+ */
+export const gatewayLatencyDaily = pgTable(
+  'gateway_latency_daily',
+  {
+    /** UTC day the reading covers — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `api_base` cut at `/openai/`, or the backend model string when there is no URL. */
+    deploymentKey: varchar('deployment_key', { length: 300 }).notNull(),
+    /** Seconds of wall clock per completion token, ×1e9. Never a request duration. */
+    secondsPerTokenNano: bigint('seconds_per_token_nano', { mode: 'bigint' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deploymentKey] }),
+    // Every read is a window across every key, so date leads.
+    index('gateway_latency_daily_date_idx').on(table.date),
+  ],
+);
 
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
@@ -1011,6 +1076,8 @@ export type GatewayExceptionDailyRow = typeof gatewayExceptionDaily.$inferSelect
 export type GatewayExceptionDailyInsert = typeof gatewayExceptionDaily.$inferInsert;
 export type GatewayExceptionSweepRow = typeof gatewayExceptionSweep.$inferSelect;
 export type GatewayExceptionSweepInsert = typeof gatewayExceptionSweep.$inferInsert;
+export type GatewayLatencyDailyRow = typeof gatewayLatencyDaily.$inferSelect;
+export type GatewayLatencyDailyInsert = typeof gatewayLatencyDaily.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

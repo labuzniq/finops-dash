@@ -20,6 +20,8 @@ import type {
   GatewayExceptions,
   GatewayHealth,
   GatewayLatency,
+  GatewayLatencyHistory,
+  GatewayLatencyObservation,
   GatewayModelPrice,
   GatewayModels,
   GatewayProbe,
@@ -46,6 +48,7 @@ import {
   gatewayModel,
   gatewayExceptionDaily,
   gatewayExceptionSweep,
+  gatewayLatencyDaily,
   gatewaySlowResponseDaily,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
@@ -891,6 +894,69 @@ export async function getGatewayExceptionHistory(days: number): Promise<GatewayE
       observedAt: row.observedAt.toISOString(),
     })),
   };
+}
+
+/**
+ * What the nightly latency sweep read on each of the last `days` nights.
+ *
+ * The stored twin of `getGatewayLatency`, and the third of the four live reads
+ * to have one — on a licence that is neither of the other two's. The hang and
+ * exception histories are stored because their counts add; these readings do
+ * not add, and cannot be made to, because the proxy averaged the request counts
+ * away before answering. What makes them worth keeping is the same thing that
+ * makes `gateway_deployment_health_history` worth keeping beside a snapshot that
+ * is equally un-aggregatable: a live route answers one window and has no memory,
+ * so "has this endpoint been reading slow all week" is a question only a stored
+ * sequence can be asked.
+ *
+ * Every window figure the summariser takes off these rows is therefore a
+ * *median* of nightly readings, never a total or a weighted mean, and nothing is
+ * filled in for a night the sweep did not run.
+ *
+ * `recordingSince` is answered outside the window for the fourth time and the
+ * fourth identical reason: an empty list means "nothing was slow" or "we started
+ * recording on Tuesday", and only one of those is a finding.
+ */
+export async function getGatewayLatencyHistory(days: number): Promise<GatewayLatencyHistory> {
+  // Ends yesterday, like the hang and exception histories and unlike the two
+  // governance ones: the sweep covers the day usage has settled for, so today
+  // can never carry a reading and a window ending on it would report a gap on
+  // the newest night forever.
+  const toDate = new Date();
+  toDate.setUTCDate(toDate.getUTCDate() - 1);
+  const to = toDate.toISOString().slice(0, 10);
+  const fromDate = new Date(`${to}T00:00:00.000Z`);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const [rows, earliest] = await Promise.all([
+    db
+      .select()
+      .from(gatewayLatencyDaily)
+      .where(and(gte(gatewayLatencyDaily.date, from), lte(gatewayLatencyDaily.date, to)))
+      .orderBy(
+        asc(gatewayLatencyDaily.date),
+        asc(gatewayLatencyDaily.model),
+        asc(gatewayLatencyDaily.deploymentKey),
+      ),
+    db
+      .select({ date: gatewayLatencyDaily.date })
+      .from(gatewayLatencyDaily)
+      .orderBy(asc(gatewayLatencyDaily.date))
+      .limit(1),
+  ]);
+
+  const observations: GatewayLatencyObservation[] = rows.map((row) => ({
+    date: row.date,
+    model: row.model,
+    key: row.deploymentKey,
+    // The one place the stored rate leaves its exact integer form, exactly as
+    // `nanoToDollars` is the one place money does.
+    secondsPerToken: Number(row.secondsPerTokenNano) / 1e9,
+    observedAt: row.observedAt.toISOString(),
+  }));
+
+  return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
 }
 
 /**

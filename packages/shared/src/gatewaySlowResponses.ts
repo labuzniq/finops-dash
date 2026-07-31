@@ -452,7 +452,7 @@ function daysBetweenIso(from: string, to: string): number {
  *
  *  - counts add, across the sweep and across days, because they are disjoint
  *    request-log rows — which is the only reason this table exists where the
- *    exception and latency sweeps have none;
+ *    latency sweep is stored as a sequence of readings that may never be added;
  *  - every share is of the route's own denominator, never of gateway traffic;
  *  - the badge is the live card's two gates over the pooled counts, unchanged:
  *    a stored window is more evidence, not a different question;

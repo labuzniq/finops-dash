@@ -508,6 +508,27 @@ deployments the reading disagrees about, so the slow number belongs to neither o
 `unread` for a deployment the reading does not name at all. It feeds no digest finding, for the
 button's reason rather than the exception card's: a source unread until somebody presses it would
 report a blind spot on every visit.
+It is the **third** live read that is kept, and the first kept on a licence that is not arithmetic: a
+full sync sweeps it for the window's last day and appends one reading per (night, alias, key) to
+`gateway_latency_daily`, served by `GET /api/gateway/latency/history?days=` and read through
+`summarizeLatencyHistory` in `@dash/shared`. The hang and exception tables are stored because their
+counts **add**; nothing here adds and nothing will, since the proxy averaged the request counts away
+before answering — so these rows may be **kept and compared, never pooled**, which is exactly the
+licence `gateway_deployment_health_history` already runs on. What it buys is the question a windowed
+route cannot be asked: has this endpoint been reading slow all week, or only tonight. Three rules are
+this layer's own. The grain keeps the alias — two aliases behind one endpoint are two averages over two
+workloads with no sum, the opposite of the hang table's addition and the same grain the live card uses,
+so the two cannot disagree. The rate is stored as `seconds_per_token_nano`, an integer at 1e9 scale for
+the reason money is integer cents, never zero (a non-positive average is a parse failure, not an instant
+deployment). And the sweep picks its night *out of a series*, because this route answers per-day rows
+and filing the extras would record nights nobody asked about. Every window figure the summariser
+reports is a **median** — of the pairs on a night, of a pair's nights, of the pair medians gateway-wide
+— it adds no threshold (the badge is the live layer's ratio and days-observed gate restated), and its
+one new statement is a trend reported as a **ratio** rather than in percentage points, since the two
+sibling trends compare shares while this compares a rate. It is withheld under
+`LATENCY_TREND_MIN_DAYS` (6), and it is evidence about the reading rather than a verdict about the
+backends: the average is per request, so a classifier answering in one token drags it without anything
+having got slower.
 `GET /api/gateway/slow-responses?from=&to=` is the fourth live read and the last thing the gateway will
 say about a request that did not fail: `/model/metrics/slow_responses` over the same
 `LiteLLM_SpendLogs`, counting the calls whose wall clock reached the proxy's own `alerting_threshold`
@@ -638,7 +659,11 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   materiality ratio gated on days observed, never a significance test; a day's reading is a median
   across keys and never a sum, because rates do not add; and it reads the request log rather than the
   aggregates, so `disable_spend_logs` empties it and a deployment with no completion tokens is absent
-  rather than instant.
+  rather than instant. It **may** be stored (`gateway_latency_daily`, one reading per night per alias
+  per key) on a licence neither sibling table needs: those keep counts, which add, while these are
+  readings that may be kept and compared and never pooled. So every window figure off the table is a
+  median of nightly readings, two aliases behind one endpoint stay two rows, and a night with no row is
+  a night nobody read rather than a fast one — nothing may be interpolated into it.
 - **A hang count is against a threshold nobody here can see.**
   `/model/metrics/slow_responses` counts requests whose wall clock reached the proxy's own
   `alerting_threshold` (300s unless configured) and never reports which number it used, so nothing

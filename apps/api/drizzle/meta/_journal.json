@@ -127,6 +127,13 @@
       "when": 1785484573529,
       "tag": "0017_overrated_doctor_strange",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785486064188,
+      "tag": "0018_overrated_reavers",
+      "breakpoints": true
     }
   ]
 }

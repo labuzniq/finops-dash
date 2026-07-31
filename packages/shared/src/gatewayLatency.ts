@@ -313,3 +313,360 @@ export function summarizeGatewayLatency(payload: GatewayLatency): GatewayLatency
     fetchedAt: payload.fetchedAt,
   };
 }
+
+/**
+ * ---------------------------------------------------------------------------
+ * The stored nights
+ * ---------------------------------------------------------------------------
+ *
+ * `gateway_latency_daily` keeps one reading per (day, alias, key) — what the
+ * nightly sweep asked the proxy for the day usage had just settled on. The live
+ * summary above states what one window means; everything below states what a
+ * *sequence* of nightly windows may be read to mean, and the difference from the
+ * two sibling history layers is the only rule worth restating:
+ *
+ * **These readings are kept and compared. They are never pooled.** The hang and
+ * exception histories add their counts across nights because the rows they came
+ * from are disjoint events. A rate is not an event: the proxy already averaged
+ * the requests away, so nothing here knows how much traffic produced a night's
+ * number, and a total or a weighted mean of two nights is unavailable in
+ * principle rather than merely unimplemented. Every window figure is therefore a
+ * **median of nightly readings**, unweighted and said so, exactly as the live
+ * layer's own row mean is.
+ *
+ * The consequences are the same three the live layer already carries — no
+ * duration, no percentile, no SLA figure — plus one this layer adds: a night the
+ * sweep did not run is unknown, never a fast night, so it is left out of the
+ * series and counted instead.
+ */
+
+/** One stored reading, as `GET /api/gateway/latency/history` serves it. */
+export interface GatewayLatencyObservation {
+  /** UTC day the reading covers — the day swept, not the day the sweep ran. */
+  date: string;
+  /** The alias the sweep was scoped to. */
+  model: string;
+  /** `latencyDeploymentKey`'s output, as the proxy reported it. */
+  key: string;
+  /** Seconds of wall clock per completion token. Never a request duration. */
+  secondsPerToken: number;
+  /** When the sweep that produced this reading ran. */
+  observedAt: string;
+}
+
+/** Everything `GET /api/gateway/latency/history` returns. */
+export interface GatewayLatencyHistory {
+  from: string;
+  to: string;
+  /**
+   * The first night any reading was ever filed, answered outside the window for
+   * the reason every history route here answers it: without it, "nothing has
+   * been slow in thirty days" and "we started recording on Tuesday" are the same
+   * empty list.
+   */
+  recordingSince: string | null;
+  observations: GatewayLatencyObservation[];
+}
+
+/**
+ * Observed nights needed before the recording may be split in half and compared.
+ *
+ * Six, matching the two sibling histories, and the gate is doing more work here
+ * than in either of them: those compare pooled counts, while this compares a
+ * median of medians over a sample that carries no weights at all. Three nights a
+ * side is the fewest at which one unusual evening cannot own the answer.
+ */
+export const LATENCY_TREND_MIN_DAYS = 6;
+
+/** The gateway's own reading for one recorded night. */
+export interface GatewayLatencyHistoryDay {
+  date: string;
+  /**
+   * Median across the (alias, key) pairs that reported that night.
+   *
+   * A median, never a mean and never a sum: the pairs carry no weights, so one
+   * embedding-sized deployment would otherwise own the night, and rates do not
+   * add in any case.
+   */
+  medianSecondsPerToken: number;
+  /** How many pairs reported. A thin night is a thin reading, not a fast one. */
+  keys: number;
+  /** How many aliases contributed. The sweep's own cap and a quiet alias both lower it. */
+  models: number;
+}
+
+/** One (alias, key) pair across every night it was observed. */
+export interface GatewayLatencyHistoryKey {
+  model: string;
+  key: string;
+  /**
+   * Median of this pair's nightly readings.
+   *
+   * The window figure, and a median rather than the live layer's mean for one
+   * reason: a window here is months rather than days, and a single incident
+   * night in a quarter should not become the pair's standing rate.
+   */
+  medianSecondsPerToken: number;
+  /** The same reading as throughput. Null only for a nonsensical zero. */
+  tokensPerSecond: number | null;
+  /** Nights carrying a reading of this pair. Evidence, never a duration. */
+  daysObserved: number;
+  /** Nights inside this pair's own first-to-last span that carry no reading. */
+  unobservedDays: number;
+  firstDate: string;
+  lastDate: string;
+  /** The slowest night recorded, and the fastest — a standing fault reads differently from a spike. */
+  worstDay: GatewayLatencyPoint;
+  bestDay: GatewayLatencyPoint;
+  /** This pair's median over the gateway-wide median of pair medians. */
+  ratioToGateway: number | null;
+  /** Materially slower than the rest of the gateway, on enough nights to mean it. */
+  elevated: boolean;
+}
+
+/**
+ * The recording split into two halves of observed nights.
+ *
+ * Each half is a **median of that half's nightly gateway medians** — the only
+ * summary this payload supports — and the movement is reported as a *ratio*
+ * rather than in percentage points, which is the opposite choice from the hang
+ * and exception trends and forced by the unit. Those two compare shares, where a
+ * difference of shares is points; this compares a rate, where the meaningful
+ * comparison is "1.4× the seconds per token it was", and a subtraction would
+ * produce a number in seconds-per-token whose size depends on which models the
+ * gateway happens to run.
+ *
+ * What it is not is a verdict. A gateway that shipped a classifier answering in
+ * one token drags this number without anything having got slower (the average is
+ * per request, so short answers carry their whole connection overhead), so the
+ * trend is evidence about the reading and not about the backends.
+ */
+export interface GatewayLatencyTrend {
+  earlier: { from: string; to: string; days: number; medianSecondsPerToken: number };
+  recent: { from: string; to: string; days: number; medianSecondsPerToken: number };
+  /** recent ÷ earlier. Above 1 is slower per token. */
+  ratio: number;
+}
+
+export interface GatewayLatencyHistorySummary {
+  from: string;
+  to: string;
+  recordingSince: string | null;
+  /** Nights carrying at least one reading, ascending. The sample, not the calendar. */
+  observedDays: string[];
+  /**
+   * Calendar nights inside the window carrying no reading at all, counted from
+   * `recordingSince` forward — a night before recording started is not a gap.
+   * Never filled in.
+   */
+  unobservedDays: number;
+  days: GatewayLatencyHistoryDay[];
+  /** Slowest first. */
+  keys: GatewayLatencyHistoryKey[];
+  /** Median of the pair medians — what every ratio here is taken against. */
+  medianSecondsPerToken: number | null;
+  /** How many (alias, key) pairs reported anything. */
+  observedKeys: number;
+  trend: GatewayLatencyTrend | null;
+}
+
+/** `2026-07-31`, `2026-07-28` → 3. Both UTC midnights, so DST never shifts it. */
+function daysBetweenIso(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Stored nightly readings → what each deployment has been doing.
+ *
+ * Pure, and it adds **no threshold the live layer does not already have**:
+ * `LATENCY_ELEVATED_RATIO` gated on `LATENCY_MIN_DAYS`, restated over stored
+ * nights, because a longer recording is more evidence rather than a different
+ * question. Its one new statement is the trend, and that is a ratio of two
+ * medians rather than anything pooled — see `GatewayLatencyTrend`.
+ *
+ * Three rules carry the rest, and all three are inherited:
+ *
+ *  - a reading is a rate per completion token, so nothing here is a duration;
+ *  - readings are never added, weighted or averaged across nights or across
+ *    aliases — the window figure is a median, and the (alias, key) pair is the
+ *    grain because two aliases on one endpoint measured two different workloads;
+ *  - a night with no reading is unknown: left out of the series, counted in
+ *    `unobservedDays`, never drawn as a fast night.
+ */
+export function summarizeLatencyHistory(
+  history: GatewayLatencyHistory,
+): GatewayLatencyHistorySummary {
+  const byDay = new Map<string, { values: number[]; models: Set<string> }>();
+  const byPair = new Map<
+    string,
+    { model: string; key: string; points: Map<string, number> }
+  >();
+
+  for (const observation of history.observations) {
+    if (!Number.isFinite(observation.secondsPerToken) || observation.secondsPerToken <= 0) continue;
+
+    const day = byDay.get(observation.date);
+    if (day === undefined) {
+      byDay.set(observation.date, {
+        values: [observation.secondsPerToken],
+        models: new Set([observation.model]),
+      });
+    } else {
+      day.values.push(observation.secondsPerToken);
+      day.models.add(observation.model);
+    }
+
+    const id = `${observation.model}\u0000${observation.key}`;
+    const pair = byPair.get(id);
+    if (pair === undefined) {
+      byPair.set(id, {
+        model: observation.model,
+        key: observation.key,
+        points: new Map([[observation.date, observation.secondsPerToken]]),
+      });
+    } else {
+      // One reading per pair per night by construction (the table's primary key
+      // is that grain), so a duplicate is a re-sweep and the last one wins —
+      // never a mean of the two, which would be the pooling this layer forbids.
+      pair.points.set(observation.date, observation.secondsPerToken);
+    }
+  }
+
+  const days: GatewayLatencyHistoryDay[] = [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, day]) => ({
+      date,
+      medianSecondsPerToken: median(day.values) ?? 0,
+      keys: day.values.length,
+      models: day.models.size,
+    }));
+  const observedDays = days.map((day) => day.date);
+
+  const pairs = [...byPair.values()].map((pair) => {
+    const entries = [...pair.points.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    const points: GatewayLatencyPoint[] = entries.map(([date, secondsPerToken]) => ({
+      date,
+      secondsPerToken,
+    }));
+    const values = points.map((point) => point.secondsPerToken);
+    const pairMedian = median(values) ?? 0;
+    const worstDay = points.reduce((slowest, point) =>
+      point.secondsPerToken > slowest.secondsPerToken ? point : slowest,
+    );
+    const bestDay = points.reduce((fastest, point) =>
+      point.secondsPerToken < fastest.secondsPerToken ? point : fastest,
+    );
+    const first = points[0]!;
+    const last = points[points.length - 1]!;
+    return {
+      model: pair.model,
+      key: pair.key,
+      medianSecondsPerToken: pairMedian,
+      tokensPerSecond: tokensPerSecond(pairMedian),
+      daysObserved: points.length,
+      // Gaps inside the pair's *own* span rather than the window's: a deployment
+      // added last week has not been unread for the month before it existed.
+      unobservedDays: Math.max(
+        0,
+        daysBetweenIso(first.date, last.date) + 1 - points.length,
+      ),
+      firstDate: first.date,
+      lastDate: last.date,
+      worstDay,
+      bestDay,
+    };
+  });
+
+  const gatewayMedian = median(pairs.map((pair) => pair.medianSecondsPerToken));
+
+  const keys: GatewayLatencyHistoryKey[] = pairs
+    .map((pair) => {
+      const ratio =
+        gatewayMedian === null || gatewayMedian <= 0
+          ? null
+          : pair.medianSecondsPerToken / gatewayMedian;
+      return {
+        ...pair,
+        ratioToGateway: ratio,
+        elevated:
+          ratio !== null && ratio >= LATENCY_ELEVATED_RATIO && pair.daysObserved >= LATENCY_MIN_DAYS,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.medianSecondsPerToken - a.medianSecondsPerToken ||
+        a.model.localeCompare(b.model) ||
+        a.key.localeCompare(b.key),
+    );
+
+  const start =
+    history.recordingSince !== null && history.recordingSince > history.from
+      ? history.recordingSince
+      : history.from;
+  const span = start > history.to ? 0 : daysBetweenIso(start, history.to) + 1;
+  const observedInSpan = observedDays.filter((date) => date >= start && date <= history.to).length;
+
+  return {
+    from: history.from,
+    to: history.to,
+    recordingSince: history.recordingSince,
+    observedDays,
+    unobservedDays: Math.max(0, span - observedInSpan),
+    days,
+    keys,
+    medianSecondsPerToken: gatewayMedian,
+    observedKeys: keys.length,
+    trend: buildLatencyTrend(days),
+  };
+}
+
+/**
+ * Split the observed nights down the middle and take each half's median.
+ *
+ * The split is on *observed* nights rather than on the calendar, so a fortnight
+ * the scheduler was down shifts the boundary instead of emptying a half; an odd
+ * number gives the extra night to the recent half, because the question is about
+ * now. Both halves are medians of nightly medians — the one summary a sample
+ * with no weights supports.
+ */
+function buildLatencyTrend(days: GatewayLatencyHistoryDay[]): GatewayLatencyTrend | null {
+  if (days.length < LATENCY_TREND_MIN_DAYS) return null;
+  const cut = Math.floor(days.length / 2);
+  const earlierDays = days.slice(0, cut);
+  const recentDays = days.slice(cut);
+
+  const earlierMedian = median(earlierDays.map((day) => day.medianSecondsPerToken));
+  const recentMedian = median(recentDays.map((day) => day.medianSecondsPerToken));
+  if (earlierMedian === null || recentMedian === null || earlierMedian <= 0) return null;
+
+  const first = earlierDays[0];
+  const lastEarlier = earlierDays[earlierDays.length - 1];
+  const firstRecent = recentDays[0];
+  const last = recentDays[recentDays.length - 1];
+  if (
+    first === undefined ||
+    lastEarlier === undefined ||
+    firstRecent === undefined ||
+    last === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    earlier: {
+      from: first.date,
+      to: lastEarlier.date,
+      days: earlierDays.length,
+      medianSecondsPerToken: earlierMedian,
+    },
+    recent: {
+      from: firstRecent.date,
+      to: last.date,
+      days: recentDays.length,
+      medianSecondsPerToken: recentMedian,
+    },
+    ratio: recentMedian / earlierMedian,
+  };
+}
