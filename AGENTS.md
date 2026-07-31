@@ -189,7 +189,18 @@ serves the chain with `diffSeals` (`@dash/shared`) between each pair: pure, sinc
 rather than derivations, matching lines on `dimension + key` so a resolved alias is not a new payer,
 suppressing sub-cent settles from the list while still counting them in `unattributedDelta` — the movement
 the dimension's lines do not account for, reported and never spread, for the same reason the statement's
-`unallocated` row is.
+`unallocated` row is. `lib/metrics/gatewayHistory.ts` and `GatewayHistoryCard` are the seals read as a
+*series* — the page's only card not bounded by the range picker, and therefore the only one that can
+still answer "what did March cost" once March's days are past the proxy's retention. It re-derives
+nothing (for the older months there is nothing left to add; for the newer ones `sealDrift` above is
+already that comparison), sums only over the months that carry a current statement — calendar months
+being the one axis here that may be added, since they are disjoint spans of one gateway-wide total — and
+draws a closed-but-unsealed month as a **hole**: a zero-height bar is how a free month draws, and a
+month-over-month change measured across the hole would turn a missing August into a doubled September,
+so the comparison is against the previous *calendar* month or nothing. The spine ends at the last
+*closed* month rather than at the newest seal, because a month that closed and never got sealed is the
+row worth seeing; a month whose only statement is superseded is a hole too, and one whose current
+statement is a revision is marked as such.
 Everything above is
 *usage*; `gateway_model`, `gateway_budget` and `gateway_deployment_health` are the
 three gateway tables that are not. `gateway_model` is the proxy's configured **price list** from
@@ -301,7 +312,7 @@ window is clamped forward to `recordingSince` rather than padded with empty days
 standing spend produces a crossing with no spend at all, which is why a crossing is measured against the
 previous reading's own cap and sits on the same day as the cap change explaining it.
 `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of derivations* and the reason the other
-fifteen cards are findable: it reads the already-derived summaries — budgets, budget history,
+sixteen cards are findable: it reads the already-derived summaries — budgets, budget history,
 anomalies, reliability, cache, coverage, deployment health — and lists their findings at the top with a
 button that scrolls to the card that made each one. It **adds no threshold of its own**; it can only repeat a state a source
 already flagged, with that source's own numbers, because a digest able to disagree with the card it

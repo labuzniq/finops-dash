@@ -831,9 +831,10 @@ What it shows, and why each one is there:
 | Price catalogue | The rates the proxy is configured with, beside the bill they produced: what share of gateway spend sits on models the catalogue can price, each model's list input/output $/1M against its **effective** blended rate, the same tokens re-priced at list, and the ratio between the two — with a single-deployment model more than 5% away from list flagged, a multi-deployment alias labelled a **floor** and left out of the aggregate, and the models the proxy offers that saw no traffic counted |
 | Seal badge on the statement | Whether the month on screen is *final* — recorded at close and quotable — and, when the daily rows have moved since, by how much. Nothing renders for a month still in flight |
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
+| Monthly ledger | Every month that has been **sealed**, newest first: what it cost, what it moved by against the calendar month before it, its tokens, calls and blended $/1M, and the compounded direction across the longest unbroken run — with a strip that draws a closed-but-unsealed month as a marked hole rather than a short bar, and an `archive` mark on the months whose days LiteLLM has since pruned. The only card on the page not bounded by the range picker, because it reads the record rather than the days |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-three decisions worth keeping:
+Twenty-four decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1299,7 +1300,7 @@ Twenty-three decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because fifteen cards each flagging their own faults means every
+  their findings in one list, because sixteen cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -1475,6 +1476,63 @@ Twenty-three decisions worth keeping:
   eligible for both — a deployment the catalogue could not name is still a
   deployment that can fail, and filing it under a near-match is the one thing
   this table refuses to do.
+
+- **The ledger reads the record, and an unsealed month is a hole rather than a
+  cheap one.** Every other card here is bounded twice over — by the range picker
+  and, behind it, by LiteLLM pruning its aggregates at 90 days — which makes
+  "what did the gateway cost in March" unanswerable from the usage payload the
+  moment March falls out of the window. `gateway_month` is the answer and it is
+  the reason the seal exists, so `lib/metrics/gatewayHistory.ts` reads the seal
+  headers as a series and nothing else. It deliberately does **not** re-add
+  `gateway_daily` to check itself: for the older months there is nothing left to
+  add, and for the newer ones that comparison already exists as `sealDrift` on
+  the statement card, so doing it again here would give a reader two histories
+  and no way to choose which one he is quoting.
+
+  A month with no current statement is the one thing this card could lie about,
+  and it would lie twice if allowed to. In the strip a zero-height bar is how a
+  free month draws, so an unsealed month gets a marked slot instead; and a
+  month-over-month change measured *across* the hole would turn a missing August
+  into a doubled September, so the comparison is against the previous **calendar**
+  month or nothing at all. The spine runs to the last *closed* month rather than
+  to the newest seal for the same reason: a month that ended and never got
+  sealed is the most interesting row in the table, and stopping at the last seal
+  is exactly what would hide it.
+
+  Two things follow from the input rather than from taste. **Months are the one
+  axis on this page that may be summed** — the breakdown dimensions overlap and
+  budget counters run on their own periods, but calendar months are disjoint
+  spans of one gateway-wide total — so the card carries a real multi-month total,
+  over the sealed months only and with the unsealed ones counted beside it. And
+  **only the current statement counts**: `GET /api/gateway/months` already filters
+  superseded revisions, but the payload type carries `supersededAt`, so the
+  filter is repeated in the module and a month whose only row is superseded
+  reads as a hole. A month whose current statement is a revision is marked
+  (`rev 2`), because "we billed $X and then corrected it" is a fact about the
+  ledger worth seeing without opening the chain. The trend compounds across the
+  longest *unbroken* run ending at the newest sealed month, since a mean of
+  month-over-month percentages is dominated by whichever month was smallest and
+  a run that jumped a hole is not a run.
+
+`apps/api/scripts/verify-gateway-history.ts` covers it, and the split is the
+same one the seal-history and budget-history scripts needed: a dev database has
+no multi-month history, and the feature is entirely about months it does not
+have. The pure half constructs them — a consecutive run whose deltas, mean,
+total and compounded trend are checked arithmetically; a hole that must appear
+as itself, carry nulls, sit outside every total, cut the trend and kill the
+comparison of the month after it; a spine that ends at the last closed month and
+excludes the one in flight; a superseded statement that must not be read (and a
+month whose only statement is superseded reading as a hole); the retention flag
+on both sides of its boundary; and the arithmetic that must *not* be invented —
+no unit rate for a month that moved no tokens, no growth percentage out of a $0
+month while the dollar change is still one, no trend compounded out of zero. The
+Postgres half plants two months and a superseded revision shaped like the ones
+earlier syncs would have written, reads them back through the same
+`listGatewaySeals()` the route calls, checks the corrected statement is the one
+that comes back and that nano-dollars survive as dollars, and deletes exactly
+what it planted — refusing to run at all if a real seal already occupies those
+months. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-history.ts`.
 
 `apps/api/scripts/verify-gateway-catalog-view.ts` covers that derivation, and
 splits into the three things the mock can and cannot show. It **can** show the

@@ -42,6 +42,7 @@ import {
 } from '../../lib/metrics/gatewayCompare.js';
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
+import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
 import { deriveGatewayMix, hasMixSignal } from '../../lib/metrics/gatewayMix.js';
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
@@ -75,6 +76,7 @@ import { GatewayHealthCard } from './GatewayHealthCard.js';
 import { GatewayChargebackCard } from './GatewayChargebackCard.js';
 import { GatewayCoverageNote } from './GatewayCoverageNote.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
+import { GatewayHistoryCard } from './GatewayHistoryCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
@@ -423,6 +425,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const sealHistoryQuery = useGatewaySealHistory(
     activeMonth,
     (activeSeal?.revision ?? 1) > 1,
+  );
+
+  // The month-by-month ledger, off the same seal list the statement reads. It
+  // is the one derivation on this page that is *not* bounded by the range
+  // picker or by the proxy's retention: a sealed month is a record, so the
+  // ledger keeps answering for months whose daily rows LiteLLM has pruned.
+  const ledger = useMemo(
+    () => deriveLedger(sealsQuery.data, { todayIso: maxIso, retentionFloorIso }),
+    [sealsQuery.data, maxIso, retentionFloorIso],
   );
 
   const latestJob = latestJobQuery.data ?? null;
@@ -813,6 +824,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             history={sealHistoryQuery.data ?? null}
             loading={billQuery.isPending}
           />
+
+          {/*
+            Directly under the statement on purpose: that card bills one month
+            and this one is every month it has ever billed. It stands itself
+            down until a month has been sealed — a ledger of nothing would say
+            the gateway is new, when what it means is that no month has closed
+            with all of its days stored yet.
+          */}
+          {hasLedger(ledger) && <GatewayHistoryCard ledger={ledger} />}
 
 
           <div className={styles.chartRow}>
