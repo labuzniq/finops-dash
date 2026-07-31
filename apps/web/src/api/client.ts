@@ -2,6 +2,7 @@ import type {
   BillingImportResult,
   CopilotSeat,
   DateRange,
+  GatewayBudgets,
   GatewaySource,
   GatewayUsage,
   ImportLogEntry,
@@ -208,6 +209,16 @@ export async function startGatewaySync(): Promise<RefreshJob> {
  */
 export function fetchGatewayUsage(from: string, to: string): Promise<GatewayUsage> {
   return request<GatewayUsage>(`/gateway?from=${from}&to=${to}`);
+}
+
+/**
+ * The proxy's current budgets and rate limits, per key and per team.
+ *
+ * No date range: this is configuration plus the counter for the period in
+ * flight, replaced wholesale by every sync and carrying no history at all.
+ */
+export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
+  return request<GatewayBudgets>('/gateway/budgets');
 }
 
 /** Whether a gateway source is configured at all — gates the whole view. */

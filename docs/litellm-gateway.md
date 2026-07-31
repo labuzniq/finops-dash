@@ -295,8 +295,9 @@ What it shows, and why each one is there:
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
+| Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
 
-Nine decisions worth keeping:
+Ten decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -419,6 +420,35 @@ Nine decisions worth keeping:
   of the bill is this server", and "how much of the agent bill" is the different
   question that ranks tool usage.
 
+- **The budget card is the one card that totals nothing.** Every other surface
+  on the page adds dollars freely, because every row it adds shares one 90-day
+  spine. A budget does not: each row's `spend` is the proxy's counter over *that
+  row's own period*, and a real proxy mixes them — the mock alone has five
+  monthly budgets, one weekly one, and one key with no period at all whose
+  counter simply never resets. `$30 per week + $1,800 per month` is a number
+  with no unit, so `lib/metrics/gatewayBudgets.ts` aggregates **counts of
+  objects** and nothing else, and the card's headline is "4 of 6 keys need
+  attention" rather than any share of any dollar. The same reasoning forbids one
+  tempting metric outright: "what share of gateway spend is uncapped" cannot be
+  derived here, because the uncapped rows' counters cover an unbounded period
+  while the capped ones cover a month or a week. Coverage is reported in objects.
+  Scopes are a switcher for the breakdown card's reason — a key's cap and its
+  team's cap govern the *same* dollars, and the live mock shows it plainly
+  (`data-platform-etl` at 144.8% of its own $3,000 cap is `Data Platform` at
+  120.7% of the team's $3,600), so merging the two scopes would count that
+  overrun twice. Beyond the states LiteLLM reports, the card derives one thing:
+  **pace** — `spend ÷ share of the period elapsed`, which is what turns "96% of
+  cap" into "96% of cap on day 12 of 30". It is deliberately linear, deliberately
+  null before a sixth of the period has passed (one batch job on the first
+  morning of a month projects thirty times itself), and deliberately null for a
+  counter with no period, which has no end to project to. Overrun is never
+  clamped — a proxy bills past a cap on in-flight requests, and hiding it would
+  make the one state nobody can undo the least visible one on the card. And null
+  stays the opposite of zero all the way to the pixel: an uncapped row draws no
+  bar at all (a full one reads as spent-through, an empty one as untouched, and
+  it is neither), while a `max_budget` of `0` renders as **blocked**, next to the
+  administratively disabled keys it behaves like.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -494,6 +524,22 @@ reports nulls not zeros, and a deliberately over-attributed day clamps *and* is
 named. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-agents.ts`.
 
+`apps/api/scripts/verify-gateway-budgets.ts` covers the governance layer. It
+classifies a real mock snapshot and checks each state against the shape the
+generator planted it as — the uncapped key that carries the gateway's largest
+counter, the key past its soft budget, the key its own batch burst drove into
+overrun, and the blocked one — so the badges are checked against intent rather
+than against themselves. Then the rule the whole table rests on: null and zero
+are opposite ends. An uncapped row has no utilization, no remaining and no soft
+mark; a `maxBudget: 0` row is *blocked*, with the reason carried separately from
+the admin flag. Then the ordering (blocked first, then descending share of cap,
+uncapped last ranked by dollars), the scope separation (key ids and team ids
+never collide, so the two scopes can never merge), and the pace projection in
+both regimes — a month one day in projects nothing, half a month at $600 against
+a $1,000 cap projects $1,200 and is flagged as pacing over, and every projection
+that does answer is exactly `spend ÷ elapsed`. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budgets.ts`.
+
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a
 throwaway HTTP server answering the envelope documented above and points
@@ -565,10 +611,18 @@ gating.
 
 ## Not yet built
 
-`gateway_budget` is populated and served, but **nothing renders it yet** — the
-budget card on the `LLM gateway` page is the next step. The read model it will
-run on (`GET /api/gateway/budgets` plus `budgetUtilization`,
-`budgetRemaining` and `budgetPeriodStart` in `@dash/shared`) is in place and
-verified; what is missing is the view and the pace derivation on top of it
-(spend against the *share of the period elapsed*, which is what turns "96% of
-cap" into "96% of cap on day 12 of 30").
+Governance is now rendered end to end (`GatewayBudgetCard`, on
+`lib/metrics/gatewayBudgets.ts` over `GET /api/gateway/budgets`). What is still
+missing on this side of the gateway:
+
+- **Tag budgets.** LiteLLM's newer versions can budget per tag as well as per
+  key and per team; only the latter two are read. Open question 7 above is what
+  decides whether it is worth adding.
+- **Budget history.** `gateway_budget` is a snapshot replaced wholesale by every
+  sync, so "was this key already over last week" has no answer here. Keeping one
+  row per sync would give it one, at the cost of a table that grows with the
+  scheduler rather than with the gateway — worth doing only if someone asks the
+  question.
+- **Acting on a budget.** The card is read-only, deliberately: raising a cap is
+  a `POST /key/update` against production inference for the whole corporation,
+  and it needs a different authorisation story than a dashboard cookie.

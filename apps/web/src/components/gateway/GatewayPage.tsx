@@ -8,12 +8,13 @@ import {
   rangeDayCount,
   successRate,
 } from '@dash/shared';
-import type { DateRange, GatewayDimension } from '@dash/shared';
+import type { DateRange, GatewayBudgetScope, GatewayDimension } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
+import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import {
   comparisonWindow,
@@ -27,6 +28,7 @@ import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
+  useGatewayBudgets,
   useGatewayComparisonData,
   useGatewayData,
   useGatewayForecastData,
@@ -40,6 +42,7 @@ import { DateRangePicker } from '../DateRangePicker.js';
 import { GatewayAgentsCard } from './GatewayAgentsCard.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
+import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
@@ -172,6 +175,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   /** The flagged day whose overrun is attributed, held as a date for the same reason. */
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  /** Which governance scope the budget card shows. Keys and teams cap the same dollars. */
+  const [budgetScope, setBudgetScope] = useState<GatewayBudgetScope>('api_key');
 
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
@@ -249,6 +254,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const forecast = useMemo(
     () => deriveSpendForecast(forecastQuery.data?.daily ?? [], forecastRangeValue),
     [forecastQuery.data, forecastRangeValue],
+  );
+
+  // Governance is the one gateway surface with no date range: the proxy reports
+  // one current state per key and per team and keeps no history of it, so this
+  // query carries no bounds and re-derives only when a sync replaces the rows.
+  // `now` is read at derivation time and only feeds the pace projection, which
+  // moves by a fraction of a percent an hour.
+  const budgetsQuery = useGatewayBudgets(configured);
+  const budgets = useMemo(
+    () => deriveBudgets(budgetsQuery.data?.budgets, new Date()),
+    [budgetsQuery.data],
   );
 
   const latestJob = latestJobQuery.data ?? null;
@@ -508,6 +524,14 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           </div>
 
           {forecast !== null && <GatewayForecastCard forecast={forecast} />}
+
+          <GatewayBudgetCard
+            scopes={budgets.scopes}
+            scope={budgetScope}
+            onScope={setBudgetScope}
+            loaded={!budgetsQuery.isPending}
+          />
+
 
           <div className={styles.chartRow}>
             <GatewayTrendCard title="Daily gateway spend" sub={rangeLabel(range)} chart={charts.spend} />

@@ -96,8 +96,14 @@ and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit m
 while `0` means *reject everything*, so nothing is zero-filled; and `spend` is the proxy's own enforced
 counter, never a re-derivation from `gateway_daily`, because a key's budget period resets on its own
 schedule. Both management routes are optional — an analytics-only credential is refused them, and
-`fetchBudgets` answering `[]` must not fail a usage sync. **Nothing renders it yet** — the budget card is
-the next step (see `docs/litellm-gateway.md`, "Not yet built"). **It is a draft against
+`fetchBudgets` answering `[]` must not fail a usage sync. `lib/metrics/gatewayBudgets.ts` and
+`GatewayBudgetCard` render it, and they are the page's one surface that **totals nothing**: each row's
+`spend` is measured over that row's own period (monthly, weekly, or never-resetting), so summing dollars
+across rows produces a number with no unit — the card aggregates counts of objects instead, and reports
+governance coverage in keys rather than in dollars. Scopes are a switcher, not two tables, because a
+key's cap and its team's cap govern the same dollars. The one thing derived on top of the proxy's state
+is *pace* — `spend ÷ share of the period elapsed`, linear, null before a sixth of the period has passed
+and null for a counter with no period. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. The live client's *wire* behaviour is covered:
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP

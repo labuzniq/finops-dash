@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { DateRange, GatewayUsage } from '@dash/shared';
-import { fetchGatewayStatus, fetchGatewayUsage } from '../api/client.js';
+import type { DateRange, GatewayBudgets, GatewayUsage } from '@dash/shared';
+import { fetchGatewayBudgets, fetchGatewayStatus, fetchGatewayUsage } from '../api/client.js';
 import type { GatewayStatus } from '../api/client.js';
 import type { ComparisonWindow } from '../lib/metrics/gatewayCompare.js';
 import type { ForecastRange } from '../lib/metrics/gatewayForecast.js';
@@ -55,6 +55,24 @@ export function useGatewayForecastData(range: ForecastRange, enabled: boolean) {
   return useQuery<GatewayUsage>({
     queryKey: ['gateway', range.from, range.to],
     queryFn: () => fetchGatewayUsage(range.from, range.to),
+    enabled,
+  });
+}
+
+/**
+ * The proxy's current budgets and limits — one row per key and per team, with
+ * no date range and no history: it is configuration plus the counter for the
+ * period in flight, replaced wholesale by every sync.
+ *
+ * Cached under a key with no bounds in it for exactly that reason, and gated on
+ * the gateway being configured. A proxy that refuses the management routes to
+ * an analytics-only credential answers an empty list rather than an error, so
+ * "no budgets" and "no permission" look the same here — the card says so.
+ */
+export function useGatewayBudgets(enabled: boolean) {
+  return useQuery<GatewayBudgets>({
+    queryKey: ['gateway', 'budgets'],
+    queryFn: fetchGatewayBudgets,
     enabled,
   });
 }
