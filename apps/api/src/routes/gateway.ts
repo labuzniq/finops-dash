@@ -16,6 +16,7 @@ import {
   getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
+  getGatewayDeploymentHistory,
   getGatewayHealth,
   getGatewayModels,
   getGatewaySpendLogs,
@@ -133,6 +134,33 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * stale rather than as current.
    */
   app.get('/api/gateway/health', async () => getGatewayHealth());
+
+  /**
+   * What those deployments read on each of the last `days` days.
+   *
+   * The health twin of `/api/gateway/budgets/history`, and it exists for the
+   * same reason: the snapshot above is replaced by every full sync, so it can
+   * say a pool is refusing tonight and can never say it has been refusing all
+   * week. Only that second statement separates a fault somebody has to fix from
+   * an evening's trouble that already cleared.
+   *
+   * A weaker sample than the governance one, deliberately read as such: a
+   * deployment that failed and recovered between two nightly readings left
+   * nothing here, so `summarizeDeploymentHistory` counts readings and never
+   * converts them to hours, and a day with no row stays unknown.
+   *
+   * Same window rules as the budget history — 60 days by default, 365 at most.
+   * The rows are ours rather than the proxy's, so the only argument for the cap
+   * is payload size: deployments × days, and a large router is a hundred rows a
+   * night.
+   */
+  app.get('/api/gateway/health/history', async (request, reply) => {
+    const parsed = historyQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewayDeploymentHistory(parsed.data.days);
+  });
 
   /**
    * What those budgets read on each of the last `days` days.

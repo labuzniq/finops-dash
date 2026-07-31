@@ -273,6 +273,20 @@ reading that has never been taken stands the card down entirely rather than
 rendering an empty alias list a healthy gateway would produce too. On the digest
 `down` is `critical` (calls are being rejected now; the usage payload shows it
 as failures tomorrow) and `degraded` is a `warning` no other card can raise.
+The same nightly reading is also *appended* to `gateway_deployment_health_history` — one row per
+deployment per UTC day, upserted like `gateway_budget_history` and filed only when `/health` actually
+answered (a backfill and a swallowed failure both leave the day unrecorded) — served by
+`GET /api/gateway/health/history?days=` and read through `summarizeDeploymentHistory` in
+`@dash/shared`. It exists because the snapshot can say a pool is refusing *tonight* and can never say it
+has been refusing all week, which is the whole difference between a fault and an evening's trouble. It
+is a thinner sample than the governance one and is written as such: a deployment can fail and recover
+between two nightly readings, so every figure is a count of **readings** and nothing is reported as an
+uptime percentage or a duration. A run of failing readings is broken by an *observed* recovery and by
+nothing else — an unobserved day inside a run is counted as `unobservedDays`, never used to split it,
+because splitting asserts a recovery nobody saw exactly as filling it in asserts a failure nobody saw —
+and `STANDING_OUTAGE_READINGS` (3) is its one threshold, the first count that a single evening spanning
+a night cannot explain. `model` is stored as it resolved that day rather than joined at read time, so a
+deployment moved to another alias reads as the change it was.
 `gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
@@ -465,6 +479,12 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   exists. `model` there is *resolved*, never fetched, and a deployment the
   catalogue could not name is stored as null rather than filed under a
   near-match.
+- **A health observation is a sample, and a thinner one than a budget observation.**
+  `gateway_deployment_health_history` holds one reading per deployment per day the sync called
+  `/health`. A deployment that failed and recovered between two nightly readings left nothing behind,
+  so everything derived from it counts **readings** and nothing may be rendered as a duration, an
+  availability percentage or an hour count. A run of failing readings is broken by an observed recovery
+  and by nothing else: an unobserved day inside a run is reported, never used to split it.
 - **`last_activity_at` is stored as a timestamp; "days ago" is derived at read time.** Storing the day
   count would go stale overnight.
 - **Every colour, radius, and font comes from `apps/web/src/styles/tokens.css`** — the Nocturne token

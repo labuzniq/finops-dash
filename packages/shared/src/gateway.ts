@@ -1333,6 +1333,306 @@ export function summarizeDeploymentHealth(
   };
 }
 
+/* -------------------------------------------- deployment health history */
+
+/**
+ * What `/health` said on the days it was asked — the one deployment fact that
+ * has a range.
+ *
+ * `gateway_deployment_health` is current state and answers "is this alias
+ * losing capacity right now". It cannot answer the question an owner asks
+ * next, which is whether that has been true for a week: a pool that refuses
+ * every night is a standing fault somebody has to fix, and one that refused
+ * once is a blip. Both look identical in the snapshot.
+ *
+ * The recording is a **sample, not a series**, and more emphatically so than
+ * the budget one. A budget counter changes on the proxy's schedule and a daily
+ * reading of it is a fair spot check; a deployment can fail and recover between
+ * two readings and leave nothing behind. So every number here is counted in
+ * *readings* rather than in days or in hours, nothing is interpolated across a
+ * day nobody looked at, and there is no availability percentage anywhere —
+ * "failing at 9 of 14 readings" is a fact, "64% uptime" is not.
+ */
+
+/** One deployment as `/health` read on one UTC day. */
+export interface GatewayDeploymentObservation {
+  /** LiteLLM's `model_info.id`, or the routing string — the deployment's identity. */
+  id: string;
+  backend: string;
+  /** The alias it served *that day*, as resolved then. A re-alias is itself a change. */
+  model: string | null;
+  provider: string | null;
+  /** The UTC day the reading was filed under. */
+  date: string;
+  /** The instant the reading was taken — what says where in the day it landed. */
+  observedAt: string;
+  healthy: boolean;
+  error: string | null;
+  errorStatus: number | null;
+}
+
+/** Everything `GET /api/gateway/health/history` returns. */
+export interface GatewayDeploymentHistory {
+  from: string;
+  to: string;
+  /**
+   * The first day any reading was ever filed, answered outside the window on
+   * purpose: without it, "this deployment never failed in the last 30 days" is
+   * indistinguishable from "recording started yesterday", and only the first is
+   * a finding.
+   */
+  recordingSince: string | null;
+  observations: GatewayDeploymentObservation[];
+}
+
+/**
+ * A run of consecutive *readings* that all said failing.
+ *
+ * Bounded by dates because that is how it is shown, but measured in readings
+ * because that is what was observed. A day inside the span that carries no
+ * reading does not break the run — claiming two episodes there would assert a
+ * recovery nobody saw, which is the same invention as claiming one long one —
+ * so it is counted and reported instead.
+ */
+export interface GatewayDeploymentOutage {
+  /** First day observed failing. */
+  from: string;
+  /** Last day observed failing. */
+  to: string;
+  /** How many readings inside the span said failing. The evidence, not a duration. */
+  readings: number;
+  /** Calendar days inside the span with no reading at all. Neither failing nor recovered. */
+  unobservedDays: number;
+  /** True when the run reaches this deployment's newest reading — it has not recovered. */
+  open: boolean;
+  /** Distinct error texts across the run: three nights of the same fault is one message. */
+  errors: string[];
+}
+
+/** One deployment read across the window. */
+export interface GatewayDeploymentUptime {
+  id: string;
+  /** The routing string as of the newest reading. */
+  backend: string;
+  /** The alias as of the newest reading — see `renamed` when the older ones disagree. */
+  model: string | null;
+  provider: string | null;
+  /** How many days carried a reading of this deployment. */
+  readings: number;
+  failingReadings: number;
+  /** failingReadings ÷ readings. A share of *readings*, never of time. */
+  failingShare: number;
+  firstSeen: string;
+  lastSeen: string;
+  /** The newest reading's state. */
+  lastHealthy: boolean;
+  /** State changes between consecutive readings. A stable deployment has none. */
+  transitions: number;
+  outages: GatewayDeploymentOutage[];
+  /** The open run, when the newest reading is failing. */
+  standing: GatewayDeploymentOutage | null;
+  /** The run with the most failing readings. */
+  longest: GatewayDeploymentOutage | null;
+  /** Healthy at the previous reading, failing at the newest. */
+  newlyFailing: boolean;
+  /** Failing at the previous reading, healthy at the newest. */
+  recovered: boolean;
+  /** The alias this deployment served changed inside the window. */
+  renamed: boolean;
+}
+
+/** Gateway-wide, for one observed day. */
+export interface GatewayDeploymentHistoryDay {
+  date: string;
+  deployments: number;
+  unhealthy: number;
+}
+
+export interface GatewayDeploymentHistorySummary {
+  from: string;
+  to: string;
+  recordingSince: string | null;
+  /** Days that carry at least one reading, ascending. The sample, not the calendar. */
+  observedDays: string[];
+  days: GatewayDeploymentHistoryDay[];
+  /** Every deployment seen in the window, worst first. */
+  deployments: GatewayDeploymentUptime[];
+  /** Failing now, and for long enough that it is a fault rather than a blip. */
+  standing: GatewayDeploymentUptime[];
+  /** More than one distinct episode in the window — intermittent, not broken. */
+  flapping: GatewayDeploymentUptime[];
+  /** Distinct runs across every deployment. */
+  outages: number;
+}
+
+/**
+ * How many consecutive failing readings make an open run a *standing* fault.
+ *
+ * Three, because the sync runs nightly: one is the snapshot's own finding and
+ * says nothing new, two could be one incident spanning a night, and three is
+ * the first count that cannot be explained by a single evening's trouble. It is
+ * deliberately a count of readings rather than a number of days — a scheduler
+ * that missed a night makes those the same thing and the readings are what was
+ * actually seen.
+ */
+export const STANDING_OUTAGE_READINGS = 3;
+
+/** Distinct runs in the window that make a deployment intermittent rather than broken. */
+export const FLAPPING_OUTAGES = 2;
+
+/** `2026-07-31`, `2026-07-28` → 3. Both UTC midnights, so DST never shifts it. */
+function daysBetweenIso(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Observations → what each deployment did across the window.
+ *
+ * Pure, and the counterpart to `summarizeDeploymentHealth`: that one states the
+ * up/degraded/down rule over one reading, this one states what a *sequence* of
+ * readings may and may not be read to mean. Three rules carry it:
+ *
+ *  - a run is broken by an observed recovery and by nothing else, so an
+ *    unobserved day is reported inside the run rather than splitting it;
+ *  - every count is of readings, so nothing here can be read as a duration;
+ *  - a deployment with no reading in the window is absent rather than healthy.
+ *
+ * Ordering is standing faults first, then by failing readings, so the row that
+ * needs somebody is at the top whatever the window.
+ */
+export function summarizeDeploymentHistory(
+  history: GatewayDeploymentHistory,
+): GatewayDeploymentHistorySummary {
+  const byDeployment = new Map<string, GatewayDeploymentObservation[]>();
+  for (const observation of history.observations) {
+    const bucket = byDeployment.get(observation.id);
+    if (bucket === undefined) byDeployment.set(observation.id, [observation]);
+    else bucket.push(observation);
+  }
+
+  const byDay = new Map<string, GatewayDeploymentHistoryDay>();
+  for (const observation of history.observations) {
+    const row = byDay.get(observation.date) ?? {
+      date: observation.date,
+      deployments: 0,
+      unhealthy: 0,
+    };
+    row.deployments += 1;
+    if (!observation.healthy) row.unhealthy += 1;
+    byDay.set(observation.date, row);
+  }
+  const days = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+  const deployments: GatewayDeploymentUptime[] = [];
+  for (const [id, unsorted] of byDeployment) {
+    // Ascending, because every statement below is about what followed what. The
+    // service reads in date order already; sorting here keeps the function
+    // honest for a caller that constructed its rows some other way.
+    const readings = [...unsorted].sort((a, b) => a.date.localeCompare(b.date));
+    const newest = readings[readings.length - 1];
+    const oldest = readings[0];
+    if (newest === undefined || oldest === undefined) continue;
+
+    const outages: GatewayDeploymentOutage[] = [];
+    let open: { from: string; to: string; readings: number; errors: string[] } | null = null;
+    let transitions = 0;
+    let previous: GatewayDeploymentObservation | undefined;
+
+    for (const reading of readings) {
+      if (previous !== undefined && previous.healthy !== reading.healthy) transitions += 1;
+      if (reading.healthy) {
+        if (open !== null) {
+          outages.push(closeOutage(open, false));
+          open = null;
+        }
+      } else if (open === null) {
+        open = {
+          from: reading.date,
+          to: reading.date,
+          readings: 1,
+          errors: reading.error === null || reading.error === '' ? [] : [reading.error],
+        };
+      } else {
+        open.to = reading.date;
+        open.readings += 1;
+        if (reading.error !== null && reading.error !== '' && !open.errors.includes(reading.error)) {
+          open.errors.push(reading.error);
+        }
+      }
+      previous = reading;
+    }
+    if (open !== null) outages.push(closeOutage(open, true));
+
+    const failingReadings = readings.filter((reading) => !reading.healthy).length;
+    const standing = outages.find((outage) => outage.open) ?? null;
+    const longest = outages.reduce<GatewayDeploymentOutage | null>(
+      (best, outage) => (best === null || outage.readings > best.readings ? outage : best),
+      null,
+    );
+    const priorState = readings[readings.length - 2]?.healthy;
+
+    deployments.push({
+      id,
+      backend: newest.backend,
+      model: newest.model,
+      provider: newest.provider,
+      readings: readings.length,
+      failingReadings,
+      failingShare: failingReadings / readings.length,
+      firstSeen: oldest.date,
+      lastSeen: newest.date,
+      lastHealthy: newest.healthy,
+      transitions,
+      outages,
+      standing,
+      longest,
+      newlyFailing: priorState === true && !newest.healthy,
+      recovered: priorState === false && newest.healthy,
+      renamed: new Set(readings.map((reading) => reading.model)).size > 1,
+    });
+  }
+
+  deployments.sort((a, b) => {
+    const aStanding = a.standing !== null && a.standing.readings >= STANDING_OUTAGE_READINGS;
+    const bStanding = b.standing !== null && b.standing.readings >= STANDING_OUTAGE_READINGS;
+    if (aStanding !== bStanding) return aStanding ? -1 : 1;
+    if (a.failingReadings !== b.failingReadings) return b.failingReadings - a.failingReadings;
+    return a.id.localeCompare(b.id);
+  });
+
+  return {
+    from: history.from,
+    to: history.to,
+    recordingSince: history.recordingSince,
+    observedDays: days.map((day) => day.date),
+    days,
+    deployments,
+    standing: deployments.filter(
+      (entry) => entry.standing !== null && entry.standing.readings >= STANDING_OUTAGE_READINGS,
+    ),
+    flapping: deployments.filter((entry) => entry.outages.length >= FLAPPING_OUTAGES),
+    outages: deployments.reduce((total, entry) => total + entry.outages.length, 0),
+  };
+}
+
+function closeOutage(
+  run: { from: string; to: string; readings: number; errors: string[] },
+  open: boolean,
+): GatewayDeploymentOutage {
+  return {
+    from: run.from,
+    to: run.to,
+    readings: run.readings,
+    // Every reading inside the span is failing by construction, so whatever the
+    // span holds beyond them is days nobody looked at.
+    unobservedDays: daysBetweenIso(run.from, run.to) + 1 - run.readings,
+    open,
+    errors: run.errors,
+  };
+}
+
 /* ------------------------------------------------------------------ probe */
 
 /**

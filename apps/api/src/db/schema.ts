@@ -552,6 +552,55 @@ export const gatewayDeploymentHealth = pgTable('gateway_deployment_health', {
 });
 
 /**
+ * What `gateway_deployment_health` said, kept — one row per deployment per UTC
+ * day, appended by every full sync.
+ *
+ * Same shape and the same argument as `gateway_budget_history`: the snapshot
+ * above is replaced wholesale, so it can say a pool is refusing now and can
+ * never say it has been refusing all week. That distinction is the whole
+ * difference between a blip and a standing fault, and it is the only thing that
+ * turns the nightly reading into evidence.
+ *
+ * It is a weaker sample than the budget one and the derivation
+ * (`summarizeDeploymentHistory` in @dash/shared) is written knowing it: a
+ * deployment can fail and recover between two readings and leave no trace,
+ * where a budget counter cannot un-spend itself. Hence readings are counted and
+ * never converted to hours, and a day with no row is unknown rather than
+ * healthy.
+ *
+ * Keyed on the *day*, so a second sync the same afternoon updates the day's row
+ * rather than adding one — the table grows with the gateway and the calendar,
+ * not with the scheduler's frequency. Written only when `/health` actually
+ * answered: a ranged backfill does not call it at all, and a swallowed failure
+ * leaves the day unrecorded rather than filing a reading nobody took.
+ *
+ * `model` is the alias as resolved *that day*, which is why it is stored rather
+ * than joined at read time — a deployment moved to another alias is a change
+ * worth seeing, and re-resolving history against today's catalogue would erase it.
+ */
+export const gatewayDeploymentHealthHistory = pgTable(
+  'gateway_deployment_health_history',
+  {
+    id: varchar('id', { length: 200 }).notNull(),
+    /** UTC day the observation belongs to. */
+    date: date('date').notNull(),
+    backend: varchar('backend', { length: 200 }).notNull(),
+    model: varchar('model', { length: 200 }),
+    provider: varchar('provider', { length: 60 }),
+    healthy: boolean('healthy').notNull(),
+    error: text('error'),
+    errorStatus: integer('error_status'),
+    /** When the reading this row kept was taken. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.id, table.date] }),
+    // The read is always a window over every deployment, so date leads.
+    index('gateway_deployment_health_history_date_idx').on(table.date),
+  ],
+);
+
+/**
  * A closed calendar month, held still — one row per sealed month.
  *
  * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
@@ -787,6 +836,9 @@ export type GatewayModelRow = typeof gatewayModel.$inferSelect;
 export type GatewayModelInsert = typeof gatewayModel.$inferInsert;
 export type GatewayDeploymentHealthRow = typeof gatewayDeploymentHealth.$inferSelect;
 export type GatewayDeploymentHealthInsert = typeof gatewayDeploymentHealth.$inferInsert;
+export type GatewayDeploymentHealthHistoryRow = typeof gatewayDeploymentHealthHistory.$inferSelect;
+export type GatewayDeploymentHealthHistoryInsert =
+  typeof gatewayDeploymentHealthHistory.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

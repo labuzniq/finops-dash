@@ -14,6 +14,8 @@ import type {
   GatewayCoverage,
   GatewayDailyPoint,
   GatewayDeployment,
+  GatewayDeploymentHistory,
+  GatewayDeploymentObservation,
   GatewayHealth,
   GatewayModelPrice,
   GatewayModels,
@@ -33,6 +35,7 @@ import {
   gatewayBudgetHistory,
   gatewayDaily,
   gatewayDeploymentHealth,
+  gatewayDeploymentHealthHistory,
   gatewayModel,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
@@ -358,6 +361,60 @@ export async function getGatewayBudgetHistory(days: number): Promise<GatewayBudg
       blocked: row.blocked,
     });
   }
+
+  return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
+}
+
+/**
+ * What `/health` reported on each of the last `days` days — the history
+ * `getGatewayHealth` deliberately does not have.
+ *
+ * The same shape as the budget history above and the same rule: one row per
+ * deployment per day the sync read `/health`, and nothing filled in for a day it
+ * did not. A day with no row is a day nobody looked, which for health is a
+ * stronger caveat than for a budget — a deployment can fail and recover between
+ * two nightly readings and leave nothing at all behind. That is why every figure
+ * `summarizeDeploymentHistory` derives is counted in readings.
+ *
+ * `recordingSince` is answered outside the window for the same reason it is
+ * there: "this deployment has never failed in the last 30 days" and "we started
+ * recording yesterday" are different answers and only one is a finding.
+ */
+export async function getGatewayDeploymentHistory(days: number): Promise<GatewayDeploymentHistory> {
+  const to = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(`${to}T00:00:00.000Z`);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const [rows, earliest] = await Promise.all([
+    db
+      .select()
+      .from(gatewayDeploymentHealthHistory)
+      .where(
+        and(
+          gte(gatewayDeploymentHealthHistory.date, from),
+          lte(gatewayDeploymentHealthHistory.date, to),
+        ),
+      )
+      .orderBy(asc(gatewayDeploymentHealthHistory.date), asc(gatewayDeploymentHealthHistory.id)),
+    db
+      .select({ date: gatewayDeploymentHealthHistory.date })
+      .from(gatewayDeploymentHealthHistory)
+      .orderBy(asc(gatewayDeploymentHealthHistory.date))
+      .limit(1),
+  ]);
+
+  const observations: GatewayDeploymentObservation[] = rows.map((row) => ({
+    id: row.id,
+    backend: row.backend,
+    model: row.model,
+    provider: row.provider,
+    date: row.date,
+    observedAt: row.observedAt.toISOString(),
+    healthy: row.healthy,
+    error: row.error,
+    errorStatus: row.errorStatus,
+  }));
 
   return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
 }

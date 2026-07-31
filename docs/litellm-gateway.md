@@ -418,6 +418,36 @@ because the sync is the only place both snapshots exist: joining today's
 deployments against a stored catalogue would be joining them to yesterday's price
 list.
 
+That same reading is **appended** to `gateway_deployment_health_history`, the
+health twin of the budget recording below and written under exactly the same
+rules: one row per deployment per **UTC day**, upserted, so a second sync the
+same afternoon replaces the day's reading rather than adding one, and a backfill
+files nothing because it never calls `/health` at all. A swallowed `/health`
+failure files nothing either — the snapshot keeps standing with its own
+`checkedAt`, and the history simply has no row for that day, which is the honest
+record of a night nobody looked.
+
+It exists because the snapshot can say a pool is refusing *tonight* and can
+never say it has been refusing all week, and that second statement is the whole
+difference between a fault somebody has to fix and an evening's trouble that has
+already cleared. `model` is stored as it resolved that day rather than joined at
+read time: a deployment moved to another alias is a change worth seeing, and
+re-resolving old observations against today's catalogue would erase it.
+
+It is a **weaker sample than the budget one**, and the derivation over it
+(`summarizeDeploymentHistory` in `@dash/shared`) is written knowing that. A
+budget counter cannot un-spend itself between two readings; a deployment can
+fail and recover between two nights and leave nothing behind at all. So every
+figure it produces is counted in **readings** — "failing at 9 of 14 readings" —
+and there is no availability percentage, no hours, and no duration anywhere on
+it. A run of failing readings is broken by an *observed* recovery and by nothing
+else: an unobserved day inside a run is reported as `unobservedDays` rather than
+splitting the run in two, because claiming two episodes there asserts a recovery
+nobody saw just as firmly as claiming one long outage asserts a failure nobody
+saw. `STANDING_OUTAGE_READINGS` (3) is the one threshold it adds — one failing
+reading is the snapshot's own finding and says nothing new, two can be a single
+evening spanning a night, and three is the first count that cannot be.
+
 Both management routes are optional in the same sense the team and tag activity
 routes are: an analytics-only credential is a perfectly reasonable thing to
 point this integration at, it will be refused key management, and `fetchBudgets`
@@ -639,6 +669,16 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   under a near-match — naming the wrong model as degraded is worse than naming
   none.
 
+- **A health observation is a sample, and a thinner one than a budget
+  observation.** `gateway_deployment_health_history` holds one reading per
+  deployment per day the sync called `/health`. A deployment that failed and
+  recovered between two nightly readings left nothing behind, so everything
+  derived from it is counted in **readings** and nothing may be reported as a
+  duration, an availability percentage or an hour count. A run of failing
+  readings is broken by an observed recovery and by nothing else: an unobserved
+  day inside a run is counted and reported, never used to split it, because both
+  splitting it and filling it in assert something nobody saw.
+
 - **Nothing outside `apps/api/src/gateway/` knows which source is active** —
   the same rule `copilot/` follows.
 
@@ -765,6 +805,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/budgets/history?days=` | What those same budgets read on each of the last `days` days (default 60, max 365) — the dashboard's own recording, since the proxy serves current state only. Nothing is filled in for a day no sync ran. `recordingSince` is answered *outside* the window, because "never over its cap" and "we started watching yesterday" are otherwise the same answer. |
 | `GET` | `/api/gateway/models` | `{ models }` — the proxy's configured price list as of the last full sync: per-model input/output/cache rates in dollars per million tokens, context window, modality and provider. Cheapest input first, with the unpriced models last. No parameters: state, not a range, and deliberately not folded into `/api/gateway`, which is a date range. |
 | `GET` | `/api/gateway/health` | `{ deployments, checkedAt }` — every deployment as the last full sync found it, failing ones first: routing string, resolved alias (null when the catalogue could not name it), provider, endpoint, state, the proxy's own error text and the upstream status. A *stored* reading rather than a live one, deliberately: forwarding `/health` would let a browser refresh bill a test call per deployment. `checkedAt` is null when it has never answered, which is not the same as a proxy that routes nothing. |
+| `GET` | `/api/gateway/health/history?days=` | `{ from, to, recordingSince, observations }` — what `/health` reported on each of the last `days` days (default 60, max 365), one row per deployment per day the sync asked. The health twin of the budget history and read under the same rule: a day with no row is a day nobody looked, and `summarizeDeploymentHistory` counts readings rather than hours because a deployment can fail and recover between two of them. |
 | `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
 | `GET` | `/api/gateway/months` | `{ seals }` — every calendar month that has been sealed, newest first, with the totals as recorded. Headers only; no parameters. |
 | `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `?revision=` quotes a *replaced* statement by number; omitted, it answers with the current one. `404` when the month was never sealed (or has no such revision), carrying the `check` that says why (still running, or missing days to backfill). |
@@ -1915,6 +1956,36 @@ come out the other side — then deletes exactly what it planted and checks that
 it did. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budget-history.ts`.
 
+`apps/api/scripts/verify-gateway-health-history.ts` is the same pair of halves
+for the deployment recording. The pure half drives `summarizeDeploymentHistory`
+over constructed readings and leans on the negatives: an unobserved day inside a
+run neither splits it nor counts as a failing reading (it is reported as
+`unobservedDays`), while an *observed* healthy reading between two failures
+does split it — the two cases sit next to each other on purpose, because they
+are the only thing separating a sample from a series. One failing reading is a
+finding and not a standing fault, a window with no readings derives nothing
+rather than an all-healthy gateway, a deployment the router dropped keeps the
+readings it had and is not carried forward into the days after it vanished, and
+an alias change inside the window is recorded rather than flattened. The rest
+pins the arithmetic: transitions, the longest run, the failing share taken over
+readings, error texts deduplicated per run, worst-first ordering with standing
+faults above deployments that merely broke last night, and the gateway-wide
+per-day rollup.
+
+The Postgres half asserts the three rules the write has to obey. A full sync
+files exactly one reading per deployment for today, agreeing with the snapshot
+it came from on state, backend and resolved alias; a second sync the same day
+replaces that reading instead of adding one; and a ranged backfill files nothing
+at all, since it never calls `/health`. Then it plants five days of readings for
+a deployment that is really stored *and healthy today* — a healthy stretch, a
+day nobody looked, and three failing readings — reads them back through
+`getGatewayDeploymentHistory` and requires the run to come out as one run of
+three, closed by today's real reading rather than by a constructed one, with the
+gap sitting outside it and the upstream status intact. It refuses to run at all
+if real readings already occupy those days, and deletes exactly what it planted.
+Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-health-history.ts`.
+
 `apps/api/scripts/verify-gateway-adoption.ts` covers the population layer. The
 reconciliation first: the ranked user rows sum to the attributed totals, the
 attributed totals never exceed the gateway's (the bound that makes `coverage` a
@@ -2490,13 +2561,31 @@ Governance is now rendered end to end across all three scopes
   route that probes one alias rather than all of them. Both are a decision about
   the proxy's configuration, not about this page.
 
-- **History of an outage.** Health is a snapshot like budgets were before
-  iteration 23, so "was this deployment already failing last Tuesday" is
-  unanswerable. The fix is the same one budgets got — append a daily observation
-  beside the snapshot — and it is deliberately not built yet, because a nightly
-  sample of a thing that recovers in minutes is a much weaker signal than a
-  nightly sample of a budget counter, and it is worth knowing whether the
-  snapshot is useful before recording a year of it.
+- **A view on the outage history.** The recording now exists
+  (`gateway_deployment_health_history`, one reading per deployment per day the
+  sync asked, read through `GET /api/gateway/health/history` and
+  `summarizeDeploymentHistory`), so "was this deployment already failing last
+  Tuesday" is answerable — but nothing on the page reads it yet. The health card
+  still renders the snapshot alone.
+
+  What is *not* coming, and is the limit rather than a gap: a duration. The
+  sample is nightly and a deployment that failed and recovered between two
+  readings left nothing behind, so there is no honest way from these rows to an
+  uptime percentage, an incident length or a minutes-down figure — every number
+  the derivation produces is a count of readings for exactly that reason. The
+  route to a real availability number is upstream (the proxy's own
+  `background_health_checks`, which would make reading `/health` cheap enough to
+  sample hourly), and that is a decision about the proxy's configuration rather
+  than about this page.
+
+  Alerting on a standing fault is the one thing that *could* follow the
+  governance path, and it is the only other digest source that could: like
+  budgets and unlike the five browser derivations, this is a table the API can
+  assess on its own after a sync. It is not wired to
+  `gateway_notification` yet, because the first question a
+  standing-outage alert raises — does a deployment failing three nights running
+  mean anything on a proxy nobody has looked at yet — needs a real proxy to
+  answer.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

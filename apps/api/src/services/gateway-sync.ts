@@ -8,6 +8,7 @@ import {
   gatewayBudgetHistory,
   gatewayDaily,
   gatewayDeploymentHealth,
+  gatewayDeploymentHealthHistory,
   gatewayModel,
 } from '../db/schema.js';
 import type {
@@ -15,6 +16,7 @@ import type {
   GatewayBudgetHistoryInsert,
   GatewayBudgetInsert,
   GatewayDailyInsert,
+  GatewayDeploymentHealthHistoryInsert,
   GatewayDeploymentHealthInsert,
   GatewayModelInsert,
 } from '../db/schema.js';
@@ -182,6 +184,21 @@ async function persist(
     model: resolveDeploymentModel(models ?? [], deployment.backend),
     checkedAt: observedAt,
   }));
+  // The alias is stored as resolved *today* rather than joined at read time,
+  // for the same reason it is resolved here at all: re-resolving an old
+  // observation against a newer catalogue would quietly re-file a deployment
+  // that has since moved to another alias, erasing the move.
+  const healthHistoryRows: GatewayDeploymentHealthHistoryInsert[] = healthRows.map((row) => ({
+    id: row.id,
+    date: observedOn,
+    backend: row.backend,
+    model: row.model ?? null,
+    provider: row.provider ?? null,
+    healthy: row.healthy,
+    error: row.error ?? null,
+    errorStatus: row.errorStatus ?? null,
+    observedAt,
+  }));
   const historyRows: GatewayBudgetHistoryInsert[] = (budgets ?? []).map((budget) => ({
     ...budget,
     date: observedOn,
@@ -228,6 +245,29 @@ async function persist(
       await tx.delete(gatewayDeploymentHealth);
       for (const rows of chunk(healthRows, CHUNK_SIZE)) {
         await tx.insert(gatewayDeploymentHealth).values(rows);
+      }
+      // ...and appended, exactly as the budget snapshot is: keyed on the
+      // observation day, so a second sync the same afternoon replaces the day's
+      // reading rather than adding one. Only a reading that actually happened is
+      // filed — `health === null` covers both a backfill (which never calls
+      // `/health`) and a swallowed failure, and neither may leave a row behind
+      // saying what the deployments were doing.
+      for (const rows of chunk(healthHistoryRows, CHUNK_SIZE)) {
+        await tx
+          .insert(gatewayDeploymentHealthHistory)
+          .values(rows)
+          .onConflictDoUpdate({
+            target: [gatewayDeploymentHealthHistory.id, gatewayDeploymentHealthHistory.date],
+            set: {
+              backend: sql`excluded.backend`,
+              model: sql`excluded.model`,
+              provider: sql`excluded.provider`,
+              healthy: sql`excluded.healthy`,
+              error: sql`excluded.error`,
+              errorStatus: sql`excluded.error_status`,
+              observedAt: sql`excluded.observed_at`,
+            },
+          });
       }
     }
     if (budgets !== null) {
