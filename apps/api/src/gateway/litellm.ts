@@ -19,9 +19,11 @@
  *
  * These endpoints read LiteLLM's pre-aggregated `LiteLLM_DailyUserSpend`
  * family of tables, not the raw `LiteLLM_SpendLogs`, which is why a 90-day
- * pull is a handful of requests instead of millions of rows — and why raw
- * spend logs, which the proxy prunes on a retention window, are deliberately
- * not touched here.
+ * pull is a handful of requests instead of millions of rows. The raw log is
+ * read by exactly one method here — `fetchSpendLogs`, over a window of days
+ * rather than months, behind a drill-down and never by the sync — because it
+ * is the only place the dimensions appear on one row and therefore the only
+ * source of a joint key.
  *
  * Two things to re-check the day a real endpoint exists (see
  * docs/litellm-gateway.md):
@@ -33,6 +35,7 @@
  */
 
 import { z } from 'zod';
+import { SPEND_LOG_ROW_CAP } from '@dash/shared';
 import type {
   GatewayDimension,
   GatewayProbeCoverage,
@@ -51,6 +54,8 @@ import type {
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
+  GatewaySpendLogPage,
+  GatewaySpendLogRecord,
 } from './types.js';
 
 const log = moduleLogger('gateway.litellm');
@@ -78,6 +83,13 @@ const HEALTH_TIMEOUT_MS = 180_000;
  * button someone is watching, and "slow" is itself the answer they need.
  */
 const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * `/spend/logs`'s own timeout. It reads a table like the activity routes, but
+ * the largest one the proxy has and without the aggregates' pre-computation, so
+ * a week of a corporate gateway is a real query rather than a lookup.
+ */
+const SPEND_LOG_TIMEOUT_MS = 60_000;
 
 /** One probe request's outcome. `body` exists only on a 2xx that decoded. */
 interface ProbeAttempt {
@@ -380,6 +392,68 @@ const readinessSchema = z
   })
   .passthrough();
 
+/**
+ * `GET /spend/logs?start_date&end_date&summarize=false` — one entry per
+ * request, straight off `LiteLLM_SpendLogs`.
+ *
+ * A sixth envelope, and the loosest of them: the documented answer is a bare
+ * JSON array of table rows, while newer proxies wrap the same rows in a
+ * `{"data": […]}` object alongside the paginated UI route. Both parse here,
+ * because which one a given proxy answers with is a version question this
+ * draft cannot settle.
+ *
+ * `summarize` is the parameter that matters: it defaults to *true*, which
+ * answers pre-aggregated daily totals — the same numbers the activity routes
+ * already give, and none of the joint keys this route is fetched for. Asking
+ * without it would fetch the wrong thing successfully.
+ *
+ * Every column except `request_id` is optional. The table has grown steadily
+ * (`session_id`, `status`, `agent_id`, `mcp_namespaced_tool_name` and
+ * `request_duration_ms` are all recent), and an older proxy omitting them is
+ * ordinary rather than malformed.
+ */
+const spendLogRowSchema = z
+  .object({
+    // Optional even though the table's primary key is not: a sample tolerates a
+    // row it cannot use, where a *ledger* payload does not. Every other gateway
+    // schema here throws on a shape it did not expect, because a malformed
+    // aggregate would sync silently wrong numbers; one unreadable log line is a
+    // dropped piece of evidence and nothing else.
+    request_id: z.string().nullish(),
+    call_type: z.string().nullish(),
+    api_key: z.string().nullish(),
+    spend: z.number().nullish(),
+    total_tokens: z.number().nullish(),
+    prompt_tokens: z.number().nullish(),
+    completion_tokens: z.number().nullish(),
+    startTime: z.union([z.string(), z.number()]).nullish(),
+    endTime: z.union([z.string(), z.number()]).nullish(),
+    request_duration_ms: z.number().nullish(),
+    model: z.string().nullish(),
+    model_id: z.string().nullish(),
+    model_group: z.string().nullish(),
+    custom_llm_provider: z.string().nullish(),
+    api_base: z.string().nullish(),
+    user: z.string().nullish(),
+    metadata: z.record(z.unknown()).nullish(),
+    cache_hit: z.string().nullish(),
+    request_tags: z.union([z.array(z.string()), z.string()]).nullish(),
+    team_id: z.string().nullish(),
+    end_user: z.string().nullish(),
+    session_id: z.string().nullish(),
+    status: z.string().nullish(),
+    mcp_namespaced_tool_name: z.string().nullish(),
+    agent_id: z.string().nullish(),
+  })
+  .passthrough();
+
+const spendLogsSchema = z.union([
+  z.array(spendLogRowSchema),
+  z.object({ data: z.array(spendLogRowSchema) }).passthrough(),
+]);
+
+type SpendLogRow = z.infer<typeof spendLogRowSchema>;
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -667,6 +741,124 @@ function toHealthSnapshot(entry: HealthEntry, healthy: boolean): GatewayHealthSn
     // would be nonsense, so the state decides whether the text is kept.
     error: healthy ? null : (error?.slice(0, 500) ?? null),
     errorStatus: healthy ? null : toErrorStatus(entry.exception_status),
+  };
+}
+
+/** A LiteLLM timestamp as an ISO instant, or null. */
+function toInstantIso(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+/**
+ * `cache_hit` is a *string* column with an empty default, so it has three
+ * states rather than two: `"True"`, `"False"`, and "nobody recorded it". Only
+ * the first two are booleans; the third is null, because a proxy that logs no
+ * cache flag has not told us the request missed the cache.
+ */
+function toCacheHit(value: string | null | undefined): boolean | null {
+  if (value === null || value === undefined) return null;
+  const text = value.trim().toLowerCase();
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  return null;
+}
+
+/**
+ * `request_tags` is a Prisma `Json?` defaulting to `[]`, and a proxy that
+ * round-trips it through a text column answers with the JSON *string* instead
+ * of an array. Both are read; anything else yields no tags, which is a fact
+ * about the request rather than a parse failure worth throwing over.
+ */
+function toTags(value: string[] | string | null | undefined): string[] {
+  if (Array.isArray(value)) return value.filter((tag) => typeof tag === 'string' && tag !== '');
+  if (typeof value !== 'string' || value.trim() === '') return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((tag): tag is string => typeof tag === 'string' && tag !== '')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A metadata field, when it is a non-empty string. */
+function metadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  field: string,
+): string | null {
+  const value = metadata?.[field];
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * One `LiteLLM_SpendLogs` row → the record the drill-down reads.
+ *
+ * The identity columns are read top-level *then* from `metadata`, in that
+ * order, because the proxy writes both and they are not always both filled: the
+ * columns are what the spend tables are keyed by, while `metadata` carries the
+ * `user_api_key_*` fields the request was authenticated with — which is where a
+ * key's alias lives, and the only place any alias appears at all.
+ *
+ * Duration is `request_duration_ms` where the proxy has the column and the two
+ * timestamps' difference where it does not. Latency is the one thing here no
+ * aggregate reports, so losing it on older proxies would cost the whole reason
+ * this row carries timestamps.
+ */
+function toSpendLogRecord(row: SpendLogRow): GatewaySpendLogRecord | null {
+  const requestId = row.request_id?.trim() ?? '';
+  if (requestId === '') return null;
+
+  const startTime = toInstantIso(row.startTime);
+  if (startTime === null) return null;
+  const endTime = toInstantIso(row.endTime);
+
+  const measured = row.request_duration_ms;
+  const spanned =
+    endTime === null ? null : new Date(endTime).getTime() - new Date(startTime).getTime();
+  const durationMs =
+    measured !== null && measured !== undefined && Number.isFinite(measured) && measured >= 0
+      ? Math.round(measured)
+      : spanned !== null && spanned >= 0
+        ? spanned
+        : null;
+
+  const text = (value: string | null | undefined): string | null => {
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed === '' ? null : trimmed.slice(0, 300);
+  };
+
+  return {
+    requestId: requestId.slice(0, 200),
+    callType: text(row.call_type) ?? 'unknown',
+    startTime,
+    endTime,
+    durationMs,
+    model: text(row.model),
+    modelGroup: text(row.model_group),
+    deploymentId: text(row.model_id),
+    provider: text(row.custom_llm_provider),
+    apiBase: text(row.api_base),
+    apiKey: text(row.api_key) ?? metadataString(row.metadata, 'user_api_key'),
+    keyAlias: metadataString(row.metadata, 'user_api_key_alias'),
+    user: text(row.user) ?? metadataString(row.metadata, 'user_api_key_user_id'),
+    teamId: text(row.team_id) ?? metadataString(row.metadata, 'user_api_key_team_id'),
+    teamAlias: metadataString(row.metadata, 'user_api_key_team_alias'),
+    endUser: text(row.end_user),
+    tags: toTags(row.request_tags).map((tag) => tag.slice(0, 200)),
+    mcpTool: text(row.mcp_namespaced_tool_name),
+    sessionId: text(row.session_id),
+    agentId: text(row.agent_id),
+    spendNano: dollarsToNano(row.spend ?? 0),
+    promptTokens: Math.max(0, Math.round(row.prompt_tokens ?? 0)),
+    completionTokens: Math.max(0, Math.round(row.completion_tokens ?? 0)),
+    totalTokens: Math.max(0, Math.round(row.total_tokens ?? 0)),
+    cacheHit: toCacheHit(row.cache_hit),
+    status: text(row.status),
   };
 }
 
@@ -1106,6 +1298,72 @@ export class LiteLlmGatewayClient implements GatewayClient {
       'litellm deployment health fetched',
     );
     return rows;
+  }
+
+  /**
+   * `GET /spend/logs` — the raw request log for a bounded window.
+   *
+   * The only read in this client that is not part of a sync and stores nothing.
+   * Three things about it are deliberate:
+   *
+   *   - **`summarize=false`.** The parameter defaults to *true*, which answers
+   *     pre-aggregated daily totals: the same numbers `/user/daily/activity`
+   *     already gives, without a single joint key. Omitting it would fetch the
+   *     wrong thing and succeed.
+   *   - **A row cap, not pagination.** The documented route takes a date range
+   *     and no page parameters, so the only bound available is the window —
+   *     which the caller has already narrowed — plus a hard stop on rows. A
+   *     truncated read is reported as truncated; it is never quietly presented
+   *     as the window.
+   *   - **Optional, and `available: false` is not an error.** A proxy run with
+   *     `disable_spend_logs` writes no rows at all, which is a supported way to
+   *     run LiteLLM at volume. Refused, absent and empty are all answers here.
+   */
+  async fetchSpendLogs(from: string, to: string, limit: number): Promise<GatewaySpendLogPage> {
+    const url = new URL(`${this.root}/spend/logs`);
+    url.searchParams.set('start_date', from);
+    url.searchParams.set('end_date', to);
+    url.searchParams.set('summarize', 'false');
+
+    const body = await this.getJson(url, true, SPEND_LOG_TIMEOUT_MS);
+    if (body === null) return { rows: [], available: false, truncated: false };
+
+    const parsed = spendLogsSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new Error(
+        `LiteLLM /spend/logs returned an unexpected shape: ${describeIssues(parsed.error.issues)}`,
+      );
+    }
+
+    const entries = Array.isArray(parsed.data) ? parsed.data : parsed.data.data;
+    const cap = Math.max(1, Math.min(limit, SPEND_LOG_ROW_CAP));
+    const rows: GatewaySpendLogRecord[] = [];
+    let unusable = 0;
+
+    for (const entry of entries) {
+      if (rows.length >= cap) break;
+      const record = toSpendLogRecord(entry);
+      if (record === null) {
+        unusable += 1;
+        continue;
+      }
+      rows.push(record);
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          returned: entries.length,
+          rows: rows.length,
+          unusable,
+          truncated: entries.length > cap,
+        },
+      },
+      'litellm spend logs fetched',
+    );
+    return { rows, available: true, truncated: entries.length > cap };
   }
 
   /**

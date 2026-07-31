@@ -19,8 +19,11 @@ import type {
   GatewayModels,
   GatewayProbe,
   GatewayProbeRoute,
+  GatewaySpendLog,
+  GatewaySpendLogs,
   GatewayUsage,
 } from '@dash/shared';
+import type { GatewaySpendLogRecord } from '../gateway/types.js';
 import { db } from '../db/client.js';
 import { env } from '../env.js';
 import { createGatewayClient } from '../gateway/index.js';
@@ -431,6 +434,58 @@ export async function probeGateway(): Promise<GatewayProbe> {
     warnings,
   };
 }
+
+/**
+ * Request-level logs for a bounded window, fetched live and stored nowhere.
+ *
+ * The one gateway read that is neither a table nor a snapshot. Every other
+ * route here answers from what a sync wrote; this one asks the proxy while the
+ * caller waits, because the rows it returns are the largest table LiteLLM has,
+ * are pruned on a retention schedule of the proxy's own, and may be switched
+ * off entirely. Storing them would mean owning a copy of a log this dashboard
+ * has no business being the system of record for — and the aggregates the rest
+ * of the page reads are already the ledger.
+ *
+ * What it is *for* is joins. The daily aggregates report each dimension
+ * independently, so "which models did this team spend its money on" cannot be
+ * asked of them at all; a log row carries every dimension at once, plus the
+ * deployment that served it and how long it took.
+ *
+ * `available: false` is a result rather than a failure: a proxy run with
+ * `disable_spend_logs` bills correctly and logs nothing.
+ */
+export async function getGatewaySpendLogs(
+  from: string,
+  to: string,
+  limit: number,
+): Promise<GatewaySpendLogs> {
+  const fetchedAt = new Date().toISOString();
+  const client = createGatewayClient();
+  if (client === null) {
+    throw new GatewayLogsUnavailableError(
+      'GATEWAY_SOURCE is off — request logs come from the proxy directly and there is nothing to read.',
+    );
+  }
+
+  const page = await client.fetchSpendLogs(from, to, limit);
+  return {
+    from,
+    to,
+    rows: page.rows.map(toSpendLog),
+    available: page.available,
+    truncated: page.truncated,
+    fetchedAt,
+  };
+}
+
+/** The one place a log row's money becomes dollars. */
+function toSpendLog(row: GatewaySpendLogRecord): GatewaySpendLog {
+  const { spendNano, ...rest } = row;
+  return { ...rest, spend: nanoToDollars(spendNano) };
+}
+
+/** Raised when the gateway integration is off — the route maps it to 503. */
+export class GatewayLogsUnavailableError extends Error {}
 
 /** `https://litellm.corp:4000/v1` → `litellm.corp:4000`, and never a password. */
 function hostOf(baseUrl: string | undefined): string | null {

@@ -1494,6 +1494,194 @@ check(
   'no deployments summarises to nothing rather than to a healthy gateway',
 );
 
+// =====================================================================
+// 6e · request logs — /spend/logs
+// =====================================================================
+//
+// The sixth envelope and the loosest: a bare array of table rows on the
+// documented route, or the same rows under `{"data": …}` on a newer proxy.
+// Three things are load-bearing and none of them are in the other sections —
+// `summarize=false` (the parameter defaults to *true* and answers daily
+// aggregates, i.e. the wrong thing, successfully), per-row tolerance (a sample
+// drops what it cannot read where a ledger payload throws), and the row cap
+// being reported rather than hidden.
+
+console.log('\n6e · request logs — /spend/logs');
+
+const logRow = (over: Record<string, unknown> = {}) => ({
+  request_id: 'chatcmpl-1',
+  call_type: 'acompletion',
+  api_key: 'hash-a',
+  spend: 1.095e-5,
+  prompt_tokens: 1_200,
+  completion_tokens: 300,
+  total_tokens: 1_500,
+  startTime: '2026-07-01T09:15:00.594000Z',
+  endTime: '2026-07-01T09:15:02.594000Z',
+  model: 'gpt-4o-eu2',
+  model_id: 'dep-ptu',
+  model_group: 'azure/gpt-4o',
+  custom_llm_provider: 'azure',
+  api_base: 'https://nocturne-weu.openai.azure.com/',
+  user: 'ana.kovacs@corp.example',
+  team_id: 'team-platform',
+  request_tags: ['coding-assistant', 'eu'],
+  cache_hit: 'True',
+  status: 'success',
+  metadata: {
+    user_api_key: 'hash-a',
+    user_api_key_alias: 'copilot-agents',
+    user_api_key_team_id: 'team-platform',
+    user_api_key_team_alias: 'Platform Engineering',
+    user_api_key_user_id: 'ana.kovacs@corp.example',
+  },
+  ...over,
+});
+
+const logsCall = await withProxy(
+  replier({ '/spend/logs': { status: 200, body: [logRow()] } }),
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-02', 100);
+    return { page, captured: proxy.calls[0] };
+  },
+);
+
+check(
+  logsCall.captured?.query.get('summarize') === 'false',
+  'summarize=false is sent — the default answers daily aggregates, which is the wrong thing successfully',
+);
+check(
+  logsCall.captured?.query.get('start_date') === '2026-07-01' &&
+    logsCall.captured?.query.get('end_date') === '2026-07-02',
+  'the window is sent as start_date/end_date, like every other route',
+);
+check(
+  logsCall.captured?.authorization === 'Bearer sk-test-key',
+  'the log route is authenticated like the rest',
+);
+
+const logged = logsCall.page.rows[0];
+check(logsCall.page.available && !logsCall.page.truncated, 'a bare array is the documented answer and parses');
+check(logged?.spendNano === 10_950n, 'exponent-notation spend survives at nano scale (1.095e-05 → 10950)');
+check(
+  logged?.modelGroup === 'azure/gpt-4o' && logged?.model === 'gpt-4o-eu2',
+  'the alias asked for and the deployment model called are kept apart — the alias is what joins to usage',
+);
+check(
+  logged?.deploymentId === 'dep-ptu',
+  'model_id is carried: the only join between a request and gateway_deployment_health',
+);
+check(logged?.durationMs === 2_000, 'a duration is derived from the two timestamps when the column is absent');
+check(
+  logged?.keyAlias === 'copilot-agents' && logged?.teamAlias === 'Platform Engineering',
+  'aliases come from metadata, which is the only place the proxy carries them',
+);
+check(
+  logged?.tags.length === 2,
+  'request_tags is a list — one request legitimately sits in several tag buckets',
+);
+check(logged?.cacheHit === true, 'cache_hit "True" is a boolean');
+
+const logShapes = await withProxy(
+  replier({
+    '/spend/logs': {
+      status: 200,
+      body: {
+        data: [
+          // `request_duration_ms` wins over the timestamps where the proxy has it.
+          logRow({ request_id: 'measured', request_duration_ms: 850 }),
+          // No end time at all: nothing to derive a duration from, and null is
+          // the honest answer rather than zero.
+          logRow({ request_id: 'open', endTime: null }),
+          // The identity columns empty and metadata carrying them, which is what
+          // a proxy authenticating with a key but not resolving a user writes.
+          logRow({ request_id: 'meta-only', user: '', team_id: '', api_key: '' }),
+          // A tag list round-tripped through a text column.
+          logRow({ request_id: 'text-tags', request_tags: '["batch"]' }),
+          logRow({ request_id: 'junk-tags', request_tags: 'not json at all' }),
+          // The third state of cache_hit: nobody recorded one.
+          logRow({ request_id: 'no-cache-flag', cache_hit: null }),
+          logRow({ request_id: 'cache-miss', cache_hit: 'False' }),
+          // Unusable rows: no id, and a timestamp nothing can read.
+          logRow({ request_id: '' }),
+          logRow({ request_id: 'no-clock', startTime: null }),
+        ],
+      },
+    },
+  }),
+  async (proxy) => client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-01', 100),
+);
+
+const shaped = (id: string) => logShapes.rows.find((row) => row.requestId === id);
+
+check(logShapes.rows.length === 7, `a {"data": …} envelope parses too (${logShapes.rows.length} usable rows)`);
+check(shaped('measured')?.durationMs === 850, 'request_duration_ms wins over the timestamp difference');
+check(
+  shaped('open')?.durationMs === null && shaped('open')?.endTime === null,
+  'a request with no end time has an unknown duration, not a zero one',
+);
+check(
+  shaped('meta-only')?.user === 'ana.kovacs@corp.example' &&
+    shaped('meta-only')?.teamId === 'team-platform' &&
+    shaped('meta-only')?.apiKey === 'hash-a',
+  'the identity falls back to metadata when the columns are empty',
+);
+check(shaped('text-tags')?.tags[0] === 'batch', 'a JSON-string tag list is read as a list');
+check(shaped('junk-tags')?.tags.length === 0, 'an unreadable tag list is no tags rather than a thrown read');
+check(
+  shaped('no-cache-flag')?.cacheHit === null && shaped('cache-miss')?.cacheHit === false,
+  'cache_hit is tri-state: nobody recorded it is not the same as a miss',
+);
+check(
+  shaped('no-clock') === undefined && logShapes.rows.every((row) => row.requestId !== ''),
+  'a row with no id and one with no clock are dropped — a sample tolerates what a ledger would throw over',
+);
+
+const capped = await withProxy(
+  replier({
+    '/spend/logs': {
+      status: 200,
+      body: [logRow({ request_id: 'a' }), logRow({ request_id: 'b' }), logRow({ request_id: 'c' })],
+    },
+  }),
+  async (proxy) => client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-01', 2),
+);
+check(
+  capped.rows.length === 2 && capped.truncated,
+  'the row cap is honoured and the read says it was truncated — a capped sample is a floor',
+);
+
+for (const status of [401, 403, 404, 501]) {
+  const absent = await withProxy(
+    replier({ '/spend/logs': { status, body: { detail: 'nope' } } }),
+    async (proxy) => client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-01', 10),
+  );
+  check(
+    !absent.available && absent.rows.length === 0,
+    `${status} on /spend/logs is "this proxy keeps no logs" rather than a failure`,
+  );
+}
+
+const emptyLogs = await withProxy(
+  replier({ '/spend/logs': { status: 200, body: [] } }),
+  async (proxy) => client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-01', 10),
+);
+check(
+  emptyLogs.available && emptyLogs.rows.length === 0 && !emptyLogs.truncated,
+  'an empty answer is available-and-empty, which is a different fact from a refused route',
+);
+
+let logsThrew = false;
+try {
+  await withProxy(
+    replier({ '/spend/logs': { status: 200, body: { rows: 'nope' } } }),
+    async (proxy) => client(proxy.baseUrl).fetchSpendLogs('2026-07-01', '2026-07-01', 10),
+  );
+} catch {
+  logsThrew = true;
+}
+check(logsThrew, 'an envelope that is neither an array nor {data: […]} throws rather than reading as empty');
+
 console.log('\n7 · budget arithmetic');
 
 check(parseBudgetDuration('30d')?.unit === 'd', 'a plain duration parses');

@@ -276,6 +276,79 @@ answers the question *upstream* of every other route: is the proxy up, and can i
 reach its own database. That is why it, and not `/health`, is the eighth route on
 the connection check.
 
+### The request log (the only joint key there is)
+
+Every endpoint above answers a *pre-aggregated* table, and all of them share one
+structural hole: they report each dimension independently. `models`,
+`providers`, `api_keys`, `entities` are four separate maps of the same day, so
+"which models did this team spend its money on" is not a slice of the payload —
+it is a question the payload cannot express at all. There is no joint key
+anywhere in `LiteLLM_DailyUserSpend`.
+
+`LiteLLM_SpendLogs` is where the joint key lives: one row per request, carrying
+every dimension at once plus three facts no aggregate has.
+
+```
+GET /spend/logs?start_date=&end_date=&summarize=false   → [ { … }, … ]
+                                                          (or { "data": [ … ] })
+```
+
+The columns, from the published Prisma schema: `request_id`, `call_type`,
+`api_key`, `spend`, `prompt_tokens`, `completion_tokens`, `total_tokens`,
+`startTime`, `endTime`, `request_duration_ms`, `model`, `model_id`,
+`model_group`, `custom_llm_provider`, `api_base`, `user`, `team_id`,
+`organization_id`, `end_user`, `request_tags`, `session_id`, `status`,
+`mcp_namespaced_tool_name`, `agent_id`, `cache_hit`, `cache_key`, `metadata`,
+and the content columns (`messages`, `response`, `proxy_server_request`) this
+client deliberately does not carry — prompt content is off by default upstream
+(`store_prompts_in_spend_logs`) and is not this dashboard's to hold either way.
+
+The three facts that exist only at this resolution:
+
+- **`model_id` — which deployment served the request.** The same id `/health` is
+  keyed by, and therefore the only join between usage and deployment health: a
+  degraded alias's *traffic* can be told apart from its healthy sibling's here
+  and nowhere else.
+- **`request_duration_ms` — latency.** `SpendMetrics` has no latency field at
+  all, so this is the only place the gateway can be asked how fast it is.
+- **the joint key itself** — team × model, key × provider, tag × deployment.
+
+Six things about the envelope:
+
+- **`summarize` defaults to `true`,** which answers pre-aggregated daily totals:
+  the same numbers `/user/daily/activity` already gives, with none of the joint
+  keys. Omitting the parameter fetches the wrong thing *successfully*, which is
+  the worst failure mode available, so the client always sends `summarize=false`.
+- **The documented answer is a bare JSON array** of table rows, while newer
+  proxies wrap the same rows in `{"data": […]}`. Both parse; which one a given
+  proxy answers with is a version question this draft cannot settle.
+- **There is no pagination on the documented route.** The only bounds available
+  are the window and a row cap, which is why the API caps the window at
+  `SPEND_LOG_MAX_WINDOW_DAYS` (7) and the read at `SPEND_LOG_ROW_CAP` (5,000),
+  and why a read that hit the cap reports itself as `truncated`.
+- **The rows may not exist at all.** `disable_spend_logs` is an ordinary
+  production setting on a busy proxy — the table is the largest thing in
+  LiteLLM's database and costs a row per request. A gateway can bill perfectly
+  and log nothing, so `available: false` is a *result* rather than a failure,
+  and 401/403/404/405/501 all land there.
+- **They are pruned on their own schedule.** `maximum_spend_logs_retention_period`
+  is configured separately from — and is usually far shorter than — the 90 days
+  of daily aggregates the rest of the page reads. The log window and the ledger
+  window disagree by design.
+- **Per-row tolerance, not envelope tolerance.** Every other gateway schema here
+  throws on a shape it did not expect, because a malformed *aggregate* would
+  sync silently wrong numbers. A log row with no id or no timestamp is dropped
+  and counted instead: one unreadable line is a lost piece of evidence and
+  nothing more. A body that is neither an array nor `{data: […]}` still throws.
+
+All of which is why **nothing derived from these rows may be presented as
+gateway spend**. A sample of a capped window out of a table that may be
+switched off is *evidence*; the daily aggregates are the ledger. Anything that
+adds these rows up has to say it is adding up a sample — the same shape as an
+`mcp_server` attribution or a closed budget period's `observedTotal`, and the
+reason `crossTabSpendLogs` in `@dash/shared` reports `sampleSpend` rather than a
+total and carries no share column at all.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -454,6 +527,15 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   `model`, `provider`, `api_key`, `team`, `tag` and `user` sums to the same
   daily total; they are six slices of one number. `mcp_server` is the exception
   and sums to *less* than the day: MCP traffic is a subset of the same requests.
+- **A request log is a sample; the aggregates are the ledger.** `/spend/logs` is
+  the only source with a joint key, and the only one that may be switched off
+  (`disable_spend_logs`), pruned on a schedule of its own
+  (`maximum_spend_logs_retention_period`) and truncated by a row cap. So nothing
+  derived from it may be rendered as gateway spend: a total over the sample is a
+  floor, the same shape as an `mcp_server` attribution, and a read that hit the
+  cap says so. Nothing stores these rows either — the route is live, because a
+  copy of the proxy's request log is not a thing this dashboard should be the
+  system of record for.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
@@ -685,6 +767,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/months/:month/revisions` | Every statement the month has carried, newest first, with a pure diff for each re-seal: what the month moved by, and which payer lines moved with it. `404` for a month that was never sealed. |
 | `POST` | `/api/gateway/months/:month/seal` | Seal a closed month by hand. `400` for a month still in flight or with holes in it, `409` for one already sealed — `?force=true` re-seals and replaces the statement that was issued. |
 | `GET` | `/api/gateway/notifications?days=` | `{ notifications, deliveryConfigured, open, pending, evaluatedAt }` — governance findings and whether they left the building. Every open episode plus the ones that closed inside `days` (default 30, max 365). The only gateway read about the dashboard's own behaviour rather than the proxy's. |
+| `GET` | `/api/gateway/logs?from=&to=&limit=` | `{ from, to, rows, available, truncated, fetchedAt }` — a sample of individual requests, fetched **live** from `/spend/logs` and stored nowhere. The joint-keyed evidence layer: every dimension on one row, plus the deployment that served it and how long it took. Window capped at 7 days, rows at 5,000 (`limit` may lower it, never raise it); `400` for a wider window or an inverted one, `503` while the source is `off`. `available: false` means the proxy keeps no logs, which is a supported way to run one — not an error, and not "no requests". |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -2045,6 +2128,25 @@ reconcile, that the unnamed deployments are a bucket rather than a merge, that
 three regions failing identically is one fault, and that an empty gateway
 summarises to nothing rather than to a healthy one.
 
+`/spend/logs` gets a section too, and its rules are the inverse of every other
+route's. What it pins first is the parameter that would fail *quietly*:
+`summarize=false` must be on the wire, because the default answers daily
+aggregates — the right shape, the wrong data, and a `200`. Then both envelopes
+(a bare array and `{"data": […]}`), exponent-notation spend at nano scale, the
+alias and the deployment model kept apart (the alias is what joins to usage),
+`model_id` carried through as the only join to deployment health, a duration
+taken from `request_duration_ms` where the proxy has it and derived from the two
+timestamps where it does not, the identity falling back to `metadata` when the
+columns are blank, `request_tags` read as a list *and* as a JSON string, and
+`cache_hit` as the tri-state it is — nobody recorded one is not a miss. The two
+rules that keep the layer honest are pinned last: the row cap is honoured and
+reported as `truncated`, and 401/403/404/501 all mean "this proxy keeps no
+logs", which is a supported configuration rather than a failure, while an empty
+200 stays a *different* answer from a refused route. Per-row tolerance is
+checked in both directions — a row with no id and one with no clock are dropped
+while the rest of the sample survives, but an envelope that is neither shape
+still throws.
+
 A section then checks the pure budget arithmetic in `@dash/shared`,
 because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
 `1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
@@ -2097,6 +2199,28 @@ radius** — a full sync stores every deployment, an unresolved alias survives a
 null, a null `api_base` survives as null, and a planted sentinel row is still
 there after a ranged backfill. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-health.ts`.
+
+`apps/api/scripts/verify-gateway-logs.ts` covers the request-log layer in two
+halves, because two different things can be wrong with it. The **pure** half
+constructs the rows a generator cannot produce — a request made outside a team,
+one carrying three tags, one whose alias is only in `model` — and pins what
+makes a cross-tab honest: an unattributed request is *counted* rather than
+dropped or bucketed as "other", a multi-valued axis makes the cells legitimately
+sum past the sample (the overlap invariant, seen at row level for the first
+time), `sampleSpend` covers the unattributed rows because it describes the
+sample rather than the attributed part, and a latency percentile over a sample
+nobody timed is null and never zero. The **mock** half drives
+`fetchSpendLogs` and checks the three facts the layer exists for: every request
+carries every dimension at once, every request is timed, and the deployment each
+one names is a deployment `/health` knows about — including that the
+multi-deployment alias really does split across both of its ids, that one of
+them is the pool `/health` reports as refusing, and that the refusing pool is
+measurably slower on the same alias. Two rules keep the layer safe and are
+checked rather than trusted: the sample's spend is a *fraction* of the same
+window's aggregate spend (evidence, never the bill), and the same window asked
+twice answers the same requests while a different window answers different ones,
+since the stream is seeded off the window rather than off the clock. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-logs.ts`.
 
 It cannot confirm that a real proxy *sends* these shapes — that is still an open
 question below. It is, though, the harness for answering it: drop a captured
@@ -2206,6 +2330,22 @@ job's error string.
     than silent, since `unnamed` is a first-class count, but it is the first
     thing to check against a live proxy.
 
+15. **Does the corporate proxy keep spend logs at all, and for how long?**
+    `disable_spend_logs` is an ordinary setting at volume — the table is the
+    largest thing in LiteLLM's database and costs a row per request — and
+    `maximum_spend_logs_retention_period` prunes what it does keep on a schedule
+    unrelated to the 90 days of daily aggregates. The drill-down is written so
+    that both answers are legitimate (`available: false` is a result, not a
+    failure), but which one is true decides whether the joint-key layer is worth
+    a card. Ask before designing on top of it.
+
+16. **Is `/spend/logs` fast enough to be a live route?** The API forwards it
+    rather than storing it, on a seven-day window with a 5,000-row cap. On a
+    proxy with a properly indexed `startTime` that is a lookup; on one with
+    months of unpruned logs it may be a table scan somebody notices. If it is
+    slow the answer is a narrower window, not a stored copy — a mirror of the
+    proxy's request log is a different integration with a different owner.
+
 ## Not yet built
 
 Governance is now rendered end to end across all three scopes
@@ -2297,6 +2437,15 @@ Governance is now rendered end to end across all three scopes
   route to them would be a second source — an export taken before they aged out,
   or the proxy's own database — which is a different integration, not a wider
   window.
+- **A view on the request log.** `GET /api/gateway/logs` and
+  `crossTabSpendLogs` exist and are checked; nothing on the page reads them yet.
+  That is the next step rather than a limit, and the shape is already forced by
+  what the layer is: a *sample*, so no share of gateway spend anywhere on it, no
+  totals presented as the window's, and the truncation stated on the card rather
+  than in a tooltip. What it can show that nothing else can is the joint key
+  (this team's model mix, this key's provider split), latency, and which
+  deployment served the traffic — the last of which is the only thing that turns
+  a `degraded` alias on the health card into a number of dollars.
 - **Cost centres on a gateway line.** A statement bills a team id, a tag or an
   email, not a department: joining those to the org taxonomy the Copilot side
   already has (`lib/metrics/costCentre.ts`) needs the `user`/`team` ids to be

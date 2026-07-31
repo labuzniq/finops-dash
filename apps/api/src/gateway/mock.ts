@@ -17,7 +17,7 @@
  * traffic is a subset of the same requests, so it sums to less than the day.
  */
 
-import { budgetCounterResets } from '@dash/shared';
+import { budgetCounterResets, SPEND_LOG_ROW_CAP } from '@dash/shared';
 import type {
   GatewayBudgetScope,
   GatewayDimension,
@@ -36,6 +36,8 @@ import type {
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
+  GatewaySpendLogPage,
+  GatewaySpendLogRecord,
 } from './types.js';
 
 const log = moduleLogger('gateway.mock');
@@ -515,6 +517,15 @@ function lehmer(seed: number): () => number {
   };
 }
 
+/**
+ * An ISO date as a day number — used only to seed the request-log stream off
+ * the window asked for, so the same days answer with the same requests without
+ * touching the usage generator's own sequential stream.
+ */
+function isoOrdinal(date: string): number {
+  return Math.round(new Date(`${date}T00:00:00Z`).getTime() / 86_400_000);
+}
+
 /** USD → nano-dollars, rounded to the nearest nano. */
 function dollarsToNano(dollars: number): bigint {
   return BigInt(Math.round(dollars * 1e9));
@@ -924,6 +935,151 @@ export class MockGatewayClient implements GatewayClient {
       'mock gateway deployment health generated',
     );
     return deployments;
+  }
+
+  /**
+   * A sample of individual requests for a bounded window — what
+   * `GET /spend/logs?summarize=false` answers.
+   *
+   * Generated from the same population as `fetchUsage` (the same keys, models,
+   * weights, workload token sizes, failure rules and incident days) but on its
+   * own random stream, so adding this method could not shift a single number on
+   * any other card. It is a *sample*: the row count is the caller's cap spread
+   * across the window, not the tens of thousands of requests a mock day
+   * contains, which is faithful to the route it stands in for — nobody fetches
+   * a real day of spend logs whole either.
+   *
+   * Three things here exist only at this resolution, and each is a fact no
+   * aggregate row carries:
+   *
+   *  - **the deployment** (`model_id`), which is what joins a request to
+   *    `gateway_deployment_health`: the multi-deployment alias splits its
+   *    traffic across two ids and one of them is the pool `/health` reports as
+   *    refusing. Both are billed at the alias's one price, because the daily
+   *    aggregate bills one price and a generator that disagreed with itself
+   *    would make the catalogue's floor unreadable;
+   *  - **latency**, which nothing in `SpendMetrics` reports at all; and
+   *  - **the joint key** — every dimension on one row, so team × model is a
+   *    question this sample can answer and the daily payload cannot.
+   */
+  async fetchSpendLogs(from: string, to: string, limit: number): Promise<GatewaySpendLogPage> {
+    const dates = eachDay(from, to);
+    const cap = Math.max(1, Math.min(limit, SPEND_LOG_ROW_CAP));
+    if (dates.length === 0) return { rows: [], available: true, truncated: false };
+
+    // Seeded off the window rather than off the clock: asking twice for the
+    // same days answers the same requests, the way re-reading a log table does.
+    const random = lehmer(SEED + dates.length * 7919 + isoOrdinal(dates[0] ?? from));
+
+    const keyWeights = KEYS.reduce((sum, key) => sum + key.weight, 0);
+    const modelWeights = MODELS.reduce((sum, model) => sum + model.weight, 0);
+    const pick = <T>(items: readonly T[], weightOf: (item: T) => number, total: number): T => {
+      let draw = random() * total;
+      for (const item of items) {
+        draw -= weightOf(item);
+        if (draw <= 0) return item;
+      }
+      return items[items.length - 1]!;
+    };
+
+    const perDay = Math.max(1, Math.floor(cap / dates.length));
+    const rows: GatewaySpendLogRecord[] = [];
+
+    for (const date of dates) {
+      const dayOfMonth = Number(date.slice(8, 10));
+      const bursting = BURST_DAYS_OF_MONTH.has(dayOfMonth);
+      const incident = INCIDENT_DAYS_OF_MONTH.has(dayOfMonth);
+
+      for (let index = 0; index < perDay && rows.length < cap; index++) {
+        const key = pick(KEYS, (candidate) => candidate.weight, keyWeights);
+        const model = pick(MODELS, (candidate) => candidate.weight, modelWeights);
+
+        // The same failure rules the aggregate follows, read one request at a
+        // time: a degraded region rejects everything routed to it, and a
+        // capacity-constrained deployment rejects a steady slice.
+        const degraded = incident && model.provider === INCIDENT_PROVIDER;
+        const failureRate = degraded ? INCIDENT_FAILURE_RATE : FAILURE_RATE * (model.failureBias ?? 1);
+        const failed = random() < failureRate;
+
+        // The same per-workload prompt sizes, and the batch key's re-embedding
+        // days really are bigger requests rather than merely more of them.
+        const promptPerRequest = key.tag === 'chat' ? 900 : key.tag === 'batch' ? 6_200 : 2_400;
+        const burst = bursting && key.tag === BURST_TAG ? 1.8 : 1;
+        const promptTokens = failed
+          ? 0
+          : Math.round(promptPerRequest * burst * (0.7 + random() * 0.6));
+        const completionTokens = Math.round(promptTokens * (0.12 + random() * 0.18));
+        const cache = CACHE_PROFILES[key.tag] ?? DEFAULT_CACHE_PROFILE;
+        const cacheReadTokens = Math.round(promptTokens * cache.read);
+        const cacheCreationTokens = Math.round(promptTokens * cache.write);
+        const billedPromptTokens = Math.max(0, promptTokens - cacheReadTokens - cacheCreationTokens);
+        const spend =
+          (billedPromptTokens * model.inputPerMillion) / 1e6 +
+          (cacheReadTokens * model.inputPerMillion * 0.1) / 1e6 +
+          (cacheCreationTokens * model.inputPerMillion * 1.25) / 1e6 +
+          (completionTokens * model.outputPerMillion) / 1e6;
+
+        // Which of the alias's deployments served it. Only the multi-deployment
+        // alias has a choice to make, and roughly a third of its traffic lands
+        // on the reserved pool `/health` reports as refusing — the join that
+        // makes a degraded alias visible in usage at all.
+        const onPtu = model.id === MULTI_DEPLOYMENT_MODEL && random() < 0.34;
+        const deploymentId = onPtu
+          ? `dep-${MULTI_DEPLOYMENT_MODEL.replace(/[^a-z0-9]+/gi, '-')}-ptu`
+          : `dep-${model.id.replace(/[^a-z0-9]+/gi, '-')}-01`;
+
+        // Latency scales with what the request actually did: generation
+        // dominates (~5–9ms a token, i.e. 110–200 tokens a second), a refused
+        // call returns fast, and the throttled pool is slow before it gives up.
+        const durationMs = failed
+          ? Math.round(120 + random() * 400)
+          : Math.round((260 + completionTokens * (5 + random() * 4)) * (onPtu ? 1.9 : 1));
+
+        const startedAt = new Date(`${date}T00:00:00Z`).getTime() + Math.floor(random() * 86_400_000);
+        const agentic = key.tag === 'coding-assistant' || key.tag === 'support';
+        const server = MCP_SERVERS[Math.floor(random() * MCP_SERVERS.length)] ?? MCP_SERVERS[0];
+
+        rows.push({
+          requestId: `chatcmpl-${date.replace(/-/g, '')}-${String(index).padStart(5, '0')}`,
+          callType: 'acompletion',
+          startTime: new Date(startedAt).toISOString(),
+          endTime: new Date(startedAt + durationMs).toISOString(),
+          durationMs,
+          model: model.id,
+          modelGroup: model.id,
+          deploymentId,
+          provider: model.provider,
+          apiBase: model.provider === 'bedrock' ? null : `https://nocturne-weu.openai.azure.com/`,
+          apiKey: key.token,
+          keyAlias: key.alias,
+          user: pickUser(key, date, random()),
+          teamId: key.teamId,
+          teamAlias: key.teamAlias,
+          endUser: null,
+          tags: [key.tag],
+          mcpTool: agentic && random() < mcpShare(date) ? `${server}/search` : null,
+          sessionId: `sess-${key.teamId}-${date}`,
+          agentId: null,
+          spendNano: dollarsToNano(spend),
+          promptTokens,
+          completionTokens,
+          totalTokens: promptTokens + completionTokens,
+          cacheHit: cacheReadTokens > 0,
+          status: failed ? 'failure' : 'success',
+        });
+      }
+    }
+
+    log.info(
+      { dash: { from, to, days: dates.length, rows: rows.length, cap } },
+      'mock gateway spend logs generated',
+    );
+    // A mock day is tens of thousands of requests (BASE_REQUESTS_PER_DAY) and
+    // this returned at most a few thousand across the whole window, so any
+    // non-empty answer is a truncated one. Reporting that unconditionally is
+    // the honest reading — "we filled the cap" would say nothing on a window
+    // whose cap was never reached and yet whose days were still sampled.
+    return { rows, available: true, truncated: rows.length > 0 };
   }
 
   /**

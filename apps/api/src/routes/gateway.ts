@@ -10,12 +10,15 @@ import {
   sealGatewayMonth,
 } from '../services/gateway-seal.js';
 import { getGatewayNotifications } from '../services/gateway-notify.js';
+import { SPEND_LOG_MAX_WINDOW_DAYS, SPEND_LOG_ROW_CAP } from '@dash/shared';
 import {
+  GatewayLogsUnavailableError,
   getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
   getGatewayHealth,
   getGatewayModels,
+  getGatewaySpendLogs,
   getGatewayUsage,
   probeGateway,
 } from '../services/gateway.js';
@@ -54,6 +57,19 @@ const notificationsQuery = z.object({
 const rangeQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q.from <= q.to, {
   message: 'from must not be after to',
 });
+
+/**
+ * The request-log drill-down's window. Same date rule as every other range,
+ * with a row cap the caller may lower but not raise: the ceiling is a property
+ * of what a browser and a proxy can carry, not of what a caller asks for.
+ */
+const logsQuery = z
+  .object({
+    from: isoDate,
+    to: isoDate,
+    limit: z.coerce.number().int().min(1).max(SPEND_LOG_ROW_CAP).optional().default(SPEND_LOG_ROW_CAP),
+  })
+  .refine((q) => q.from <= q.to, { message: 'from must not be after to' });
 
 export const gatewayRoutes: FastifyPluginAsync = async (app) => {
   /**
@@ -155,6 +171,47 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
     }
     return getGatewayNotifications(parsed.data.days);
+  });
+
+  /**
+   * A sample of individual requests for a short window — the joint-keyed
+   * evidence layer under every aggregate on the page.
+   *
+   * Live, like `/probe` and unlike everything else: nothing is stored, because
+   * these rows come from the largest table LiteLLM has, are pruned on the
+   * proxy's own retention schedule, and can be switched off entirely
+   * (`disable_spend_logs`). The window is capped at a week and the response at
+   * `SPEND_LOG_ROW_CAP` rows for the same reason the proxy would want it capped
+   * — a busy day is millions of requests — and a read that hit the cap says so,
+   * because a truncated sample presented as a window is the one way this route
+   * misleads.
+   *
+   * It answers `503` while the gateway is off, rather than an empty list: every
+   * other gateway route reads a table that is legitimately empty on a fresh
+   * install, and this one has no table to be empty.
+   */
+  app.get('/api/gateway/logs', async (request, reply) => {
+    const parsed = logsQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    const { from, to, limit } = parsed.data;
+    const days = Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1,
+    );
+    if (days > SPEND_LOG_MAX_WINDOW_DAYS) {
+      return reply.code(400).send({
+        error: `Request logs may be read ${SPEND_LOG_MAX_WINDOW_DAYS} days at a time — asked for ${days}.`,
+      });
+    }
+    try {
+      return await getGatewaySpendLogs(from, to, limit);
+    } catch (error) {
+      if (error instanceof GatewayLogsUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
   });
 
   /**

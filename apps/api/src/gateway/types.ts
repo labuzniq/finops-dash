@@ -121,6 +121,59 @@ export interface GatewayHealthSnapshot {
   errorStatus: number | null;
 }
 
+/**
+ * One request as `GET /spend/logs` reported it, in storage units.
+ *
+ * The same fields as the shared `GatewaySpendLog` read model with money still
+ * in bigint nano-dollars: nothing about this route is special enough to move
+ * the one place dollars are made (`nanoToDollars`, in the read service), even
+ * though the rows here are forwarded rather than stored.
+ */
+export interface GatewaySpendLogRecord {
+  requestId: string;
+  callType: string;
+  startTime: string;
+  endTime: string | null;
+  durationMs: number | null;
+  model: string | null;
+  modelGroup: string | null;
+  deploymentId: string | null;
+  provider: string | null;
+  apiBase: string | null;
+  apiKey: string | null;
+  keyAlias: string | null;
+  user: string | null;
+  teamId: string | null;
+  teamAlias: string | null;
+  endUser: string | null;
+  tags: string[];
+  mcpTool: string | null;
+  sessionId: string | null;
+  agentId: string | null;
+  /** USD × 1e9. */
+  spendNano: bigint;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cacheHit: boolean | null;
+  status: string | null;
+}
+
+/**
+ * What one `/spend/logs` read answered.
+ *
+ * `available: false` is a first-class result rather than an empty list: a proxy
+ * run with `disable_spend_logs` refuses or empties the route while billing
+ * perfectly, and reporting that as "no requests in this window" would be a
+ * different and false claim.
+ */
+export interface GatewaySpendLogPage {
+  rows: GatewaySpendLogRecord[];
+  available: boolean;
+  /** The row cap stopped the read — every total over `rows` is a floor. */
+  truncated: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -152,6 +205,20 @@ export interface GatewayClient {
    * backfill, and why nothing in the dashboard calls it behind a button.
    */
   fetchHealth(): Promise<GatewayHealthSnapshot[]>;
+  /**
+   * Request-level logs for a bounded window — the joint-keyed evidence layer
+   * under every aggregate this client otherwise reads.
+   *
+   * The one read that is *not* part of the sync: nothing stores these rows.
+   * They are fetched live behind a drill-down, capped, and thrown away, because
+   * the table they come from is the largest in LiteLLM's database, is pruned on
+   * a retention schedule of its own, and may be switched off entirely
+   * (`disable_spend_logs`) on a proxy that bills perfectly.
+   *
+   * Optional like the management routes, and for a reason that is not an
+   * error: `available: false` is what a proxy that keeps no logs answers.
+   */
+  fetchSpendLogs(from: string, to: string, limit: number): Promise<GatewaySpendLogPage>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

@@ -340,7 +340,23 @@ that — the one gateway surface describing this dashboard's own behaviour rathe
 so an alerting channel cannot go silent unnoticed: an unconfigured target is stated rather than implied
 by an empty list, a recorded-but-unsent finding says so with the target's own error, and `evaluatedAt`
 comes from the last successful sync so "nothing is open" and "this has never run" stay different
-answers. **It is a draft against
+answers. `GET /api/gateway/logs?from=&to=&limit=` is the one gateway read that is neither a table nor a
+snapshot, and the only source with a **joint key**: every route above answers a pre-aggregated table
+that reports each dimension independently, so "which models did this team spend its money on" is not a
+slice of any payload — it is a question `LiteLLM_DailyUserSpend` cannot express. `LiteLLM_SpendLogs`
+(`GET /spend/logs?summarize=false`, a sixth envelope: a bare array, or `{"data": […]}` on a newer proxy)
+carries every dimension on one row plus three facts no aggregate has — `model_id`, which is the only
+join between usage and `gateway_deployment_health`; `request_duration_ms`, the only latency the proxy
+exports at all; and the joint key itself. `summarize` defaulting to *true* is the trap: it answers daily
+aggregates, which is the wrong data in the right shape with a `200`, so the client always sends
+`false`. The route is **live and stores nothing**, capped at `SPEND_LOG_MAX_WINDOW_DAYS` (7) and
+`SPEND_LOG_ROW_CAP` (5,000) rows, because these rows may be switched off entirely
+(`disable_spend_logs` is ordinary at volume), are pruned on a retention schedule unrelated to the
+aggregates', and are millions a day — which is also why a sum over them is a **floor** and
+`crossTabSpendLogs` in `@dash/shared` reports `sampleSpend` and no share column. It is the one schema
+here with *per-row* tolerance (a log line with no id is dropped and counted, where a malformed
+aggregate throws), and the one where `available: false` is a supported configuration rather than a
+fault. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
 page) are the affordance for closing them: a live connection check that calls every route the sync needs
@@ -355,7 +371,8 @@ because an idle gateway and a team-scoped credential are indistinguishable from 
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP
 server serving the documented envelope (pagination, auth, retry classification, exponent-notation
 spend, absent optional routes, the rule that `/team` and `/tag` never contribute totals, and the
-management routes' null-vs-zero limits). That
+management routes' null-vs-zero limits, and `/spend/logs`' summarize flag, both envelopes and
+per-row tolerance). That
 proves the client handles the documented shape, not that the proxy sends it — it is also the harness
 for replaying a real captured response the day one exists.
 
@@ -387,6 +404,13 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
   limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
   must never be zero-filled, and the same rule carries into `gateway_budget_history`.
+- **A request log is a sample; the daily aggregates are the ledger.**
+  `GET /spend/logs` is the only joint-keyed source and the only one that may be switched off
+  (`disable_spend_logs`), pruned on its own retention schedule, or truncated by the row cap — so a
+  total over it is a floor, a read that hit the cap says `truncated`, and nothing derived from it may
+  be rendered as gateway spend or as a share of it. Nothing stores those rows either: the route is
+  live, because a copy of the proxy's request log is not something this dashboard should be the system
+  of record for.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to
