@@ -18,10 +18,17 @@
  * - null and zero stay opposite: an uncapped row has no utilization, no
  *   remaining and no percentage, while a `maxBudget: 0` row is *blocked*, and
  *   neither is ever rendered as "$0 of $0";
- * - the two scopes are kept apart. A key's cap and its team's cap govern the
- *   same dollars, so the derivation must never merge them — and, on the mock,
- *   every key's period spend is at least its team's would-be share, which is
- *   the arithmetic reason merging them would double-count;
+ * - the three scopes are kept apart. A key's cap, its team's cap and its tag's
+ *   cap govern the same dollars, so the derivation must never merge them — and,
+ *   on the mock, every key's period spend is at least its team's would-be
+ *   share, which is the arithmetic reason merging them would double-count;
+ * - the tag scope carries the one rule the other two do not: LiteLLM's reset
+ *   job has no tag handler, so a tag's counter is cumulative since creation
+ *   however clearly its budget states a period. The check that matters is the
+ *   *withheld* one — a tag two thirds through a month, well past the elapsed
+ *   gate that makes every key project, must still project nothing — and that
+ *   the governed tags are a strict subset of the tags the usage side reports,
+ *   since a tag nobody created is usage rather than governance;
  * - the sort is the one the card claims: blocked first, then descending share
  *   of cap, uncapped last ranked by dollars — so the biggest ungoverned
  *   consumer is the first row a reader meets after the problems;
@@ -38,7 +45,7 @@
  */
 import { MockGatewayClient } from '../src/gateway/mock.js';
 import { nanoToDollars } from '../src/lib/nano.js';
-import { budgetPeriodStart, budgetUtilization } from '@dash/shared';
+import { GATEWAY_BUDGET_SCOPES, budgetCounterResets, budgetPeriodStart, budgetUtilization } from '@dash/shared';
 import type { GatewayBudget } from '@dash/shared';
 import {
   DEFAULT_BUDGET_OPTIONS,
@@ -75,29 +82,36 @@ const money = (value: number | null) => (value === null ? 'n/a' : `$${value.toFi
 
 const keys = summary.scopes.find((scope) => scope.scope === 'api_key');
 const teams = summary.scopes.find((scope) => scope.scope === 'team');
+const tags = summary.scopes.find((scope) => scope.scope === 'tag');
 
 console.log(`budgets: ${budgets.length} rows · ${summary.scopes.length} scopes`);
 
 // ------------------------------------------------------------------- shape
 
 check(!summary.isEmpty, 'the mock reported no budgets at all');
-check(keys !== undefined && teams !== undefined, 'a scope is missing from the derivation');
 check(
-  summary.scopes[0]?.scope === 'api_key',
-  'keys must come before teams — the read endpoint orders them that way',
+  keys !== undefined && teams !== undefined && tags !== undefined,
+  'a scope is missing from the derivation',
 );
 check(
-  (keys?.total ?? 0) + (teams?.total ?? 0) === budgets.length,
+  summary.scopes.map((scope) => scope.scope).join(' ') === GATEWAY_BUDGET_SCOPES.join(' '),
+  'scopes must render in the shared const order, whatever order the payload grouped them in',
+);
+check(
+  (keys?.total ?? 0) + (teams?.total ?? 0) + (tags?.total ?? 0) === budgets.length,
   'the scopes did not partition the rows',
 );
 check(
-  keys?.rows.every((row) => row.budget.scope === 'api_key') === true &&
-    teams?.rows.every((row) => row.budget.scope === 'team') === true,
+  summary.scopes.every((scope) => scope.rows.every((row) => row.budget.scope === scope.scope)),
   'a row landed in the wrong scope',
 );
+check(
+  summary.scopes.every((scope) => scope.spendIsCumulative === !budgetCounterResets(scope.scope)),
+  "a scope's counter rule disagrees with the shared predicate",
+);
 
-if (keys === undefined || teams === undefined) {
-  console.error('cannot continue without both scopes');
+if (keys === undefined || teams === undefined || tags === undefined) {
+  console.error('cannot continue without all three scopes');
   process.exit(1);
 }
 
@@ -240,6 +254,131 @@ const monthlyTeamCaps = teams.rows
   .filter((entry) => entry.budget.maxBudget !== null)
   .map((entry) => entry.budget.maxBudget ?? 0);
 check(monthlyTeamCaps.length > 0, 'no team carries a cap');
+
+// ------------------------------------------------- the third scope: tags
+
+for (const entry of tags.rows) {
+  console.log(
+    `  ${entry.budget.key.padEnd(22)} ${entry.state.padEnd(9)} ` +
+      `${money(entry.budget.spend).padStart(10)} of ${money(entry.budget.maxBudget).padStart(9)} ` +
+      `· ${entry.utilization === null ? 'n/a' : `${entry.utilization.toFixed(1)}%`} ` +
+      `· pace ${money(entry.projectedSpend)}`,
+  );
+}
+
+check(tags.total > 0, 'the mock planted no tag budgets');
+check(
+  tags.rows.every((entry) => entry.budget.label === null),
+  "a tag's name is its id — a label would print the same string twice",
+);
+check(
+  tags.rows.every((entry) => entry.spendIsCumulative),
+  'every tag row must be marked as carrying a counter the proxy never resets',
+);
+
+// The load-bearing one. Every tag here is well past the elapsed gate that makes
+// a key project, so a projection withheld can only be the cumulative rule doing
+// its job — not the minimum-elapsed guard doing it by accident.
+const pacedTags = tags.rows.filter(
+  (entry) =>
+    entry.periodElapsed !== null && entry.periodElapsed >= DEFAULT_BUDGET_OPTIONS.minElapsed,
+);
+check(
+  pacedTags.length > 0,
+  'no tag is far enough into its period for the withheld-projection check to mean anything',
+);
+check(
+  tags.rows.every((entry) => entry.projectedSpend === null && !entry.projectedOverrun),
+  'a lifetime counter divided by a fraction of one period is a wrong forecast, not a slow one',
+);
+check(
+  tags.rows.some((entry) => entry.periodStart !== null && entry.periodElapsed !== null),
+  "the cap's own window is still a fact and must survive — only the pace built on it is withheld",
+);
+
+// Utilisation is *more* meaningful here, not less: it is the comparison the
+// proxy enforces, and a tag past it stays refused rather than recovering.
+check(
+  tags.rows.every(
+    (entry) =>
+      entry.utilization === null || near(entry.utilization, budgetUtilization(entry.budget) ?? -1),
+  ),
+  'a tag utilisation disagrees with the shared helper',
+);
+check(
+  tags.rows.some((entry) => entry.state === 'over'),
+  'the mock plants a monthly tag cap measured against a lifetime counter — one tag must read over',
+);
+
+// A tag id must not collide with a key or team id, or the switcher would show
+// one scope's history under another's row.
+const keyIds = new Set(keys.rows.map((entry) => entry.budget.key));
+const teamIds = new Set(teams.rows.map((entry) => entry.budget.key));
+check(
+  tags.rows.every((entry) => !keyIds.has(entry.budget.key) && !teamIds.has(entry.budget.key)),
+  'a tag id collided with a key or team id — the scopes would merge',
+);
+
+// Governance is a subset of usage, and strictly so: `/tag/list` returns tags
+// somebody created, while the usage side reports every tag that appeared on a
+// call. A gateway where the two matched would be one nobody had tagged ad hoc.
+const usage = await client.fetchUsage(
+  new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10),
+  new Date(Date.now() - 86_400_000).toISOString().slice(0, 10),
+);
+const usageTags = new Set(
+  usage.breakdowns.filter((entry) => entry.dimension === 'tag').map((entry) => entry.key),
+);
+check(usageTags.size > 0, 'the usage side reported no tags to compare governance against');
+check(
+  tags.rows.every((entry) => usageTags.has(entry.budget.key)),
+  'a governed tag does not appear in the tag usage dimension — the ids do not join',
+);
+check(
+  tags.total < usageTags.size,
+  `governed tags (${tags.total}) must be a strict subset of observed ones (${usageTags.size}) — partial governance is the realistic shape and the reason coverage is worth reporting`,
+);
+
+// The rule is the scope's, not the row's: two otherwise identical rows must
+// differ only by which scope they are in.
+const paceByScope = (scope: 'api_key' | 'tag'): BudgetRow | undefined =>
+  deriveBudgets(
+    [
+      {
+        scope,
+        key: 'twin',
+        label: null,
+        spend: 600,
+        maxBudget: 1_000,
+        softBudget: null,
+        budgetDuration: '30d',
+        resetAt: new Date(now.getTime() + 15 * 86_400_000).toISOString(),
+        tpmLimit: null,
+        rpmLimit: null,
+        blocked: false,
+      },
+    ],
+    now,
+  ).scopes[0]?.rows[0];
+
+const keyTwin = paceByScope('api_key');
+const tagTwin = paceByScope('tag');
+check(
+  keyTwin?.projectedSpend !== null && near(keyTwin?.projectedSpend ?? 0, 1_200, 1),
+  'the key twin must still project — the change may not cost every scope its pace',
+);
+check(
+  tagTwin?.projectedSpend === null && tagTwin?.spendIsCumulative === true,
+  'the tag twin, identical in every field but scope, must project nothing',
+);
+check(
+  tagTwin?.utilization !== null && near(tagTwin?.utilization ?? 0, 60, 0.01),
+  'the tag twin keeps its utilisation — that number is what the proxy enforces',
+);
+check(
+  keyTwin?.state === tagTwin?.state,
+  'withholding a projection must not change the state a row is classified as',
+);
 
 // ---------------------------------------------------------------- the pace
 

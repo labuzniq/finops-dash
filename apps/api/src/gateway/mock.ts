@@ -17,7 +17,13 @@
  * traffic is a subset of the same requests, so it sums to less than the day.
  */
 
-import type { GatewayDimension, GatewayProbeCoverage, GatewayProbeRoute } from '@dash/shared';
+import { budgetCounterResets } from '@dash/shared';
+import type {
+  GatewayBudgetScope,
+  GatewayDimension,
+  GatewayProbeCoverage,
+  GatewayProbeRoute,
+} from '@dash/shared';
 import { moduleLogger } from '../log.js';
 import { eachDay } from './litellm.js';
 import { addCounters, ZERO_COUNTERS } from './types.js';
@@ -236,6 +242,37 @@ const KEYS: readonly MockKey[] = [
     limits: { maxBudget: 30, softBudget: 24, budgetDuration: '7d', blocked: true },
     teamLimits: { maxBudget: 500, budgetDuration: '1mo' },
   },
+];
+
+/**
+ * Tag budgets — the third governance scope, and the one shaped unlike the
+ * others in two ways this table exists to reproduce.
+ *
+ * **Not every tag is governed.** `/tag/list` returns configured tags *and* tags
+ * the proxy merely saw in spend data, and only the first kind is governance.
+ * Four of the six workload tags are configured here; `support` and `chat` are
+ * not, so they appear in the `tag` usage dimension on every breakdown card and
+ * never on the budget card. That gap is the realistic shape — tag budgets get
+ * created for the workloads somebody worried about — and it is what makes
+ * "governance coverage" a number worth reporting rather than always 100%.
+ *
+ * **The counter does not reset.** LiteLLM's reset job has no tag handler
+ * (BerriAI/litellm#27481): the linked budget's `budget_reset_at` advances every
+ * cycle while `LiteLLM_TagTable.spend` keeps climbing. So the spend below is
+ * summed over the whole lifetime window whatever the duration says, which is
+ * what `budgetCounterResets` tells the rest of the codebase to expect — and it
+ * is why `batch`, on a $2,500 monthly cap, reads far past it: three months of
+ * spend measured against one month's allowance. On a real proxy that tag is
+ * refused and stays refused, which is the finding the card has to carry.
+ */
+const TAG_BUDGETS: readonly { tag: string; limits: MockLimits }[] = [
+  // The tag over the key that nobody would cap: the workload is governed after
+  // all, one level across rather than one level up.
+  { tag: 'coding-assistant', limits: { maxBudget: 12_000, softBudget: 9_600, budgetDuration: '1mo' } },
+  { tag: 'document-intelligence', limits: { maxBudget: 4_000, budgetDuration: '1mo' } },
+  { tag: 'batch', limits: { maxBudget: 2_500, softBudget: 2_000, budgetDuration: '1mo' } },
+  // Capped, and small enough that a lifetime counter is past it either way.
+  { tag: 'experiment', limits: { maxBudget: 200, softBudget: 150, budgetDuration: '7d' } },
 ];
 
 /**
@@ -687,14 +724,21 @@ export class MockGatewayClient implements GatewayClient {
     const budgets: GatewayBudgetSnapshot[] = [];
 
     const push = (
-      scope: 'api_key' | 'team',
+      scope: GatewayBudgetScope,
       key: string,
-      label: string,
+      label: string | null,
       limits: MockLimits,
       dimension: GatewayDimension,
     ): void => {
       const duration = limits.budgetDuration ?? null;
-      const periodStart = duration === null ? null : (periodStarts.get(duration) ?? null);
+      // The counter's window is the scope's, not the budget's: where the proxy
+      // resets a counter, the period in flight is what it holds; where it does
+      // not, the counter has been climbing since the object was created, and
+      // `from` is the earliest day this generator has.
+      const periodStart =
+        !budgetCounterResets(scope) || duration === null
+          ? null
+          : (periodStarts.get(duration) ?? null);
       budgets.push({
         scope,
         key,
@@ -703,6 +747,9 @@ export class MockGatewayClient implements GatewayClient {
         maxBudgetNano: limits.maxBudget === undefined ? null : dollarsToNano(limits.maxBudget),
         softBudgetNano: limits.softBudget === undefined ? null : dollarsToNano(limits.softBudget),
         budgetDuration: duration,
+        // `resetAt` is a fact about the *budget*, which does roll on schedule
+        // even where the counter it governs does not — that mismatch is the
+        // whole of BerriAI/litellm#27481 and is reproduced rather than tidied.
         resetAt: duration === null ? null : nextReset(duration, now),
         tpmLimit: limits.tpmLimit ?? null,
         rpmLimit: limits.rpmLimit ?? null,
@@ -713,6 +760,11 @@ export class MockGatewayClient implements GatewayClient {
     for (const key of KEYS) {
       push('api_key', key.token, key.alias, key.limits, 'api_key');
       push('team', key.teamId, key.teamAlias, key.teamLimits, 'team');
+    }
+    // A tag's id is its name — LiteLLM_TagTable's primary key — so there is no
+    // alias to resolve and the label is null, exactly as the live client sends it.
+    for (const tag of TAG_BUDGETS) {
+      push('tag', tag.tag, null, tag.limits, 'tag');
     }
 
     log.info({ dash: { budgets: budgets.length } }, 'mock gateway budgets generated');
@@ -750,7 +802,7 @@ export class MockGatewayClient implements GatewayClient {
 
     const days = usage.daily.length;
     const spend = Number(usage.daily.reduce((sum, row) => sum + row.spendNano, 0n)) / 1e9;
-    const scoped = (scope: 'api_key' | 'team'): number =>
+    const scoped = (scope: GatewayBudgetScope): number =>
       budgets.filter((budget) => budget.scope === scope).length;
 
     return [
@@ -809,6 +861,18 @@ export class MockGatewayClient implements GatewayClient {
         durationMs: 0,
         rows: scoped('team'),
         detail: `${scoped('team')} team(s)`,
+        dimensions: [],
+      },
+      {
+        path: '/tag/list',
+        purpose:
+          'The budget card will be empty for tags; API-key and team budgets are unaffected. Older proxies have no tag management at all.',
+        required: false,
+        status: scoped('tag') === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: scoped('tag'),
+        detail: `${scoped('tag')} tag(s), all configured`,
         dimensions: [],
       },
     ];

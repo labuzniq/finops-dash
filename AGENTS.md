@@ -170,20 +170,31 @@ the dimension's lines do not account for, reported and never spread, for the sam
 Everything above is
 *usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's
-**governance** state — caps, rate limits and the counter for the period in flight, per key and per team,
-from `/key/list` and `/team/list` rather than the activity routes — replaced wholesale by the same sync
-and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means *no such limit*
-while `0` means *reject everything*, so nothing is zero-filled; and `spend` is the proxy's own enforced
-counter, never a re-derivation from `gateway_daily`, because a key's budget period resets on its own
-schedule. Both management routes are optional — an analytics-only credential is refused them, and
-`fetchBudgets` answering `[]` must not fail a usage sync. `lib/metrics/gatewayBudgets.ts` and
+**governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
+tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
+by the same sync and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means
+*no such limit* while `0` means *reject everything*, so nothing is zero-filled; and `spend` is the
+proxy's own enforced counter, never a re-derivation from `gateway_daily`, because a key's budget period
+resets on its own schedule. All three management routes are independently optional — an analytics-only
+credential is refused them and an older proxy has no tag management at all, and `fetchBudgets` answering
+`[]` must not fail a usage sync. `/tag/list` is a third envelope rather than a second copy of
+`/team/list`: a bare array with no pagination, the caps nested on a joined `litellm_budget_table` rather
+than inline, and a response that mixes configured tags with *dynamic* ones the proxy merely saw in
+spend data — the latter are usage (they are already rows of the `tag` dimension) and are dropped, or
+they would dilute the very denominator the card reports governance coverage against. `lib/metrics/gatewayBudgets.ts` and
 `GatewayBudgetCard` render it, and they are the page's one surface that **totals nothing**: each row's
 `spend` is measured over that row's own period (monthly, weekly, or never-resetting), so summing dollars
 across rows produces a number with no unit — the card aggregates counts of objects instead, and reports
-governance coverage in keys rather than in dollars. Scopes are a switcher, not two tables, because a
-key's cap and its team's cap govern the same dollars. The one thing derived on top of the proxy's state
-is *pace* — `spend ÷ share of the period elapsed`, linear, null before a sixth of the period has passed
-and null for a counter with no period. `gateway_budget_history` is the one governance fact that *does*
+governance coverage in objects rather than in dollars. Scopes are a switcher, not three tables, because a
+key's cap, its team's cap and its tag's cap govern the same dollars. The one thing derived on top of the
+proxy's state is *pace* — `spend ÷ share of the period elapsed`, linear, null before a sixth of the
+period has passed, null for a counter with no period, and null for **every** row of a scope whose
+counter the proxy does not reset. That last case is `tag` and only `tag`: LiteLLM's `ResetBudgetJob` has
+no tag handler (BerriAI/litellm#27481), so the linked budget's `budget_reset_at` rolls each cycle while
+`LiteLLM_TagTable.spend` climbs forever. `budgetCounterResets(scope)` in `@dash/shared` is the single
+statement of that rule and it cuts both ways — a pace over a lifetime counter is withheld rather than
+caveated, while utilisation is *more* load-bearing there than anywhere else, because it is the exact
+comparison the proxy enforces and a tag past its cap stays refused instead of recovering next period. `gateway_budget_history` is the one governance fact that *does*
 have a range, and the only gateway table written by **appending** rather than replacing: the full sync
 files one reading per governed object per UTC day (upserted, so it grows with the gateway and the
 calendar and never with how often the scheduler runs), a backfill files none, and there is no bootstrap
@@ -255,6 +266,13 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
   limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
   must never be zero-filled, and the same rule carries into `gateway_budget_history`.
+- **Whether a budget counter resets is a property of its scope.** Keys and teams are reset by the
+  proxy, tags are not (BerriAI/litellm#27481), so a tag's `spend` is cumulative since creation whatever
+  its `budget_duration` says. Read it through `budgetCounterResets(scope)`: nothing may divide that
+  counter by a fraction of a period, and nothing may re-derive it from `gateway_daily` to make it
+  behave — the enforced number is the one that refuses calls. A governed tag is also a strict subset of
+  the `tag` usage dimension: usage has a tag the moment one call carries it, governance only if somebody
+  created it.
 - **A budget observation is a sample, not a series.** `gateway_budget_history` holds one reading per
   governed object per day the sync ran. A day with no row is a day nobody looked — not zero, not
   "unchanged" — so nothing derived from it may be interpolated, and a period total read off it is a

@@ -25,6 +25,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
+  budgetCounterResets,
   budgetPeriodStart,
   budgetRemaining,
   budgetUtilization,
@@ -771,6 +772,165 @@ check(
 );
 
 // =====================================================================
+// 6b · The third management envelope — /tag/list
+// =====================================================================
+//
+// Tags differ from keys and teams in three ways this section exists to pin:
+//
+//   1. a bare array with no pagination of any kind,
+//   2. the limits one level down, on the joined `litellm_budget_table`, where a
+//      key row spells them at the top level, and
+//   3. a response that mixes configured tags with tags the proxy merely saw in
+//      spend data — the second kind is usage, not governance.
+
+console.log('\n6b · budgets — /tag/list');
+
+const tags = await withProxy(
+  (captured) => {
+    if (captured.path === '/tag/list') {
+      return {
+        status: 200,
+        body: [
+          {
+            name: '  coding-assistant  ',
+            description: 'Agentic coding traffic',
+            spend: 8_142.5,
+            budget_id: 'budget-1',
+            litellm_budget_table: {
+              budget_id: 'budget-1',
+              max_budget: 12_000,
+              soft_budget: 9_600,
+              budget_duration: '1mo',
+              budget_reset_at: '2026-08-01T00:00:00.594000Z',
+              tpm_limit: null,
+              rpm_limit: 4_000,
+            },
+          },
+          // Configured, capped at nothing: 0 is a block, exactly as on a key.
+          {
+            name: 'frozen',
+            spend: 0,
+            budget_id: 'budget-2',
+            litellm_budget_table: { budget_id: 'budget-2', max_budget: 0, rpm_limit: 0 },
+          },
+          // Created but never capped. Governed (it is in the tag table) and
+          // uncapped (nobody set a limit) — the two are different facts.
+          { name: 'chat', description: 'Ad-hoc chat', spend: 412.75 },
+          // Linked to a budget the endpoint did not include: everything the
+          // payload does not carry stays null rather than being invented.
+          { name: 'linked-only', spend: 10, budget_id: 'budget-3' },
+          // Dynamic: seen in spend data, never created. No spend column, no
+          // budget link — a usage row wearing a governance row's shape.
+          {
+            name: 'ad-hoc-experiment',
+            description: 'This is a spend tag that was passed dynamically',
+            models: null,
+            created_at: '2026-06-01T00:00:00Z',
+            updated_at: '2026-07-30T00:00:00Z',
+          },
+          { name: '', spend: 1 },
+        ],
+      };
+    }
+    return { status: 404, body: {} };
+  },
+  async (proxy) => {
+    const rows = await client(proxy.baseUrl).fetchBudgets();
+    return { rows, calls: proxy.calls };
+  },
+);
+
+check(
+  tags.calls.filter((call) => call.path === '/tag/list').length === 1,
+  '/tag/list is asked once — it carries no pagination to follow',
+);
+check(
+  tags.rows.every((row) => row.scope === 'tag'),
+  'an absent /key/list and /team/list leave the tag rows answering alone',
+);
+check(
+  tags.rows.length === 4,
+  `dynamic and nameless rows are dropped, configured ones kept (${tags.rows.length} rows)`,
+);
+
+const tagOf = (key: string) => tags.rows.find((row) => row.key === key);
+
+check(
+  tags.rows.every((row) => row.key !== 'ad-hoc-experiment'),
+  'a tag seen only in spend data is usage, not a governance object — it must not dilute the coverage denominator',
+);
+const coding = tagOf('coding-assistant');
+check(coding !== undefined, 'the tag name is trimmed and used as the id');
+check(
+  coding?.maxBudgetNano === 12_000_000_000_000n && coding?.softBudgetNano === 9_600_000_000_000n,
+  'caps are read from the joined litellm_budget_table, not from the tag row',
+);
+check(
+  coding?.budgetDuration === '1mo' && coding?.resetAt?.toISOString() === '2026-08-01T00:00:00.594Z',
+  'the duration and reset instant come from the nested budget too',
+);
+check(
+  coding?.rpmLimit === 4_000 && coding?.tpmLimit === null,
+  'a nested rate limit survives and its absent twin stays null',
+);
+check(coding?.spendNano === 8_142_500_000_000n, "the tag's own spend column is the counter, not the budget's");
+check(
+  coding?.label === null,
+  'a tag has no alias — its name is its id, so echoing it as a label would print it twice',
+);
+
+const frozen = tagOf('frozen');
+check(
+  frozen?.maxBudgetNano === 0n && frozen?.rpmLimit === 0,
+  'a tag capped at zero keeps 0 — blocked, which is the opposite of the uncapped tag next to it',
+);
+const chat = tagOf('chat');
+check(
+  chat?.maxBudgetNano === null && chat?.budgetDuration === null && chat?.resetAt === null,
+  'a configured tag with no budget row is uncapped, with every limit null',
+);
+check(
+  tagOf('linked-only')?.maxBudgetNano === null,
+  'a budget_id the endpoint did not expand yields null limits rather than an invented cap',
+);
+
+const tagAbsent = await withProxy(
+  (captured) =>
+    captured.path === '/tag/list'
+      ? { status: 404, body: {} }
+      : captured.path === '/key/list'
+        ? { status: 200, body: { keys: [keyRow({ token: 'k' })], total_pages: 1 } }
+        : { status: 200, body: [] },
+  (proxy) => client(proxy.baseUrl).fetchBudgets(),
+);
+check(
+  tagAbsent.length === 1 && tagAbsent[0]?.scope === 'api_key',
+  'an older proxy without tag management does not cost the key budgets — /tag/list is independently optional',
+);
+
+const tagMalformed = await withProxy(
+  (captured) =>
+    captured.path === '/tag/list'
+      ? { status: 200, body: [{ name: 't', litellm_budget_table: { max_budget: 'lots' } }] }
+      : { status: 404, body: {} },
+  (proxy) =>
+    client(proxy.baseUrl)
+      .fetchBudgets()
+      .then(() => 'resolved')
+      .catch((error: unknown) => String(error)),
+);
+check(
+  tagMalformed.includes('unexpected shape'),
+  'a nested cap of the wrong type throws rather than syncing a silently wrong tag budget',
+);
+
+// The one rule the scope carries that the other two do not.
+check(
+  budgetCounterResets('api_key') && budgetCounterResets('team') && !budgetCounterResets('tag'),
+  "the tag counter is the only one LiteLLM's reset job leaves climbing (BerriAI/litellm#27481)",
+);
+
+// =====================================================================
 // 7 · Budget arithmetic in @dash/shared
 // =====================================================================
 //
@@ -875,6 +1035,10 @@ const healthy = await withProxy(
       body: { keys: [keyRow({ token: 'hash-a' }), 'bare-token-no-budget'], total_pages: 1 },
     },
     '/team/list': { status: 200, body: [{ team_id: 'platform', team_alias: 'Platform' }] },
+    '/tag/list': {
+      status: 200,
+      body: [{ name: 'coding-assistant', spend: 1, litellm_budget_table: { max_budget: 10 } }],
+    },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -882,10 +1046,10 @@ const healthy = await withProxy(
 const route = (path: string): GatewayProbeRoute | undefined =>
   healthy.routes.find((candidate) => candidate.path === path);
 
-check(healthy.calls.length === 5, `one call per route, no retries (${healthy.calls.length})`);
+check(healthy.calls.length === 6, `one call per route, no retries (${healthy.calls.length})`);
 check(
   healthy.calls.map((call) => call.path).join(' ') ===
-    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list',
+    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list',
   'routes are probed in dependency order, activity before management',
 );
 check(
@@ -944,6 +1108,9 @@ const restricted = await withProxy(
     '/tag/daily/activity': { status: 404, body: { detail: 'no such route' } },
     '/key/list': { status: 403, body: { detail: 'Only proxy admins may list keys' } },
     '/team/list': { status: 401, body: { detail: 'invalid credentials' } },
+    // Older proxy: tag management does not exist at all, which is a different
+    // fix from the refused routes above and must classify differently.
+    '/tag/list': { status: 404, body: { detail: 'Not Found' } },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -952,8 +1119,12 @@ const restrictedRoute = (path: string): GatewayProbeRoute | undefined =>
   restricted.routes.find((candidate) => candidate.path === path);
 
 check(
-  restricted.calls.length === 5,
+  restricted.calls.length === 6,
   `a refused or absent route is attempted once, never retried (${restricted.calls.length})`,
+);
+check(
+  restrictedRoute('/tag/list')?.status === 'absent' && restrictedRoute('/key/list')?.status === 'denied',
+  'an absent tag route and a refused key route are kept apart — one is fixable and the other is not',
 );
 check(
   restrictedRoute('/team/daily/activity')?.status === 'absent' &&
@@ -989,7 +1160,10 @@ check(
   'a refused /key/list warns in the dashboard\'s terms, not in HTTP',
 );
 check(
-  restrictedSummary.warnings.length === 5,
+  // Five unanswered routes plus the empty-but-required user route: six gaps,
+  // six statements. The count moves with the route table by design — a new
+  // optional route that warned about nothing would be a route nobody misses.
+  restrictedSummary.warnings.length === 6,
   `one statement per gap, no more (${restrictedSummary.warnings.length})`,
 );
 

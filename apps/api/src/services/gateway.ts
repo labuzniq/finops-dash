@@ -131,9 +131,9 @@ export async function getGatewayCoverage(): Promise<GatewayCoverage> {
 }
 
 /**
- * Current budgets and rate limits, key rows first and then teams, each ranked
- * by how much of its cap it has consumed — the uncapped rows sort last, since
- * "no budget" is not a small budget.
+ * Current budgets and rate limits, grouped in `GATEWAY_BUDGET_SCOPES` order and
+ * each scope ranked by how much of its cap it has consumed — the uncapped rows
+ * sort last, since "no budget" is not a small budget.
  *
  * Null limits survive the read unchanged. `nanoToDollars` is applied only to
  * the columns that hold a number, so an uncapped key stays `null` rather than
@@ -165,7 +165,12 @@ export async function getGatewayBudgets(): Promise<GatewayBudgets> {
     budget.maxBudget === null || budget.maxBudget <= 0 ? -1 : budget.spend / budget.maxBudget;
 
   budgets.sort((a, b) => {
-    if (a.scope !== b.scope) return a.scope === 'api_key' ? -1 : 1;
+    // Ordered off the shared const rather than by name: with three scopes a
+    // two-way `a.scope === 'api_key' ? -1 : 1` is not even a consistent
+    // comparator, since it answers "after" for both team-vs-tag and tag-vs-team.
+    if (a.scope !== b.scope) {
+      return GATEWAY_BUDGET_SCOPES.indexOf(a.scope) - GATEWAY_BUDGET_SCOPES.indexOf(b.scope);
+    }
     const difference = consumed(b) - consumed(a);
     if (difference !== 0) return difference;
     return (a.label ?? a.key).localeCompare(b.label ?? b.key);

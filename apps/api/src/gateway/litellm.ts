@@ -194,6 +194,69 @@ const teamRowSchema = z.object({
 /** `/team/list` answers a bare array — no pagination envelope, unlike keys. */
 const teamListSchema = z.array(teamRowSchema);
 
+/**
+ * `/tag/list` — the third management envelope, and the one shaped least like
+ * the other two.
+ *
+ * Three differences, each of which the parsing below has to deal with:
+ *
+ *  1. **A bare array, like teams**, but with no pagination of any kind. Tags are
+ *     a small configured set; the route returns all of them.
+ *  2. **The limits are not inline.** `LiteLLM_TagTable` carries only
+ *     `tag_name`, `description`, `models`, `spend` and a `budget_id`; the caps,
+ *     the duration and the rate limits live on the joined `LiteLLM_BudgetTable`
+ *     row, which the endpoint includes as `litellm_budget_table`. A key row
+ *     spells `max_budget` at the top level and a tag row does not.
+ *  3. **It mixes configured tags with observed ones.** The endpoint appends
+ *     *dynamic* tags — strings that merely appeared in spend data and were never
+ *     created — built from a spend aggregation, so they have a name and dates
+ *     and nothing else. Those are not governance objects; see `isGoverned`.
+ */
+const tagBudgetTableSchema = z.object({
+  budget_id: z.string().nullish(),
+  max_budget: nullableNumber,
+  soft_budget: nullableNumber,
+  budget_duration: z.string().nullish(),
+  budget_reset_at: z.string().nullish(),
+  tpm_limit: nullableNumber,
+  rpm_limit: nullableNumber,
+});
+
+const tagRowSchema = z.object({
+  name: z.string(),
+  description: z.string().nullish(),
+  spend: z.number().nullish(),
+  budget_id: z.string().nullish(),
+  litellm_budget_table: tagBudgetTableSchema.nullish(),
+  blocked: z.boolean().nullish(),
+});
+
+const tagListSchema = z.array(tagRowSchema);
+
+/**
+ * Is this row a tag somebody configured, or one the proxy merely saw?
+ *
+ * A dynamic tag is assembled from a spend-log aggregation and carries no budget
+ * link and no `spend` column — it is a *usage* fact, and it is already on this
+ * page as a row of the `tag` breakdown dimension. Admitting it here as an
+ * "uncapped" governance object would count objects nobody ever governed, which
+ * is precisely the denominator the budget card reports coverage against: a
+ * gateway with two capped tags and forty observed strings would read as 5%
+ * governed when in truth every tag anyone created is capped.
+ *
+ * So the test is for evidence of the tag *table*, not for a budget: a stored tag
+ * with no cap is genuinely ungoverned and belongs on the card as such.
+ */
+function isGoverned(row: z.infer<typeof tagRowSchema>): boolean {
+  return (
+    row.budget_id !== null &&
+    row.budget_id !== undefined &&
+    row.budget_id !== ''
+  ) ||
+    (row.litellm_budget_table !== null && row.litellm_budget_table !== undefined) ||
+    typeof row.spend === 'number';
+}
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -432,15 +495,17 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
-   * Current budgets and rate limits for every key and team the credential can
-   * see, from the management routes rather than the analytics ones.
+   * Current budgets and rate limits for every key, team and tag the credential
+   * can see, from the management routes rather than the analytics ones.
    *
-   * Both routes are optional. A read-only analytics key is a perfectly
-   * reasonable thing to point this integration at, and it will be refused key
-   * management — governance simply goes missing then, which the UI can say, and
-   * the usage sync carries on. That is also why the whole method swallows an
-   * absent route instead of letting it propagate: `fetchBudgets` returning `[]`
-   * is a supported answer.
+   * All three routes are optional, and independently so — a proxy can perfectly
+   * well have keys and no tags, and a tag-management route only exists on newer
+   * versions at all. A read-only analytics key is also a reasonable thing to
+   * point this integration at, and it will be refused every one of them:
+   * governance simply goes missing then, which the UI can say, and the usage
+   * sync carries on. That is why the whole method swallows an absent route
+   * instead of letting it propagate — `fetchBudgets` returning `[]` is a
+   * supported answer.
    */
   async fetchBudgets(): Promise<GatewayBudgetSnapshot[]> {
     const budgets = new Map<string, GatewayBudgetSnapshot>();
@@ -450,6 +515,9 @@ export class LiteLlmGatewayClient implements GatewayClient {
     }
     for (const budget of await this.fetchTeamBudgets()) {
       budgets.set(`team ${budget.key}`, budgets.get(`team ${budget.key}`) ?? budget);
+    }
+    for (const budget of await this.fetchTagBudgets()) {
+      budgets.set(`tag ${budget.key}`, budgets.get(`tag ${budget.key}`) ?? budget);
     }
 
     log.info({ dash: { budgets: budgets.size } }, 'litellm budgets fetched');
@@ -549,6 +617,73 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
+   * `/tag/list` — a bare array like teams, but with the limits one level down.
+   *
+   * Everything a key row spells at the top level (`max_budget`, `soft_budget`,
+   * `budget_duration`, `budget_reset_at`, the rate limits) lives on the joined
+   * `litellm_budget_table` here, and the tag row itself carries only its name,
+   * its `spend` and the `budget_id` it is linked by. A tag with a `budget_id`
+   * but no included budget object is therefore capped-by-something-we-cannot-see
+   * rather than uncapped, and it lands with every limit null — which reads as
+   * uncapped on the card. That is the honest answer from this payload; the
+   * alternative would be inventing a limit.
+   *
+   * Dynamic tags are dropped (see `isGoverned`) and counted, because a proxy
+   * where every tag is dynamic means nobody has created a tag budget at all —
+   * which is a different thing to report than "no tags".
+   */
+  private async fetchTagBudgets(): Promise<GatewayBudgetSnapshot[]> {
+    const body = await this.getJson(new URL(`${this.root}/tag/list`), true);
+    if (body === null) return [];
+
+    const parsed = tagListSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new Error(
+        `LiteLLM /tag/list returned an unexpected shape: ${parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+          .join('; ')}`,
+      );
+    }
+
+    let dynamic = 0;
+    const budgets: GatewayBudgetSnapshot[] = [];
+
+    for (const row of parsed.data) {
+      if (row.name.trim() === '') continue;
+      if (!isGoverned(row)) {
+        dynamic += 1;
+        continue;
+      }
+      const limits = row.litellm_budget_table ?? null;
+      budgets.push({
+        scope: 'tag',
+        // The tag name IS the id — it is the primary key of LiteLLM_TagTable and
+        // the same string the `tag` usage dimension is keyed by, so no alias
+        // resolution is possible or needed. `description` is prose, not a label.
+        key: row.name.trim().slice(0, 200),
+        label: null,
+        spendNano: dollarsToNano(row.spend ?? 0),
+        maxBudgetNano: optionalDollarsToNano(limits?.max_budget),
+        softBudgetNano: optionalDollarsToNano(limits?.soft_budget),
+        budgetDuration: limits?.budget_duration?.trim().slice(0, 20) ?? null,
+        resetAt: toInstant(limits?.budget_reset_at),
+        tpmLimit: toLimit(limits?.tpm_limit),
+        rpmLimit: toLimit(limits?.rpm_limit),
+        blocked: row.blocked === true,
+      });
+    }
+
+    if (dynamic > 0) {
+      log.info(
+        { dash: { dynamic, governed: budgets.length } },
+        'tag rows seen only in spend data — reported as usage, not as governance',
+      );
+    }
+    return budgets;
+  }
+
+  /**
    * Call every route the sync depends on once, for one day, and report what
    * each answered.
    *
@@ -579,6 +714,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
 
     routes.push(await this.probeKeyList());
     routes.push(await this.probeTeamList());
+    routes.push(await this.probeTagList());
 
     log.info(
       { dash: { statuses: routes.map((route) => `${route.path} ${route.status}`) } },
@@ -716,6 +852,55 @@ export class LiteLlmGatewayClient implements GatewayClient {
       status: rows === 0 ? 'empty' : 'ok',
       rows,
       detail: rows === 0 ? null : `${rows} team(s)`,
+    };
+  }
+
+  /**
+   * `/tag/list`, which answers three distinguishable things and only one of them
+   * is "tag budgets work here":
+   *
+   *   - `absent` — an older proxy with no tag management at all. The likeliest
+   *     outcome, and the only one that cannot be fixed by configuration.
+   *   - `ok` with every row dynamic — the route exists and nobody has created a
+   *     tag. The card would be empty and the reason is not a permission.
+   *   - `ok` with governed rows — tag budgets are actually in use.
+   *
+   * The count that matters is therefore the governed one, not `rows`, which is
+   * why the detail spells both.
+   */
+  private async probeTagList(): Promise<GatewayProbeRoute> {
+    const attempt = await this.probeOnce(new URL(`${this.root}/tag/list`));
+    const base = {
+      path: '/tag/list',
+      purpose:
+        'The budget card will be empty for tags; API-key and team budgets are unaffected. Older proxies have no tag management at all.',
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = tagListSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+    const rows = parsed.data.length;
+    const governed = parsed.data.filter(isGoverned).length;
+    return {
+      ...base,
+      // A route answering only dynamic tags has nothing to govern, which is the
+      // same consequence as an empty one: no tag rows on the budget card.
+      status: governed === 0 ? 'empty' : 'ok',
+      rows,
+      detail:
+        rows === 0
+          ? null
+          : governed === rows
+            ? `${rows} tag(s), all configured`
+            : `${rows} tag(s), ${governed} configured — the rest were only seen in spend data and carry no budget`,
     };
   }
 

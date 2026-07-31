@@ -1,4 +1,10 @@
-import { budgetPeriodStart, budgetRemaining, budgetUtilization } from '@dash/shared';
+import {
+  GATEWAY_BUDGET_SCOPES,
+  budgetCounterResets,
+  budgetPeriodStart,
+  budgetRemaining,
+  budgetUtilization,
+} from '@dash/shared';
 import type { GatewayBudget, GatewayBudgetScope } from '@dash/shared';
 
 /**
@@ -22,10 +28,12 @@ import type { GatewayBudget, GatewayBudgetScope } from '@dash/shared';
  *    resets. Adding a $30-per-week cap to a $1,800-per-month cap produces a
  *    number with no unit. Where the usage cards can total anything because every
  *    row shares one spine, this one totals *counts of objects* and nothing else.
- *  - **Scopes never combine.** A key's cap and its team's cap govern the same
- *    dollars — spending under the key is spending under the team — exactly like
- *    the overlapping breakdown dimensions. The card is a switcher for the same
- *    reason the breakdown card is.
+ *  - **Scopes never combine.** A key's cap, its team's cap and its tag's cap all
+ *    govern the same dollars — spending under the key is spending under the team
+ *    and under whatever the call was tagged — exactly like the overlapping
+ *    breakdown dimensions. The card is a switcher for the same reason the
+ *    breakdown card is. The three do not even cover the same population: a
+ *    proxy typically caps every key and only the tags somebody worried about.
  *  - **Null is not zero.** `maxBudget: null` is uncapped; `maxBudget: 0` rejects
  *    every call. They are opposite states and the sort has to place them at
  *    opposite ends, not next to each other at "$0".
@@ -78,12 +86,31 @@ export interface BudgetRow {
    * month from its first afternoon multiplies one batch job by thirty. It is
    * also null for a row with no period, which is not a gap in the maths but the
    * fact that a counter that never resets has no period to project to the end of.
+   *
+   * And null for every row whose counter the proxy does not reset, however
+   * clearly its budget states a period — see `spendIsCumulative`.
    */
   projectedSpend: number | null;
   /** Projected past the cap while not yet over it — the actionable one. */
   projectedOverrun: boolean;
   /** Either limit set. A key with no budget but a TPM ceiling is still governed. */
   rateLimited: boolean;
+  /**
+   * The counter is spend since the object was created, not spend this period.
+   *
+   * True for the `tag` scope and nothing else, and it is a statement about
+   * LiteLLM rather than about this row: the proxy's reset job has no tag handler
+   * (BerriAI/litellm#27481), so the budget's `resetAt` rolls every cycle while
+   * the tag's own counter climbs forever.
+   *
+   * The row is still worth rendering, and reading it needs one adjustment in
+   * each direction. `utilization` is *more* meaningful than elsewhere, not less
+   * — it is the exact comparison the proxy enforces, and a tag past it stays
+   * refused rather than recovering when the month turns. `projectedSpend` is
+   * withheld entirely, because dividing a lifetime counter by a fraction of one
+   * period is not a slow forecast, it is a wrong one.
+   */
+  spendIsCumulative: boolean;
 }
 
 /**
@@ -108,6 +135,12 @@ export interface BudgetScopeSummary {
   rateLimited: number;
   /** Rows worth acting on: blocked, over, past a soft budget, or pacing past the cap. */
   attention: number;
+  /**
+   * Every row in this scope carries a counter the proxy never resets, so the
+   * scope needs one caveat rather than a badge on each of its rows. Read off
+   * the scope, not off the rows, so it is still true of an empty one.
+   */
+  spendIsCumulative: boolean;
 }
 
 export interface BudgetSummary {
@@ -189,9 +222,13 @@ function toRow(budget: GatewayBudget, now: Date, options: BudgetOptions): Budget
   const { state, blockReason } = classify(budget, utilization, options);
   const periodStart = budgetPeriodStart(budget);
   const periodElapsed = elapsedFraction(budget, periodStart, now);
+  const spendIsCumulative = !budgetCounterResets(budget.scope);
 
+  // The period is still reported — the cap's window is real and "resets in four
+  // days" is true — but the pace is not, because the numerator does not belong
+  // to the denominator on a scope whose counter never went back to zero.
   const projectedSpend =
-    periodElapsed !== null && periodElapsed >= options.minElapsed
+    !spendIsCumulative && periodElapsed !== null && periodElapsed >= options.minElapsed
       ? budget.spend / periodElapsed
       : null;
 
@@ -216,6 +253,7 @@ function toRow(budget: GatewayBudget, now: Date, options: BudgetOptions): Budget
       state !== 'blocked' &&
       projectedSpend > budget.maxBudget,
     rateLimited: budget.tpmLimit !== null || budget.rpmLimit !== null,
+    spendIsCumulative,
   };
 }
 
@@ -278,8 +316,16 @@ export function deriveBudgets(
           row.state === 'soft' ||
           row.projectedOverrun,
       ).length,
+      spendIsCumulative: !budgetCounterResets(scope),
     });
   }
+
+  // Scopes render in the shared const's order rather than in whatever order the
+  // payload grouped them, so a proxy with no teams does not silently move the
+  // tag switcher into the team's place.
+  scopes.sort(
+    (a, b) => GATEWAY_BUDGET_SCOPES.indexOf(a.scope) - GATEWAY_BUDGET_SCOPES.indexOf(b.scope),
+  );
 
   // Keys before teams, matching the read endpoint's own order.
   scopes.sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'api_key' ? -1 : 1));

@@ -211,7 +211,7 @@ function alert(
   };
 }
 
-/** `Data Platform (api key)` — who is over, and in which of the two scopes. */
+/** `Data Platform (api key)` — who is over, and in which scope. */
 function budgetSubjectLabel(row: BudgetRow): string {
   const scope = GATEWAY_BUDGET_SCOPE_LABELS[row.budget.scope].toLowerCase();
   return `${row.budget.label ?? row.budget.key} · ${scope}`;
@@ -256,7 +256,16 @@ function fromBudgets(summary: BudgetSummary): GatewayAlert[] {
         );
       } else if (row.state === 'over') {
         alerts.push(
-          alert('budget-over', subject, label, 'Over its budget', `${capPhrase(row)} this period.`),
+          alert(
+            'budget-over',
+            subject,
+            label,
+            'Over its budget',
+            // The window the counter covers differs by scope, and a digest that
+            // says "this period" over a counter that has never reset would be
+            // making a claim the card it points at does not make.
+            `${capPhrase(row)} ${row.spendIsCumulative ? 'since it was created; the proxy does not reset this counter, so it stays refused.' : 'this period.'}`,
+          ),
         );
       } else if (row.state === 'soft') {
         alerts.push(

@@ -105,14 +105,16 @@ export function GatewayBudgetCard({
           <div>
             <div className={styles.title}>Budgets and limits</div>
             <div className={styles.sub}>
-              what the proxy will stop · one row per key and per team, replaced on every sync
+              what the proxy will stop · one row per key, team and configured tag, replaced on every
+              sync
             </div>
           </div>
         </div>
         <div className={styles.empty}>
-          The proxy reported no budgets. LiteLLM&apos;s <code>/key/list</code> and{' '}
-          <code>/team/list</code> are management routes — an analytics-only credential is refused
-          them, and a refusal and a genuinely ungoverned gateway look identical from here.
+          The proxy reported no budgets. LiteLLM&apos;s <code>/key/list</code>,{' '}
+          <code>/team/list</code> and <code>/tag/list</code> are management routes — an
+          analytics-only credential is refused them, and a refusal and a genuinely ungoverned
+          gateway look identical from here.
         </div>
       </Card>
     );
@@ -126,8 +128,9 @@ export function GatewayBudgetCard({
         <div>
           <div className={styles.title}>Budgets and limits</div>
           <div className={styles.sub}>
-            LiteLLM&apos;s own enforced counter for the period in flight · each row is measured over
-            its own period, so nothing here totals
+            {active.spendIsCumulative
+              ? "LiteLLM's own enforced counter, cumulative since each tag was created · nothing here totals"
+              : "LiteLLM's own enforced counter for the period in flight · each row is measured over its own period, so nothing here totals"}
           </div>
         </div>
 
@@ -196,6 +199,17 @@ export function GatewayBudgetCard({
           ` · ${active.projectedOverrun} pacing past the cap before it resets`}
         . Caps set over different periods are never added together — a weekly budget and a monthly
         one do not share a unit.
+        {active.spendIsCumulative && (
+          <>
+            {' '}
+            LiteLLM&apos;s reset job has no tag handler (
+            <code>BerriAI/litellm#27481</code>), so a tag&apos;s counter keeps climbing while its
+            budget&apos;s reset date rolls: the percentages below are what the proxy enforces —
+            a tag past its cap stays refused rather than recovering next period — but they are
+            spend since the tag was created, not spend this period, and no pace is projected from
+            them.
+          </>
+        )}
         {history.recordingSince !== null && (
           <>
             {' '}
@@ -310,6 +324,10 @@ function BudgetLine({
             ? periodLabel(budget.budgetDuration)
             : `of ${usd(budget.maxBudget)} ${periodLabel(budget.budgetDuration)}`}
         </span>
+        {/* The cap has a period; on this scope the counter measured against it
+            does not. Saying so per row is the only place the two can be seen
+            side by side. */}
+        {row.spendIsCumulative && <span className={styles.share}>counted since created</span>}
       </div>
 
       <div className={cx(styles.right, row.remaining !== null && row.remaining < 0 && styles.bad)}>
@@ -323,9 +341,11 @@ function BudgetLine({
         {row.projectedSpend === null ? EMPTY : usd(row.projectedSpend, 0)}
         <span className={styles.share}>
           {row.projectedSpend === null
-            ? budget.budgetDuration === null
-              ? 'no period'
-              : 'too early to project'
+            ? row.spendIsCumulative
+              ? 'counter never resets'
+              : budget.budgetDuration === null
+                ? 'no period'
+                : 'too early to project'
             : (reset ?? 'by period end')}
         </span>
       </div>

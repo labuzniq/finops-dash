@@ -162,8 +162,8 @@ export function costPerRequest(metrics: Readonly<GatewayMetrics>): number | null
  *
  * Everything above is *usage*: what the gateway did, per day, forever. A budget
  * is the opposite kind of fact — current configuration plus the proxy's own
- * live counter for the period in flight. There is exactly one row per key and
- * per team, it is replaced wholesale on every sync, and it has no history.
+ * live counter. There is exactly one row per key, per team and per configured
+ * tag, it is replaced wholesale on every sync, and it has no history.
  *
  * Two rules invert here, and both matter:
  *
@@ -176,30 +176,75 @@ export function costPerRequest(metrics: Readonly<GatewayMetrics>): number | null
  *    possibly on a duration nothing else in the dashboard uses). Re-deriving it
  *    from `gateway_daily` would silently disagree with what the proxy enforces,
  *    and the enforced number is the one an owner needs.
+ *
+ * And one rule that holds per *scope* rather than gateway-wide: whether that
+ * counter resets at all. See `budgetCounterResets`.
  */
 
-/** Whose budget it is. `api_key` joins the `api_key` usage dimension by `key`. */
-export const GATEWAY_BUDGET_SCOPES = ['api_key', 'team'] as const;
+/**
+ * Whose budget it is. Each scope joins the usage dimension of the same name by
+ * `key`, which is what lets a cap be read next to the spend it governs.
+ */
+export const GATEWAY_BUDGET_SCOPES = ['api_key', 'team', 'tag'] as const;
 export type GatewayBudgetScope = (typeof GATEWAY_BUDGET_SCOPES)[number];
 
 export const GATEWAY_BUDGET_SCOPE_LABELS: Record<GatewayBudgetScope, string> = {
   api_key: 'API key',
   team: 'Team',
+  tag: 'Tag',
 };
 
 /**
- * One governed object on the proxy — a virtual key or a team.
+ * Does the proxy zero this scope's `spend` counter when its period rolls?
+ *
+ * For a key and a team, yes: LiteLLM's `ResetBudgetJob` walks both tables, so
+ * the counter is spend *within the period in flight* and everything built on
+ * that reading — a pace projection, a closed-period total, a period reset in the
+ * history — means what it says.
+ *
+ * For a tag, **no**. `LiteLLM_TagTable.spend` has no handler in that job: the
+ * linked budget row's `budget_reset_at` advances every cycle while the tag's own
+ * counter keeps climbing (BerriAI/litellm#27481). So a tag's `spend` is
+ * cumulative since the tag was created, whatever its `budget_duration` says.
+ *
+ * Two consequences, and both are the point of this predicate existing rather
+ * than the rule being spelled out at each call site:
+ *
+ *  - **Nothing may divide that counter by a fraction of a period.** A pace
+ *    projection over a lifetime counter multiplies months of spend by six and
+ *    calls it a forecast. It has to be withheld, not computed and caveated.
+ *  - **Utilisation still stands, and is the reason the scope is worth reading
+ *    at all.** The proxy enforces the cap against this same non-resetting
+ *    number, so a tag over its cap really is being refused — and, until the
+ *    upstream job learns to reset it, stays refused for good rather than until
+ *    the month turns. That is a finding, not a rendering artefact.
+ *
+ * A property of the scope, not of a row: it is a statement about the proxy's
+ * reset job, so it needs no column and no migration, and the API, the card and
+ * the invariant scripts all read the one rule.
+ */
+export function budgetCounterResets(scope: GatewayBudgetScope): boolean {
+  return scope !== 'tag';
+}
+
+/**
+ * One governed object on the proxy — a virtual key, a team or a tag.
  *
  * `key` is the same id the matching usage dimension reports (the hashed key
- * token for `api_key`, the team id for `team`), which is what lets a budget row
- * be read next to the spend it governs without a second join key.
+ * token for `api_key`, the team id for `team`, the tag name for `tag`), which is
+ * what lets a budget row be read next to the spend it governs without a second
+ * join key.
  */
 export interface GatewayBudget {
   scope: GatewayBudgetScope;
   key: string;
   /** Alias the proxy resolved — `key_alias` / `team_alias`; null renders as `—`. */
   label: string | null;
-  /** LiteLLM's own spend counter for the period in flight, dollars. */
+  /**
+   * LiteLLM's own spend counter, dollars — for the period in flight on every
+   * scope whose `budgetCounterResets` is true, and cumulative since creation on
+   * the one where it is not.
+   */
   spend: number;
   /** Hard cap in dollars. Null means uncapped; 0 means "blocked by budget". */
   maxBudget: number | null;
