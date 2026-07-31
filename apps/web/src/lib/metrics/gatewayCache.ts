@@ -1,8 +1,13 @@
-import type {
-  GatewayBreakdownPoint,
-  GatewayDailyPoint,
-  GatewayDimension,
-  GatewayMetrics,
+import {
+  detectCacheTokenConvention,
+  EMPTY_GATEWAY_METRICS,
+  inputTokens as sharedInputTokens,
+  uncachedInputTokens,
+  type CacheTokenConventionCheck,
+  type GatewayBreakdownPoint,
+  type GatewayDailyPoint,
+  type GatewayDimension,
+  type GatewayMetrics,
 } from '@dash/shared';
 
 /**
@@ -90,11 +95,11 @@ export interface CacheRow {
   key: string;
   /** Key alias / team name when the proxy resolved one; null renders as `—`. */
   label: string | null;
-  /** Everything fed to the model: fresh prompt tokens plus tokens served from cache. */
+  /** Everything fed to the model — `promptTokens`, cache included. See the convention in `@dash/shared`. */
   inputTokens: number;
   /** Input tokens the provider served from its prompt cache. */
   cachedTokens: number;
-  /** Input tokens billed at the full rate — what re-sending costs. */
+  /** Input tokens billed at the full rate — the prompt with both cache counters taken out. */
   uncachedTokens: number;
   /** Tokens written into the cache, billed at a premium. */
   writeTokens: number;
@@ -120,6 +125,7 @@ export interface CacheDay {
 }
 
 export interface CacheSummary {
+  /** `promptTokens` — the whole input, cache included. */
   inputTokens: number;
   cachedTokens: number;
   uncachedTokens: number;
@@ -152,15 +158,43 @@ export interface CacheSummary {
    * Zero when there is no rate to level up to.
    */
   headroomTokens: number;
+  /**
+   * Whether the payload contradicts the cache-token convention every number
+   * above is computed under. `consistent` is the ordinary answer and the card
+   * says nothing; anything else is a statement about the *proxy* rather than
+   * about the workload, and the card has to lead with it — every rate here
+   * would be measured against the wrong denominator.
+   */
+  convention: CacheTokenConventionCheck;
 }
 
-/** Input tokens = fresh prompt + what came out of the cache. */
+/**
+ * Input tokens — `promptTokens`, which already contains both cache counters.
+ *
+ * Re-exported from `@dash/shared` rather than restated: this module and the
+ * priced panel beside it read one convention (see `CACHE_TOKENS_INSIDE_PROMPT_TOKENS`).
+ */
 export function inputTokens(metrics: Readonly<GatewayMetrics>): number {
-  return metrics.promptTokens + metrics.cacheReadTokens;
+  return sharedInputTokens(metrics);
 }
 
 function rateOf(part: number, whole: number): number | null {
   return whole > 0 ? part / whole : null;
+}
+
+/**
+ * Full-rate input for a set of accumulated counters, through the shared rule
+ * rather than beside it — this module accumulates three numbers rather than a
+ * whole `GatewayMetrics`, and restating the subtraction locally is exactly how
+ * the two conventions came apart in the first place.
+ */
+function fullRateInput(prompt: number, cached: number, written: number): number {
+  return uncachedInputTokens({
+    ...EMPTY_GATEWAY_METRICS,
+    promptTokens: prompt,
+    cacheReadTokens: cached,
+    cacheCreationTokens: written,
+  });
 }
 
 /**
@@ -196,24 +230,25 @@ export function deriveGatewayCache(
   points: readonly GatewayBreakdownPoint[],
   dimension: GatewayDimension,
 ): CacheSummary {
-  let prompt = 0;
+  let input = 0;
   let cached = 0;
   let written = 0;
 
   const daily = spine.map((day): CacheDay => {
-    prompt += day.promptTokens;
+    input += day.promptTokens;
     cached += day.cacheReadTokens;
     written += day.cacheCreationTokens;
-    const input = day.promptTokens + day.cacheReadTokens;
     return {
       date: day.date,
-      inputTokens: input,
+      inputTokens: day.promptTokens,
       cachedTokens: day.cacheReadTokens,
-      hitRate: rateOf(day.cacheReadTokens, input),
+      hitRate: rateOf(day.cacheReadTokens, day.promptTokens),
     };
   });
 
-  const input = prompt + cached;
+  // The full-rate input the gateway paid for — the prompt with both cache
+  // counters taken back out, which is what a row's share is measured against.
+  const uncached = fullRateInput(input, cached, written);
   const hitRate = rateOf(cached, input);
 
   interface Bucket {
@@ -240,18 +275,19 @@ export function deriveGatewayCache(
 
   const rows = [...buckets.entries()]
     .map(([key, bucket]): CacheRow => {
-      const rowInput = bucket.prompt + bucket.cached;
+      const rowInput = bucket.prompt;
+      const rowUncached = fullRateInput(bucket.prompt, bucket.cached, bucket.written);
       const reusePerWrite = bucket.written > 0 ? bucket.cached / bucket.written : null;
       return {
         key,
         label: bucket.label,
         inputTokens: rowInput,
         cachedTokens: bucket.cached,
-        uncachedTokens: bucket.prompt,
+        uncachedTokens: rowUncached,
         writeTokens: bucket.written,
         hitRate: rateOf(bucket.cached, rowInput),
         reusePerWrite,
-        shareOfUncached: prompt > 0 ? bucket.prompt / prompt : 0,
+        shareOfUncached: uncached > 0 ? rowUncached / uncached : 0,
         state: classify({
           inputTokens: rowInput,
           cachedTokens: bucket.cached,
@@ -281,7 +317,7 @@ export function deriveGatewayCache(
   return {
     inputTokens: input,
     cachedTokens: cached,
-    uncachedTokens: prompt,
+    uncachedTokens: uncached,
     writeTokens: written,
     hitRate,
     reusePerWrite: written > 0 ? cached / written : null,
@@ -291,6 +327,13 @@ export function deriveGatewayCache(
     dimension,
     rows,
     headroomTokens,
+    // Checked over the breakdown rows as well as the spine: a violation on one
+    // model can hide inside a day's totals, and the per-row payload is the only
+    // place a mixed-family proxy would show it.
+    convention: detectCacheTokenConvention([
+      ...spine.map((day) => ({ metrics: day, label: day.date })),
+      ...points.map((point) => ({ metrics: point, label: `${point.dimension}:${point.key}` })),
+    ]),
   };
 }
 

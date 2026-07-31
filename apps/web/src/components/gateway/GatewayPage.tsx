@@ -5,6 +5,7 @@ import {
   costPerMillionTokens,
   costPerRequest,
   GATEWAY_RETENTION_DAYS,
+  inputTokens,
   RANGE_DAYS,
   rangeDayCount,
   successRate,
@@ -734,7 +735,7 @@ export function GatewayPage({ sync }: GatewayPageProps) {
                 />
               }
             >
-              {compactCount(totals.cacheReadTokens)} of {compactCount(totals.promptTokens + totals.cacheReadTokens)} input tokens served from cache
+              {compactCount(totals.cacheReadTokens)} of {compactCount(inputTokens(totals))} input tokens served from cache
             </KpiCard>
             <KpiCard
               kicker="COST PER REQUEST"

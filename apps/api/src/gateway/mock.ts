@@ -603,7 +603,15 @@ export class MockGatewayClient implements GatewayClient {
           const cacheReadTokens = Math.round(promptTokens * cache.read);
           const cacheCreationTokens = Math.round(promptTokens * cache.write);
 
-          const billedPromptTokens = Math.max(0, promptTokens - cacheReadTokens);
+          // Both cache counters are subsets of `prompt_tokens`, the way LiteLLM
+          // reports them (see CACHE_TOKENS_INSIDE_PROMPT_TOKENS in
+          // @dash/shared) — so what pays the full input rate is the prompt with
+          // both of them taken back out, and a generator that added them on top
+          // would bill every cached token twice.
+          const billedPromptTokens = Math.max(
+            0,
+            promptTokens - cacheReadTokens - cacheCreationTokens,
+          );
           const spend =
             (billedPromptTokens * model.inputPerMillion) / 1e6 +
             // Cache reads bill at roughly a tenth of the input rate; cache

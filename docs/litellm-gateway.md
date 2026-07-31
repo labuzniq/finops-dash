@@ -355,6 +355,23 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   carry no deployment id to split them by. The stored row reports the cheapest
   and sets `price_varies`; anything reading it has to word it as a lower bound,
   exactly as the MCP-attributed split does.
+- **`prompt_tokens` is the whole input, and both cache counters are inside it.**
+  `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the single statement
+  of that, with `inputTokens`, `uncachedInputTokens` and `cacheReadShare` as the
+  only three ways to read it. Nothing may add a cache counter to `promptTokens`
+  to build an input total (it double-counts the cache and understates every hit
+  rate), and nothing may price `promptTokens` at the full input rate without
+  taking both counters back out (it charges full price for cached tokens — the
+  same shape as LiteLLM's own BerriAI/litellm#9812). It holds for both families
+  the gateway fronts: OpenAI-shaped backends report cache hits inside
+  `prompt_tokens` and have no cache write at all, and LiteLLM's Anthropic usage
+  transform sets `prompt_tokens = input_tokens + cache_read_input_tokens +
+  cache_creation_input_tokens`. Subtracting *both* is therefore safe rather than
+  a compromise — a write counter is only non-zero on the family that puts it
+  inside. The rule is falsifiable and checked rather than assumed:
+  `detectCacheTokenConvention` reads the payload for rows whose cache counters
+  do not fit inside their prompt count, and the cache card leads with that
+  verdict instead of rendering rates measured against the wrong denominator.
 - **A budget's `spend` is the proxy's counter, never our sum.** It covers the
   period in flight, which resets on the key's own schedule — possibly mid-day,
   possibly on a duration nothing else in the dashboard uses. Re-deriving it from
@@ -630,7 +647,7 @@ What it shows, and why each one is there:
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-one decisions worth keeping:
+Twenty-two decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1203,11 +1220,42 @@ Twenty-one decisions worth keeping:
   floor, so its rate spread is a lower bound too, and it is reported apart from
   the headline rather than mixed into it. Nothing here is subtracted from
   `spend`, and no other card reads these numbers. The new one is the levelling
-  rate for headroom: the module derives it from the gateway totals **itself**
-  rather than borrowing the cache card's, because the two modules disagree about
-  whether a cache read is already counted inside `promptTokens` (open question
-  12), and a module that prices on one convention and levels on the other
-  reports no headroom anywhere.
+  rate for headroom: it comes from `cacheReadShare` in `@dash/shared` — the same
+  helper the cache card and the KPI read — because a module that prices on one
+  convention and levels on another reports no headroom anywhere. It did not,
+  until the convention became one statement; see the entry below.
+
+- **The cache-token convention is one statement, and it is checked rather than
+  assumed.** `prompt_tokens` is the whole input and both cache counters are
+  subsets of it, stated once as `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in
+  `@dash/shared` and read through exactly three helpers (`inputTokens`,
+  `uncachedInputTokens`, `cacheReadShare`). It is one statement because it is a
+  *denominator*: a hit rate, a re-priced bill and a saving all move by the size
+  of the cache, so two modules answering differently disagree about every number
+  they show. Two did, for five iterations — `gatewayCache.ts` and the shared
+  `cacheHitRate` read the input total as `promptTokens + cacheReadTokens` while
+  the catalogue, the priced panel and the mock's own billing read the cache as
+  already inside it, which is 22.1% against 28.3% on the same payload. Nothing
+  surfaced it because each module was internally consistent; it only became
+  visible when one borrowed a *rate* from another.
+
+  Subtracting **both** counters is what makes the rule provider-agnostic rather
+  than a compromise. OpenAI-shaped backends report cache hits inside
+  `prompt_tokens` and have no cache write at all, so the second subtraction is a
+  no-op there; LiteLLM's Anthropic transform sets `prompt_tokens = input_tokens
+  + cache_read_input_tokens + cache_creation_input_tokens`, so both belong
+  inside on Bedrock. A write counter is only ever non-zero on the family that
+  puts it inside.
+
+  And it is falsifiable, which is the part that matters for a proxy nobody here
+  has driven: `detectCacheTokenConvention` reads the payload for rows whose
+  cache counters do not fit inside their prompt count, keeps `reads_outside`
+  apart from `writes_outside` (a mixed-family proxy shows only the second),
+  answers `unobserved` for a window with no cache activity rather than reading
+  silence as agreement, and the cache card leads with that verdict instead of
+  drawing rates whose denominators are wrong. That is deliberately not a
+  footnote — a violation does not make the numbers approximate, it makes them
+  measured against the wrong total.
 
 `apps/api/scripts/verify-gateway-catalog-view.ts` covers that derivation, and
 splits into the three things the mock can and cannot show. It **can** show the
@@ -1251,6 +1299,26 @@ reconciles with the spend the payload actually carries once its output is taken
 off. The Postgres half re-runs it over what a sync stored, which is what proves
 a null cache rate is still null rather than a free cache operation. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache-value.ts`.
+
+`apps/api/scripts/verify-gateway-cache-convention.ts` is the one script whose
+checks are all *between* modules, because the bug it guards against cannot be
+seen from inside one. For five iterations `gatewayCache.ts` and the shared
+`cacheHitRate` read the input total as `promptTokens + cacheReadTokens` while
+`gatewayCatalog.ts`, `gatewayCacheValue.ts` and the mock's own billing read the
+cache as already inside `promptTokens` — every module internally consistent,
+every verify script green, and the two answers differing by the size of the
+cache itself (22.1% against 28.3%). So it checks the split reconstitutes
+`promptTokens` exactly on every row of every dimension the mock emits, that the
+KPI's rate and the cache card's headline are one number over one input total,
+and — the check that would have failed before the convention existed — that the
+token card and the priced panel level a model to *identical* headroom in tokens,
+which they can only do if they agree about what an input token is. The detector
+half proves the rule is falsifiable rather than assumed: reads exceeding the
+prompt count is decisive about reads, reads that fit beside a pair that does not
+is a statement about writes only, a window with no cache activity is
+`unobserved` rather than agreement, and the sample is capped at five while the
+count stays whole. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache-convention.ts`.
 
 `apps/api/scripts/verify-gateway-seal-history.ts` covers both halves of that.
 The pure half is `diffSeals`: the sub-cent settle that is not a change, the
@@ -1741,21 +1809,24 @@ job's error string.
     pay-as-you-go fallback is exactly the case where the difference is large. If
     the answer is "one deployment each", the catalogue's prices are rates and the
     floor caveat can come off the card.
-12. **Does `prompt_tokens` already include `cache_read_input_tokens`?** Two
-    modules in this repo currently answer differently and both are shipped:
-    `gatewayCache.ts` (and `cacheHitRate` in `@dash/shared`) read the input
-    total as `promptTokens + cacheReadTokens`, while `gatewayCatalog.ts`,
-    `gatewayCacheValue.ts` and the mock's own billing read the reads as already
-    being *inside* `promptTokens` — which is what LiteLLM does for the
-    OpenAI-shaped providers, where `prompt_tokens_details.cached_tokens` is a
-    subset. The two differ by the size of the cache itself: on the mock the hit
-    rate reads 22.1% under the first convention and 28.3% under the second. Nothing is
-    wrong on a gateway with no cache; on this one it means the KPI and the cache
-    card understate the hit rate if the second reading is right. A single day's
-    real payload settles it — compare `prompt_tokens` against
-    `cache_read_input_tokens + ` the provider's own uncached input for one busy
-    model — and whichever way it falls, the convention has to become one
-    statement both modules read rather than two.
+12. **Does this proxy report cache tokens inside `prompt_tokens`?** Answered
+    from LiteLLM's own transforms rather than from a live proxy, and now stated
+    once as `CACHE_TOKENS_INSIDE_PROMPT_TOKENS`: it does, on both families —
+    OpenAI-shaped backends report cache hits inside `prompt_tokens` (and have no
+    cache write at all), and LiteLLM's Anthropic usage transform sets
+    `prompt_tokens = input_tokens + cache_read_input_tokens +
+    cache_creation_input_tokens`. Every module now reads the one statement, so
+    the KPI, the cache card, the catalogue and the priced panel cannot disagree
+    the way they did (22.1% against 28.3% on the same payload).
+
+    What is left open is only whether *this* proxy behaves as documented, and
+    that no longer needs anybody to remember to look: `detectCacheTokenConvention`
+    runs on every payload and the cache card leads with the verdict when the
+    counters do not fit inside the prompt count. A `writes_outside` verdict on a
+    real gateway would mean the Bedrock path is reporting writes alongside
+    `prompt_tokens` rather than inside it, which is a one-line change to
+    `uncachedInputTokens` — but it must be *seen*, not assumed, which is why the
+    detector exists and the convention is not simply a comment.
 
 ## Not yet built
 

@@ -9,8 +9,10 @@
  *
  * What it proves:
  *
- * - the split is exact and exhaustive — cached + uncached = input on every day
- *   and every row, the days sum to the range totals, and every full-coverage
+ * - the split is exact and exhaustive — cached + written + uncached = input on
+ *   every row (both cache counters sit *inside* `prompt_tokens`, so the input
+ *   total is the prompt count and the full-rate tokens are what is left after
+ *   taking both back out), the days sum to the range totals, and every full-coverage
  *   dimension's rows reconcile to the gateway-wide numbers while `mcp_server`
  *   stays a strict subset, as it does everywhere else on the page;
  * - shares of uncached input sum to 1 across a full-coverage dimension, so the
@@ -113,8 +115,8 @@ console.log(
 
 check(hasCacheActivity(tags), 'the mock reported no prompt-cache activity at all');
 check(
-  tags.cachedTokens + tags.uncachedTokens === tags.inputTokens,
-  'gateway cached + uncached does not equal input tokens',
+  tags.cachedTokens + tags.writeTokens + tags.uncachedTokens === tags.inputTokens,
+  'gateway cached + written + uncached does not equal input tokens',
 );
 check(
   tags.hitRate !== null && close(tags.hitRate, tags.cachedTokens / tags.inputTokens, 1e-12),
@@ -160,8 +162,10 @@ for (const dimension of GATEWAY_DIMENSIONS) {
   const shares = view.rows.reduce((total, row) => total + row.shareOfUncached, 0);
 
   check(
-    view.rows.every((row) => row.cachedTokens + row.uncachedTokens === row.inputTokens),
-    `${dimension}: a row's cached + uncached does not equal its input`,
+    view.rows.every(
+      (row) => row.cachedTokens + row.writeTokens + row.uncachedTokens === row.inputTokens,
+    ),
+    `${dimension}: a row's cached + written + uncached does not equal its input`,
   );
 
   if (dimension === 'mcp_server') {

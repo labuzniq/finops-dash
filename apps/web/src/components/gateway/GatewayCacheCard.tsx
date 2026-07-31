@@ -60,6 +60,36 @@ function rate(value: number | null): string {
   return value === null ? EMPTY : percent(value * 100);
 }
 
+/**
+ * The one thing on this card that is a statement about the *proxy* rather than
+ * about a workload.
+ *
+ * Every rate here — the hit rate, the split bar, the day strip, and the priced
+ * panel below — is measured under one convention: `prompt_tokens` is the whole
+ * input and both cache counters are subsets of it. A payload where the cache
+ * counters do not fit inside the prompt count falsifies that, and it does not
+ * make the numbers *approximate*; it makes their denominators wrong by the size
+ * of the cache. So it sits above them rather than in a footnote.
+ */
+function ConventionWarning({ check }: { check: CacheSummary['convention'] }) {
+  if (check.verdict === 'consistent' || check.verdict === 'unobserved') return null;
+
+  const what =
+    check.verdict === 'reads_outside'
+      ? 'cache reads are reported outside prompt_tokens on this proxy'
+      : 'cache writes are reported outside prompt_tokens on this proxy';
+
+  return (
+    <div className={styles.conventionWarning}>
+      <strong>Token accounting disagrees.</strong> {check.violations} of {check.rowsObserved} rows
+      with cache activity report more cached tokens than prompt tokens (worst:{' '}
+      {compactCount(check.worstExcessTokens)} over, on {check.sample.join(', ')}), which means{' '}
+      {what}. Every rate on this card counts the cache inside the input total, so read them as
+      understated until the convention is corrected.
+    </div>
+  );
+}
+
 const STATE_LABEL: Record<CacheRow['state'], string | null> = {
   ok: null,
   churning: 'churning',
@@ -94,6 +124,8 @@ export function GatewayCacheCard({ summary, value }: GatewayCacheCardProps) {
           </div>
         </div>
       </div>
+
+      <ConventionWarning check={summary.convention} />
 
       <div className={styles.split}>
         <div className={styles.splitTrack}>

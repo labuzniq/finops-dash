@@ -214,7 +214,10 @@ console.log('\n3 · the estimate against the bill');
 
 const repriceNano = (row: (typeof modelRows)[number], price: GatewayModelPrice): bigint | null => {
   if (price.inputPerMillion === null || price.outputPerMillion === null) return null;
-  const uncached = Math.max(0, row.promptTokens - row.cacheReadTokens);
+  // Both cache counters sit inside `prompt_tokens` — the shared convention in
+  // `uncachedInputTokens`, restated here only because this script re-prices from
+  // raw DB rows rather than from a `GatewayMetrics`.
+  const uncached = Math.max(0, row.promptTokens - row.cacheReadTokens - row.cacheCreationTokens);
   const dollars =
     (uncached * price.inputPerMillion +
       row.cacheReadTokens * (price.cacheReadPerMillion ?? price.inputPerMillion) +

@@ -1,4 +1,4 @@
-import { resolveModelPrice } from '@dash/shared';
+import { inputTokens, resolveModelPrice, uncachedInputTokens } from '@dash/shared';
 import type { GatewayMetrics, GatewayModelPrice } from '@dash/shared';
 import type { GatewayBreakdownRow } from './gateway.js';
 
@@ -153,10 +153,11 @@ export const EMPTY_CATALOG_SUMMARY: CatalogSummary = {
  * One row's tokens at one entry's rates, in dollars.
  *
  * The split mirrors what the four catalogue columns actually price. LiteLLM's
- * `prompt_tokens` includes the tokens it served from cache, so plain input is
- * `promptTokens − cacheReadTokens` — pricing the whole prompt at the input rate
- * would charge full price for every cached token and overstate every
- * cache-heavy workload. Cache read and write fall back to the input rate rather
+ * `prompt_tokens` contains both cache counters (`CACHE_TOKENS_INSIDE_PROMPT_TOKENS`
+ * in `@dash/shared`), so plain input is what `uncachedInputTokens` leaves —
+ * pricing the whole prompt at the input rate would charge full price for every
+ * cached token and overstate every cache-heavy workload, and adding the cache
+ * counters back on top of it would bill them twice. Cache read and write fall back to the input rate rather
  * than to zero when the backend does not price them separately, because a
  * backend with no separate cache rate charges input for them.
  *
@@ -170,7 +171,7 @@ export function repriceMetrics(
 ): number | null {
   if (price.inputPerMillion === null || price.outputPerMillion === null) return null;
 
-  const uncachedInput = Math.max(0, metrics.promptTokens - metrics.cacheReadTokens);
+  const uncachedInput = uncachedInputTokens(metrics);
   const cacheRead = price.cacheReadPerMillion ?? price.inputPerMillion;
   const cacheWrite = price.cacheWritePerMillion ?? price.inputPerMillion;
 
@@ -183,14 +184,16 @@ export function repriceMetrics(
   );
 }
 
-/** Every token the estimate priced — the denominator both blended rates use. */
+/**
+ * Every token the estimate priced — the denominator both blended rates use.
+ *
+ * It is the input total plus the output, and no cache counter is added on top:
+ * they are already inside `promptTokens`, so adding them would inflate the
+ * denominator by the size of the cache and read every cache-heavy model as
+ * cheaper per token than it is.
+ */
 function billableTokens(metrics: GatewayMetrics): number {
-  return (
-    Math.max(0, metrics.promptTokens - metrics.cacheReadTokens) +
-    metrics.cacheReadTokens +
-    metrics.cacheCreationTokens +
-    metrics.completionTokens
-  );
+  return inputTokens(metrics) + metrics.completionTokens;
 }
 
 function classify(row: {

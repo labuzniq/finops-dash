@@ -125,10 +125,20 @@ have cost with **no cache at all**. It is pinned to `model` however the switcher
 would be an average of price lists. A missing cache rate is *unknown, never zero* — the input-rate
 fallback that is correct when `repriceMetrics` reconstructs a total would here report a $0.00 saving out
 of a null — a `priceVaries` alias is a floor reported apart from the headline, and nothing is subtracted
-from `spend`. It derives its own levelling rate for headroom from the gateway totals rather than
-borrowing the cache card's, because the two modules disagree about whether a cache read is already
-counted inside `promptTokens` (docs open question 12) and pricing on one convention while levelling on
-the other reports no headroom anywhere.
+from `spend`. Its levelling rate for headroom comes from `cacheReadShare` in
+`@dash/shared` — the same helper the cache card and the KPI read — because pricing on one convention
+while levelling on another reports no headroom anywhere. That is the point of
+**`CACHE_TOKENS_INSIDE_PROMPT_TOKENS`**: `prompt_tokens` is the whole input and both cache counters are
+subsets of it, stated once and read through `inputTokens` / `uncachedInputTokens` / `cacheReadShare`,
+because the rule is a *denominator* — a hit rate, a re-priced bill and a saving all move by the size of
+the cache, and two modules answering differently disagree about every number they show (they did, for
+five iterations, at 22.1% against 28.3% on the same payload). Subtracting **both** counters is
+provider-agnostic rather than a compromise: OpenAI-shaped backends put reads inside `prompt_tokens` and
+emit no writes at all, while LiteLLM's Anthropic transform puts both inside, so a write counter is only
+non-zero on the family that puts it inside. `detectCacheTokenConvention` is the falsification —
+`reads_outside` kept apart from `writes_outside`, `unobserved` for a window with no cache activity — and
+`GatewayCacheCard` leads with the verdict rather than footnoting it, because a violation does not make
+the rates approximate, it makes their denominators wrong.
 `lib/metrics/gatewayChargeback.ts` is the page's only *statement* rather than analysis, and the only
 derivation built to be read outside the dashboard — which is why it is the one surface that must **add
 up**: the lines plus an explicit `unallocated` row equal the month's gateway spend exactly, with no
@@ -316,6 +326,13 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
   limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
   must never be zero-filled, and the same rule carries into `gateway_budget_history`.
+- **`prompt_tokens` is the whole input; both cache counters are inside it.**
+  `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
+  `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to
+  `promptTokens` to build an input total (it double-counts the cache and understates every hit rate),
+  and nothing may price `promptTokens` at the full input rate without taking both counters back out (it
+  charges full price for cached tokens). `detectCacheTokenConvention` is the falsifiable check, and the
+  cache card renders its verdict rather than assuming it.
 - **A catalogue price is a list rate, never the bill, and sometimes a floor.**
   `gateway_model` says what the proxy is configured to charge; `spend` says what
   it charged. Every price column is nullable and never zero-filled (per-second

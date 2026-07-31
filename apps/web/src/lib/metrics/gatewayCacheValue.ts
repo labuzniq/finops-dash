@@ -1,4 +1,4 @@
-import { resolveModelPrice } from '@dash/shared';
+import { cacheReadShare, inputTokens, resolveModelPrice, uncachedInputTokens } from '@dash/shared';
 import type { GatewayMetrics, GatewayModelPrice } from '@dash/shared';
 import type { GatewayBreakdownRow } from './gateway.js';
 
@@ -175,15 +175,12 @@ export interface CacheValueInput {
    * cache token the proxy reported) and the hit rate every row's headroom is
    * levelled to.
    *
-   * That rate is derived here rather than taken from `gatewayCache.ts` or from
-   * `cacheHitRate` in `@dash/shared` on purpose, and it is not a duplication:
-   * both of those read `promptTokens + cacheReadTokens` as the input total,
-   * while this module — like `gatewayCatalog.ts` and like the price the proxy
-   * charged — reads cache reads as already being *inside* `promptTokens`. The
-   * two conventions differ by the size of the cache itself, so borrowing a rate
-   * across them silently levels every model to a bar it already clears and
-   * reports no headroom anywhere. Whichever convention a live proxy turns out
-   * to use, a module must price and level on the same one.
+   * The rate comes from `cacheReadShare` in `@dash/shared` — the same helper
+   * the cache card and the KPI read — because pricing on one convention and
+   * levelling on another silently levels every model to a bar it already
+   * clears and reports no headroom anywhere. That was the state of this repo
+   * until the convention became one statement; see
+   * `CACHE_TOKENS_INSIDE_PROMPT_TOKENS`.
    */
   gatewayTotals: Readonly<GatewayMetrics>;
 }
@@ -213,23 +210,25 @@ function priceRow(
 ): CacheValueRow {
   const cachedTokens = row.metrics.cacheReadTokens;
   const writeTokens = row.metrics.cacheCreationTokens;
-  // LiteLLM counts cache reads inside `prompt_tokens`, so the tokens that paid
-  // the full rate are what is left after taking the reads back out.
-  const uncachedTokens = Math.max(0, row.metrics.promptTokens - cachedTokens);
+  // Both cache counters sit inside `prompt_tokens`, so the tokens that paid the
+  // full rate are what is left after taking both of them back out.
+  const uncachedTokens = uncachedInputTokens(row.metrics);
 
   const readRate = price.cacheReadPerMillion ?? input;
   const writeRate = price.cacheWritePerMillion ?? input;
 
   const readSaving = (cachedTokens * (input - readRate)) / 1_000_000;
   const writePremium = (writeTokens * (writeRate - input)) / 1_000_000;
-  const noCacheInputCost = ((uncachedTokens + cachedTokens + writeTokens) * input) / 1_000_000;
+  // The counterfactual bill: every input token at the plain input rate, which
+  // under the shared convention is `promptTokens` — cache counters included,
+  // never added on top of it.
+  const promptTokens = inputTokens(row.metrics);
+  const noCacheInputCost = (promptTokens * input) / 1_000_000;
 
-  // Headroom is measured on input tokens as the cache card measures them:
-  // fresh prompt plus what came out of the cache. Write tokens are the cost of
-  // getting there, not part of what could be served from cache.
-  const inputTokens = uncachedTokens + cachedTokens;
+  // Headroom levels each row to the gateway's own hit rate over the same input
+  // total the cache card uses, so the two cards level to one bar.
   const headroomTokens =
-    gatewayHitRate === null ? 0 : Math.max(0, inputTokens * gatewayHitRate - cachedTokens);
+    gatewayHitRate === null ? 0 : Math.max(0, promptTokens * gatewayHitRate - cachedTokens);
 
   return {
     key: row.key,
@@ -261,12 +260,10 @@ function priceRow(
 export function deriveCacheValue(input: CacheValueInput): CacheValueSummary {
   const { modelRows, catalogue, gatewayTotals } = input;
   const gatewayCacheTokens = gatewayTotals.cacheReadTokens + gatewayTotals.cacheCreationTokens;
-  // Cache reads sit inside `promptTokens`, so the input total is the prompt
-  // count itself — see the note on `gatewayTotals`.
-  const gatewayHitRate =
-    gatewayTotals.promptTokens > 0
-      ? gatewayTotals.cacheReadTokens / gatewayTotals.promptTokens
-      : null;
+  // 0..1, from the shared helper — the percent form of the same number feeds
+  // the KPI string, and multiplying a token count by it inflates headroom by
+  // two orders of magnitude.
+  const gatewayHitRate = cacheReadShare(gatewayTotals);
 
   if (modelRows.length === 0 || catalogue.length === 0) {
     return { ...EMPTY_CACHE_VALUE_SUMMARY, gatewayCacheTokens };

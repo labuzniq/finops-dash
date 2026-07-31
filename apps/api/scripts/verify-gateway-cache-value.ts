@@ -111,9 +111,9 @@ function price(part: Partial<GatewayModelPrice> & { model: string }): GatewayMod
 console.log('\n1 · the counterfactual identity');
 
 {
-  // 1M prompt tokens of which 600k came from cache, 200k written, at $10/M in,
-  // $1/M read, $12.50/M write. LiteLLM counts reads inside prompt_tokens, so
-  // 400k paid full price.
+  // 1M prompt tokens of which 600k came from cache and 200k were written, at
+  // $10/M in, $1/M read, $12.50/M write. LiteLLM counts *both* cache counters
+  // inside prompt_tokens, so 200k paid full price.
   const entry = price({ model: 'azure/gpt-4o-mini' });
   const usage = row('azure/gpt-4o-mini', {
     promptTokens: 1_000_000,
@@ -129,8 +129,8 @@ console.log('\n1 · the counterfactual identity');
   });
   const priced = summary.rows[0];
 
-  const billedInput = (400_000 * 10 + 600_000 * 1 + 200_000 * 12.5) / 1e6;
-  const noCacheInput = (400_000 + 600_000 + 200_000) * 10 / 1e6;
+  const billedInput = (200_000 * 10 + 600_000 * 1 + 200_000 * 12.5) / 1e6;
+  const noCacheInput = (1_000_000 * 10) / 1e6;
 
   check(priced !== undefined, 'a model with cache activity is priced');
   check(
@@ -150,8 +150,8 @@ console.log('\n1 · the counterfactual identity');
     'writes are valued at the premium over a plain input token, not at the whole write rate',
   );
   check(
-    priced !== undefined && priced.uncachedTokens === 400_000,
-    'cache reads are taken back out of prompt_tokens — pricing the whole prompt at input would overstate every cache-heavy model',
+    priced !== undefined && priced.uncachedTokens === 200_000,
+    'both cache counters are taken back out of prompt_tokens — pricing the whole prompt at input would overstate every cache-heavy model',
   );
   check(
     summary.savingShare !== null && near(summary.savingShare, (noCacheInput - billedInput) / noCacheInput),

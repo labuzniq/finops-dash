@@ -135,14 +135,148 @@ export function successRate(metrics: Readonly<GatewayMetrics>): number | null {
 }
 
 /**
- * Share of input tokens served from cache, 0–100. Null when no input tokens
- * were sent. The denominator includes the cached reads themselves — that is
- * what "of everything we fed the model, this much was cached" means.
+ * ─── The cache-token convention ──────────────────────────────────────────────
+ *
+ * `prompt_tokens` is the **whole** input, and both cache counters are subsets of
+ * it. Nothing in this repo may add a cache counter to `promptTokens` to get an
+ * input total, and nothing may price `promptTokens` at the full input rate
+ * without first taking the cache counters back out.
+ *
+ * This is one statement in one place because it is the one fact every
+ * cache-shaped derivation needs and no two of them may answer differently: a
+ * hit rate, a re-priced bill and a saving are all ratios whose denominators
+ * move by the size of the cache itself, so two modules disagreeing about it
+ * disagree about every number they show. (They did, for five iterations — see
+ * `docs/litellm-gateway.md`, decision 22.)
+ *
+ * It holds for both provider families the corporate gateway fronts, for
+ * different reasons:
+ *
+ *  - **OpenAI-shaped** (Azure OpenAI, Azure AI Foundry) — `prompt_tokens`
+ *    includes the cache hits, which surface separately as
+ *    `prompt_tokens_details.cached_tokens`. There is no cache *write* on these
+ *    backends at all: caching is automatic and `cache_creation_input_tokens` is
+ *    zero.
+ *  - **Anthropic-shaped** (Bedrock, and Anthropic direct) — LiteLLM's own usage
+ *    transform sets `prompt_tokens = input_tokens + cache_read_input_tokens +
+ *    cache_creation_input_tokens`, so both counters sit inside it.
+ *
+ * Which is why subtracting *both* counters is safe rather than a compromise
+ * between the two: a cache write is only ever non-zero on the family that puts
+ * it inside, so on the other family the subtraction is a no-op.
+ *
+ * It is also falsifiable rather than assumed — `detectCacheTokenConvention`
+ * below is the check, and it runs on whatever the proxy actually sent.
  */
-export function cacheHitRate(metrics: Readonly<GatewayMetrics>): number | null {
-  const input = metrics.promptTokens + metrics.cacheReadTokens;
+export const CACHE_TOKENS_INSIDE_PROMPT_TOKENS = true;
+
+/**
+ * Everything fed to the model — which is `prompt_tokens` itself, under the
+ * convention above. A function rather than a field access so the convention has
+ * one call site to change if a live proxy ever falsifies it.
+ */
+export function inputTokens(metrics: Readonly<GatewayMetrics>): number {
+  return metrics.promptTokens;
+}
+
+/**
+ * Input tokens that paid the full input rate — the prompt with both cache
+ * counters taken back out. Clamped at zero: a proxy reporting more cache than
+ * prompt is reporting something this convention does not describe, and a
+ * negative token count would quietly become a negative bill.
+ */
+export function uncachedInputTokens(metrics: Readonly<GatewayMetrics>): number {
+  return Math.max(
+    0,
+    metrics.promptTokens - metrics.cacheReadTokens - metrics.cacheCreationTokens,
+  );
+}
+
+/**
+ * Share of input tokens served from cache, 0..1. Null when no input tokens were
+ * sent — an idle key has no hit rate, and 0 would assert one.
+ *
+ * This is the 0..1 form every `lib/metrics` module reads; `cacheHitRate` below
+ * is the same number in percent for the KPI string. Handing the percent form to
+ * a derivation that multiplies it by a token count is a two-order-of-magnitude
+ * error that nothing else catches.
+ */
+export function cacheReadShare(metrics: Readonly<GatewayMetrics>): number | null {
+  const input = inputTokens(metrics);
   if (input === 0) return null;
-  return (metrics.cacheReadTokens / input) * 100;
+  return metrics.cacheReadTokens / input;
+}
+
+/** `cacheReadShare` as a percentage, 0–100 — the KPI row's form. */
+export function cacheHitRate(metrics: Readonly<GatewayMetrics>): number | null {
+  const share = cacheReadShare(metrics);
+  return share === null ? null : share * 100;
+}
+
+/**
+ * What a real payload says about the convention above.
+ *
+ * `reads_outside` is decisive: a row whose `cache_read_input_tokens` exceed its
+ * `prompt_tokens` cannot have those reads inside them, whatever the docs say.
+ * `writes_outside` is the same test one counter further — the reads fit and the
+ * pair does not — and is the shape a proxy mixing the two families would show.
+ * `unobserved` is the honest answer for a window with no cache activity: there
+ * is nothing to contradict, which is not the same as agreement.
+ *
+ * Rounding is why the test is `>` rather than `>=` on a tolerance: the counters
+ * are integers all the way from the proxy, so an equal row is a fully cached
+ * prompt and not a violation.
+ */
+export type CacheTokenConventionVerdict =
+  | 'consistent'
+  | 'reads_outside'
+  | 'writes_outside'
+  | 'unobserved';
+
+export interface CacheTokenConventionCheck {
+  verdict: CacheTokenConventionVerdict;
+  /** Rows carrying any cache activity — the only ones that can say anything. */
+  rowsObserved: number;
+  /** Rows where the cache counters do not fit inside `prompt_tokens`. */
+  violations: number;
+  /** The largest overshoot seen, in tokens — how badly, not just whether. */
+  worstExcessTokens: number;
+  /** Up to five violating rows, named by whatever the caller labelled them. */
+  sample: string[];
+}
+
+const CONVENTION_SAMPLE_CAP = 5;
+
+export function detectCacheTokenConvention(
+  rows: ReadonlyArray<{ metrics: Readonly<GatewayMetrics>; label: string }>,
+): CacheTokenConventionCheck {
+  let rowsObserved = 0;
+  let violations = 0;
+  let readsOutside = false;
+  let worstExcessTokens = 0;
+  const sample: string[] = [];
+
+  for (const { metrics, label } of rows) {
+    const cache = metrics.cacheReadTokens + metrics.cacheCreationTokens;
+    if (cache === 0) continue;
+    rowsObserved += 1;
+    if (cache <= metrics.promptTokens) continue;
+    violations += 1;
+    if (metrics.cacheReadTokens > metrics.promptTokens) readsOutside = true;
+    worstExcessTokens = Math.max(worstExcessTokens, cache - metrics.promptTokens);
+    if (sample.length < CONVENTION_SAMPLE_CAP) sample.push(label);
+  }
+
+  const verdict: CacheTokenConventionVerdict =
+    rowsObserved === 0
+      ? 'unobserved'
+      : violations === 0
+        ? 'consistent'
+        : readsOutside
+          ? 'reads_outside'
+          : 'writes_outside';
+
+  return { verdict, rowsObserved, violations, worstExcessTokens, sample };
 }
 
 /** Dollars per million tokens — the comparable unit across models. Null when idle. */

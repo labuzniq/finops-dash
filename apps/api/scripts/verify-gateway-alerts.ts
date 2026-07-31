@@ -371,8 +371,11 @@ if (overKey !== undefined) {
 const bothRow = budgetRowsAll.find((row) => row.state === 'soft' && row.projectedOverrun);
 if (bothRow !== undefined) {
   const subject = `${bothRow.budget.scope}:${bothRow.budget.key}`;
+  // Scoped to the budget source: an `api_key` subject can legitimately also
+  // carry a cache or reliability finding about the same key, and those are
+  // other cards' claims rather than a duplicated budget one.
   const kinds = digest.alerts
-    .filter((entry) => entry.subject === subject)
+    .filter((entry) => entry.subject === subject && entry.source === 'budget')
     .map((entry) => entry.kind)
     .sort();
   check(
