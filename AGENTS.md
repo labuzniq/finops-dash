@@ -442,6 +442,25 @@ the reading does not name reads *not in the reading* rather than healthy. Unread
 answered-with-nothing are three separate silences, an alias the cap left out is **unread rather than
 clean**, and the card feeds no digest finding: the fault it would name is already the health card's
 `degraded`, and what it adds is the reason under that finding.
+It is the **second** live read that is kept: a full sync sweeps it for the window's last day and
+appends the counts to `gateway_exception_daily` (one night per alias per deployment per
+`exception_type`, upserted) beside a *receipt* in `gateway_exception_sweep`, served by
+`GET /api/gateway/exceptions/history?days=` and read through `summarizeExceptionHistory` in
+`@dash/shared`. Storing it is legal for the hang sweep's reason — error-log rows are disjoint, and
+counts add across nights where an average does not — and the receipt is what makes the storage
+*readable*: this route answers rows only where something failed, so a night the gateway behaved
+records nothing and is byte-identical to a night the sweep was refused. A night with a receipt and no
+rows is **clean**; a night with neither is unread. What does not carry over from the hang table is a
+denominator, so the derivation has no badge, no rate and no significance test anywhere in it — every
+share is of recorded exceptions. Its one statement beyond the roll-ups is a **mix shift**: each
+class's share of those exceptions, split half-over-half on swept nights, pooled rather than averaged,
+in percentage points and withheld under `EXCEPTION_TREND_MIN_DAYS`. A mix is the one reading a
+missing denominator cannot corrupt — ten times the traffic multiplies every class and moves it by
+nothing — which is exactly why the trend is not on the counts. The class is derived on **read** from
+the stored `exception_type` rather than frozen into the row, the opposite of
+`gateway_deployment_health_history.model` and for a reason that is about the value: a resolved alias
+depends on that night's catalogue, a class is a static mapping from a Python class name, so deriving
+it means a taxonomy fix re-files the history instead of stranding it under `other`.
 `GET /api/gateway/latency?from=&to=` is the third live read and the sibling of that one:
 `/model/metrics` over the same `LiteLLM_SpendLogs` the request sample draws from, only aggregated
 by the proxy over *every* row in the window rather than the head of it. An **eighth envelope**, and
@@ -596,7 +615,12 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   schedule, and it carries no denominator at all — so its totals may disagree with the same window's
   `failed_requests`, nothing derived from it may be rendered as a failure rate or a share of
   traffic, and an answer with no rows means "no errors *recorded*". The proxy's `total_exceptions`
-  is never read as a total: upstream it counts distinct exception classes.
+  is never read as a total: upstream it counts distinct exception classes. It **may** be stored
+  (`gateway_exception_daily`), because error-log rows are disjoint and counting them adds across
+  nights — but only beside a receipt (`gateway_exception_sweep`): the route reports rows only where
+  something failed, so a clean night and an unread one are the same empty list without one. A night
+  with a receipt and no rows is clean, a night with neither is unknown, and nothing derived from
+  either may be interpolated. The class is derived on read, never frozen into the row.
 - **Latency is a rate, per completion token.** `/model/metrics` answers
   `AVG(seconds / completion_tokens)` over requests, so nothing derived from it may be rendered as a
   request duration, an SLA figure or a percentile — the one transformation that adds no claim is its

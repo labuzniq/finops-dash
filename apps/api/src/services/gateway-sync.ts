@@ -1,7 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { resolveDeploymentModel } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
-import { SLOW_RESPONSE_MODEL_CAP } from './gateway.js';
+import { EXCEPTION_MODEL_CAP, SLOW_RESPONSE_MODEL_CAP } from './gateway.js';
 import { db } from '../db/client.js';
 import {
   gatewayBreakdownDaily,
@@ -10,6 +10,8 @@ import {
   gatewayDaily,
   gatewayDeploymentHealth,
   gatewayDeploymentHealthHistory,
+  gatewayExceptionDaily,
+  gatewayExceptionSweep,
   gatewayModel,
   gatewaySlowResponseDaily,
 } from '../db/schema.js';
@@ -20,12 +22,15 @@ import type {
   GatewayDailyInsert,
   GatewayDeploymentHealthHistoryInsert,
   GatewayDeploymentHealthInsert,
+  GatewayExceptionDailyInsert,
+  GatewayExceptionSweepInsert,
   GatewayModelInsert,
   GatewaySlowResponseDailyInsert,
 } from '../db/schema.js';
 import { createGatewayClient } from '../gateway/index.js';
 import type {
   GatewayBudgetSnapshot,
+  GatewayExceptionRecord,
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySlowResponseRecord,
@@ -172,6 +177,7 @@ async function persist(
   models: GatewayModelSnapshot[] | null,
   health: GatewayHealthSnapshot[] | null,
   slowResponses: GatewaySlowResponseDailyInsert[] | null,
+  exceptions: ExceptionSweepResult | null,
   observedOn: string,
   observedAt: Date,
 ): Promise<void> {
@@ -302,6 +308,46 @@ async function persist(
           });
       }
     }
+    // The exception sweep is written like the hang counter — keyed on the day it
+    // covers and upserted — with one addition no other table here needs: the
+    // *receipt*. This route answers rows only where something failed, so a night
+    // the whole gateway behaved records nothing, and without a receipt that is
+    // indistinguishable from a night nobody swept. Filing the receipt separately
+    // is what keeps "no errors were recorded" and "we did not look" apart.
+    if (exceptions !== null) {
+      if (exceptions.rows.length > 0) {
+        const exceptionRows = exceptions.rows.map((row) => ({ ...row, observedAt }));
+        for (const rows of chunk(exceptionRows, CHUNK_SIZE)) {
+          await tx
+            .insert(gatewayExceptionDaily)
+            .values(rows)
+            .onConflictDoUpdate({
+              target: [
+                gatewayExceptionDaily.date,
+                gatewayExceptionDaily.model,
+                gatewayExceptionDaily.deployment,
+                gatewayExceptionDaily.exceptionType,
+              ],
+              set: {
+                count: sql`excluded.count`,
+                observedAt: sql`excluded.observed_at`,
+              },
+            });
+        }
+      }
+      await tx
+        .insert(gatewayExceptionSweep)
+        .values({ ...exceptions.sweep, observedAt })
+        .onConflictDoUpdate({
+          target: [gatewayExceptionSweep.date],
+          set: {
+            models: sql`excluded.models`,
+            deployments: sql`excluded.deployments`,
+            exceptions: sql`excluded.exceptions`,
+            observedAt: sql`excluded.observed_at`,
+          },
+        });
+    }
     if (budgets !== null) {
       await tx.delete(gatewayBudget);
       for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
@@ -353,6 +399,8 @@ async function persist(
         healthRows: healthRows.length,
         unhealthy: healthRows.filter((row) => !row.healthy).length,
         slowResponseRows: slowResponses?.length ?? 0,
+        exceptionRows: exceptions?.rows.length ?? 0,
+        exceptionsSwept: exceptions === null ? 0 : exceptions.sweep.models,
         observedOn,
       },
     },
@@ -408,15 +456,7 @@ async function readSlowResponses(
 ): Promise<GatewaySlowResponseDailyInsert[] | null> {
   if (ranged) return null;
 
-  const spendByModel = new Map<string, bigint>();
-  for (const row of snapshot.breakdowns) {
-    if (row.dimension !== 'model' || row.date !== day) continue;
-    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
-  }
-  const models = [...spendByModel.entries()]
-    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
-    .map(([model]) => model)
-    .slice(0, SLOW_RESPONSE_MODEL_CAP);
+  const models = rankSnapshotModels(snapshot, day, SLOW_RESPONSE_MODEL_CAP);
   if (models.length === 0) return null;
 
   try {
@@ -438,6 +478,116 @@ async function readSlowResponses(
     log.error({ err: error }, 'sweeping gateway slow responses failed — usage sync unaffected');
     return null;
   }
+}
+
+/** What one exception sweep produced: the rows, and the receipt that it ran. */
+interface ExceptionSweepResult {
+  rows: GatewayExceptionDailyInsert[];
+  sweep: GatewayExceptionSweepInsert;
+}
+
+/**
+ * Sweep `/model/metrics/exceptions` for one day, and never let it fail the sync.
+ *
+ * The second live read to be kept, on the same licence as the first: these are
+ * counts of disjoint `LiteLLM_ErrorLogs` rows, and counts add — across the
+ * aliases of one sweep and across nights. What it does not inherit is a
+ * denominator, so what the stored rows can answer is narrower: what has been
+ * breaking, and whether the *mix* moved. Never a rate.
+ *
+ * Every other rule is the hang sweep's, restated because the reasons are the
+ * same. The day swept is the window's last rather than today, so the counts line
+ * up with the `gateway_daily` row written in the same run. The alias list comes
+ * from the snapshot already in memory, ranked by that day's spend and capped like
+ * the live route, because the proxy's query filters on one `model_group` at a
+ * time with no wildcard. Failures are swallowed: `LiteLLM_ErrorLogs` can be
+ * switched off (`disable_error_logs`), is pruned on its own schedule, and is not
+ * worth failing a job that has already fetched ninety days of usage over. A
+ * ranged sync records nothing, because a repair of six days in May would ask the
+ * error log about days it may well have pruned and file the answer as the
+ * reading for them.
+ *
+ * The one thing this sweep does that the hang sweep does not is file a receipt
+ * even when it found nothing. A night with no rows is otherwise ambiguous
+ * between a clean gateway and an unread one, and those are opposite findings.
+ */
+async function readExceptions(
+  client: {
+    fetchModelExceptions: (
+      from: string,
+      to: string,
+      models: readonly string[],
+    ) => Promise<{ rows: GatewayExceptionRecord[]; available: boolean }>;
+  },
+  ranged: boolean,
+  snapshot: GatewaySnapshot,
+  day: string,
+): Promise<ExceptionSweepResult | null> {
+  if (ranged) return null;
+
+  const models = rankSnapshotModels(snapshot, day, EXCEPTION_MODEL_CAP);
+  if (models.length === 0) return null;
+
+  try {
+    const page = await client.fetchModelExceptions(day, day, models);
+    // A refusal, an absent route or a proxy with error logging switched off must
+    // not land as a clean night — no receipt is filed, so the night stays unread.
+    if (!page.available) return null;
+
+    const rows: GatewayExceptionDailyInsert[] = [];
+    let exceptions = 0;
+    for (const record of page.rows) {
+      for (const entry of record.exceptions) {
+        if (!Number.isFinite(entry.count) || entry.count <= 0) continue;
+        if (entry.type.trim() === '') continue;
+        rows.push({
+          date: day,
+          model: record.model,
+          deployment: record.deployment,
+          exceptionType: entry.type,
+          count: entry.count,
+        });
+        exceptions += entry.count;
+      }
+    }
+
+    return {
+      rows,
+      sweep: {
+        date: day,
+        models: models.length,
+        // Deployments that actually contributed a row, not every deployment the
+        // proxy mentioned: a record whose only exception had a zero count is not
+        // a deployment that failed.
+        deployments: new Set(rows.map((row) => row.deployment)).size,
+        exceptions,
+      },
+    };
+  } catch (error) {
+    log.error({ err: error }, 'sweeping gateway exceptions failed — usage sync unaffected');
+    return null;
+  }
+}
+
+/**
+ * The aliases worth a round trip on one day, ranked by that day's own spend.
+ *
+ * Shared by the two per-alias sweeps that ride along with a sync, for the reason
+ * `rankModelsBySpend` is shared by the live routes: the proxy offers no wildcard,
+ * so somebody has to choose, and choosing from the window's own usage keeps the
+ * decision about traffic that exists. Read off the snapshot in memory rather than
+ * queried, since the rows have not been written yet.
+ */
+function rankSnapshotModels(snapshot: GatewaySnapshot, day: string, cap: number): string[] {
+  const spendByModel = new Map<string, bigint>();
+  for (const row of snapshot.breakdowns) {
+    if (row.dimension !== 'model' || row.date !== day) continue;
+    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
+  }
+  return [...spendByModel.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
+    .map(([model]) => model)
+    .slice(0, cap);
 }
 
 /**
@@ -575,11 +725,15 @@ export async function startGatewaySync(
       // Swept for the window's last day — the day usage has just settled for,
       // never today, which is still accruing.
       const slowResponses = await readSlowResponses(client, ranged, snapshot, to);
+      // Swept for the same day and under the same rules, and filed with a
+      // receipt: this route answers only what failed, so a night it found
+      // nothing has to be recorded as swept or it reads as a night nobody read.
+      const exceptions = await readExceptions(client, ranged, snapshot, to);
       // The observation is stamped with the day the *reading* was taken, which
       // is today — not with the last day of the usage window. A budget counter
       // describes the period in flight right now, and filing it under yesterday
       // would make the history disagree with the snapshot it came from.
-      await persist(snapshot, budgets, models, health, slowResponses, utcDay(0), new Date());
+      await persist(snapshot, budgets, models, health, slowResponses, exceptions, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
       await notifyFindings(ranged);
       return snapshot.dates.length;

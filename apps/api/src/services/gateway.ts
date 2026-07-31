@@ -24,6 +24,7 @@ import type {
   GatewayModels,
   GatewayProbe,
   GatewayProbeRoute,
+  GatewayExceptionHistory,
   GatewaySlowResponseHistory,
   GatewaySlowResponseObservation,
   GatewaySlowResponses,
@@ -43,6 +44,8 @@ import {
   gatewayDeploymentHealth,
   gatewayDeploymentHealthHistory,
   gatewayModel,
+  gatewayExceptionDaily,
+  gatewayExceptionSweep,
   gatewaySlowResponseDaily,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
@@ -814,6 +817,80 @@ export async function getGatewaySlowResponseHistory(
   }));
 
   return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
+}
+
+/**
+ * What the nightly exception sweep recorded on each of the last `days` days.
+ *
+ * The stored twin of `getGatewayExceptions`, and the second of the four live
+ * reads to have one. The licence is the hang table's — these are counts of
+ * disjoint error-log rows, so they add across a sweep and across nights — and the
+ * limit is this route's own: there is no denominator anywhere in it, so what the
+ * stored rows answer is what has been breaking and whether the *mix* moved, never
+ * a rate.
+ *
+ * Two tables rather than one, and the second is the point: the sweep is filed
+ * separately from what it found, because this route answers rows only where
+ * something failed. A night with a receipt and no rows is a clean gateway; a night
+ * with neither is one nobody read, and merging them would let a refused sweep
+ * report a quiet week.
+ */
+export async function getGatewayExceptionHistory(days: number): Promise<GatewayExceptionHistory> {
+  // Ends yesterday, like the hang history and for the same reason: the sweep
+  // covers the day usage has settled for, so today can never carry a reading and
+  // a window ending on it would report a gap on the newest night forever.
+  const toDate = new Date();
+  toDate.setUTCDate(toDate.getUTCDate() - 1);
+  const to = toDate.toISOString().slice(0, 10);
+  const fromDate = new Date(`${to}T00:00:00.000Z`);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const [rows, sweeps, earliest] = await Promise.all([
+    db
+      .select()
+      .from(gatewayExceptionDaily)
+      .where(and(gte(gatewayExceptionDaily.date, from), lte(gatewayExceptionDaily.date, to)))
+      .orderBy(
+        asc(gatewayExceptionDaily.date),
+        asc(gatewayExceptionDaily.deployment),
+        asc(gatewayExceptionDaily.exceptionType),
+      ),
+    db
+      .select()
+      .from(gatewayExceptionSweep)
+      .where(and(gte(gatewayExceptionSweep.date, from), lte(gatewayExceptionSweep.date, to)))
+      .orderBy(asc(gatewayExceptionSweep.date)),
+    // `recordingSince` comes from the *receipts* rather than the rows: the first
+    // night we looked is the honest start of the recording, and it may well be a
+    // night on which nothing failed.
+    db
+      .select({ date: gatewayExceptionSweep.date })
+      .from(gatewayExceptionSweep)
+      .orderBy(asc(gatewayExceptionSweep.date))
+      .limit(1),
+  ]);
+
+  return {
+    from,
+    to,
+    recordingSince: earliest[0]?.date ?? null,
+    observations: rows.map((row) => ({
+      date: row.date,
+      model: row.model,
+      deployment: row.deployment,
+      type: row.exceptionType,
+      count: row.count,
+      observedAt: row.observedAt.toISOString(),
+    })),
+    sweeps: sweeps.map((row) => ({
+      date: row.date,
+      models: row.models,
+      deployments: row.deployments,
+      exceptions: row.exceptions,
+      observedAt: row.observedAt.toISOString(),
+    })),
+  };
 }
 
 /**

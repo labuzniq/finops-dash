@@ -347,3 +347,494 @@ export function summarizeGatewayExceptions(payload: GatewayExceptions): GatewayE
     fetchedAt: payload.fetchedAt,
   };
 }
+
+/* ------------------------------------------------------------------------- *
+ * The stored roll-up: what the nightly sweep recorded, kept.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One night's count of one exception type, for one deployment under one alias.
+ *
+ * The second of the four live reads to be stored, and it is stored for the same
+ * arithmetic reason as the first: these are counts of *disjoint* `LiteLLM_ErrorLogs`
+ * rows, so they add across the aliases of one sweep and across nights.
+ * `/model/metrics` cannot follow, because it answers a mean of per-request
+ * ratios with its counts already discarded — an average of nightly averages is
+ * a number with no referent.
+ *
+ * What does **not** follow from the hang table is a rate. That route carries
+ * `total_count` beside `slow_count`; this one carries no denominator at all, so
+ * everything derived here is a count or a share of *recorded exceptions*, and
+ * nothing may be rendered as a failure rate, a share of traffic, or a badge.
+ *
+ * `type` is stored verbatim and the *class* is derived at read time, which is the
+ * opposite of `gateway_deployment_health_history.model` and the difference is
+ * worth stating: that column is resolved against the catalogue fetched in the
+ * same run, so re-resolving it later would re-file a deployment that has since
+ * moved. A class is a static mapping from a Python class name to the party who
+ * can act on it — nothing about it depends on the night — so deriving it on read
+ * means a taxonomy fix re-files history instead of leaving old rows filed under
+ * `other` forever.
+ */
+export interface GatewayExceptionObservation {
+  /** The UTC day the counts cover — not the day the sweep ran. */
+  date: string;
+  /** The alias the read was scoped to: the query parameter, not the row. */
+  model: string;
+  /** LiteLLM's `combined_model_api_base`, verbatim and never parsed back. */
+  deployment: string;
+  /** `exception_type` as the proxy stored it. Classified on read. */
+  type: string;
+  count: number;
+  /** When the sweep that produced this row ran. */
+  observedAt: string;
+}
+
+/**
+ * A receipt that the sweep ran on a night, whatever it found.
+ *
+ * This layer needs one and the hang layer does not, and the asymmetry is a
+ * property of the two routes rather than a design choice.
+ * `/model/metrics/slow_responses` answers a row per deployment key with traffic,
+ * so a night that was read always leaves rows behind. `/model/metrics/exceptions`
+ * answers rows only for deployments that *faulted*, so a night on which the
+ * whole gateway behaved records nothing — byte-identical to a night the sweep
+ * was refused, timed out, or never ran.
+ *
+ * Those are opposite findings ("no errors were recorded" against "we did not
+ * look"), so the night the sweep ran is filed separately from what it found. A
+ * day with a receipt and no observations is *clean*; a day with neither is
+ * unread and stays unknown, exactly as an unobserved night does everywhere else
+ * in this integration.
+ */
+export interface GatewayExceptionSweep {
+  date: string;
+  /** How many aliases were asked about. The cap and a quiet gateway both lower it. */
+  models: number;
+  /** How many deployments came back with at least one exception. */
+  deployments: number;
+  /** Our sum over the night's rows — never the proxy's `total_exceptions`. */
+  exceptions: number;
+  observedAt: string;
+}
+
+/** Everything `GET /api/gateway/exceptions/history` returns. */
+export interface GatewayExceptionHistory {
+  from: string;
+  to: string;
+  /**
+   * The first night a sweep was ever filed, answered outside the window for the
+   * same reason every other history route answers it: an empty list means "no
+   * errors recorded" or "we started recording on Tuesday", and only one of those
+   * is a finding.
+   */
+  recordingSince: string | null;
+  observations: GatewayExceptionObservation[];
+  sweeps: GatewayExceptionSweep[];
+}
+
+/**
+ * Observed nights needed before the window may be split in half and compared.
+ *
+ * Six, matching the hang history, and for the same reason restated over a
+ * different quantity: each half is three nights, and fewer than that compares
+ * one afternoon's incident against another. Counted in *swept* nights rather
+ * than calendar ones — a scheduler that missed four nights gathered no evidence.
+ */
+export const EXCEPTION_TREND_MIN_DAYS = 6;
+
+/** Gateway-wide, for one night the sweep ran. */
+export interface GatewayExceptionHistoryDay {
+  date: string;
+  /** Exceptions recorded that night. Zero on a swept night that found none. */
+  total: number;
+  /** The night's own mix, largest first. Empty on a clean night. */
+  classes: { class: GatewayExceptionClass; count: number }[];
+  /** How many deployments recorded at least one. */
+  deployments: number;
+  /** How many aliases were swept — the night's coverage, not the gateway's size. */
+  models: number;
+  /** Swept and found nothing. Distinct from a night with no reading at all. */
+  clean: boolean;
+}
+
+/** One class across every night it was recorded. */
+export interface GatewayExceptionHistoryClass {
+  class: GatewayExceptionClass;
+  count: number;
+  /**
+   * Share of every exception *recorded* in the window — the mix, and the only
+   * share this layer can produce. Never a share of traffic or of failures.
+   */
+  share: number;
+  /** Nights carrying at least one of these. Evidence, never a duration. */
+  daysPresent: number;
+  /** How many deployments produced them. */
+  deployments: number;
+  /** The class's own types, largest first. */
+  types: GatewayExceptionCount[];
+  firstDate: string;
+  lastDate: string;
+  /**
+   * Half-over-half movement of this class's **share of the mix**, in percentage
+   * points. Null while the trend is withheld.
+   *
+   * A mix shift rather than a count trend, and that is the whole point of the
+   * layer: with no denominator, a doubling of traffic doubles every class and
+   * means nothing, while a class going from a fifth of recorded errors to half
+   * of them is a change in what is breaking. Counts ride along as evidence and
+   * are never the statement.
+   */
+  shiftPoints: number | null;
+  /** Recorded in the recent half and never in the earlier one. Null while withheld. */
+  newInRecentHalf: boolean | null;
+}
+
+/** One deployment across every night it recorded something. */
+export interface GatewayExceptionHistoryDeployment {
+  /** `combined_model_api_base`, verbatim. Join to health with `deploymentExceptionKey`. */
+  deployment: string;
+  /** The aliases whose traffic routed here, ascending. */
+  models: string[];
+  count: number;
+  /** Share of every exception recorded in the window. */
+  share: number;
+  dominantClass: GatewayExceptionClass | null;
+  dominantShare: number | null;
+  daysPresent: number;
+  firstDate: string;
+  lastDate: string;
+  /** The night this deployment recorded the most. */
+  worstDay: { date: string; count: number } | null;
+}
+
+/**
+ * The swept nights split in two halves and pooled, compared on **mix**.
+ *
+ * Pooled counts rather than a mean of nightly shares, for the reason the hang
+ * trend pools: nightly totals differ by orders of magnitude, so a quiet night's
+ * two timeouts would otherwise outvote a bad night's four hundred rate limits.
+ */
+export interface GatewayExceptionMixTrend {
+  earlier: { from: string; to: string; days: number; total: number };
+  recent: { from: string; to: string; days: number; total: number };
+  /** Every class seen in either half, ordered by the size of the move. */
+  classes: {
+    class: GatewayExceptionClass;
+    earlierCount: number;
+    earlierShare: number;
+    recentCount: number;
+    recentShare: number;
+    deltaPoints: number;
+  }[];
+}
+
+export interface GatewayExceptionHistorySummary {
+  from: string;
+  to: string;
+  recordingSince: string | null;
+  /** Nights the sweep ran, ascending — including the ones that found nothing. */
+  observedDays: string[];
+  /**
+   * Calendar days inside the window carrying no sweep at all, counted forward
+   * from `recordingSince`. Never filled in: an unswept night is unknown, not a
+   * night on which nothing failed.
+   */
+  unobservedDays: number;
+  /** Of the observed nights, how many were swept and recorded nothing. */
+  cleanDays: number;
+  days: GatewayExceptionHistoryDay[];
+  classes: GatewayExceptionHistoryClass[];
+  deployments: GatewayExceptionHistoryDeployment[];
+  /** Every exception recorded in the window. A floor on failures, never their count. */
+  total: number;
+  trend: GatewayExceptionMixTrend | null;
+}
+
+/** `2026-07-31`, `2026-07-28` → 3. Both UTC midnights, so DST never shifts it. */
+function daysBetweenIso(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Stored nightly sweeps → what has been breaking, and whether that changed.
+ *
+ * Pure, and the counterpart to `summarizeGatewayExceptions` in the same way
+ * `summarizeSlowResponseHistory` is to `summarizeGatewaySlowResponses`: that one
+ * states what one window the proxy answered may be read to mean, this one states
+ * what a *sequence* of nightly windows may. Four rules carry it:
+ *
+ *  - counts add, across the sweep and across nights, because they are disjoint
+ *    error-log rows — the same licence the hang table has and `/model/metrics`
+ *    does not;
+ *  - there is still **no denominator**, so there is no rate, no badge and no
+ *    significance test anywhere in here; every share is of recorded exceptions;
+ *  - the trend is therefore a **mix shift** in percentage points, which is the
+ *    one reading a missing denominator cannot corrupt;
+ *  - a night with no sweep is unknown, a night with a sweep and no rows is clean,
+ *    and the two are never merged.
+ */
+export function summarizeExceptionHistory(
+  history: GatewayExceptionHistory,
+): GatewayExceptionHistorySummary {
+  const sweptDays = new Map<string, GatewayExceptionSweep>();
+  for (const sweep of history.sweeps) sweptDays.set(sweep.date, sweep);
+
+  const byDay = new Map<
+    string,
+    { total: number; classes: Map<GatewayExceptionClass, number>; deployments: Set<string> }
+  >();
+  const byClass = new Map<
+    GatewayExceptionClass,
+    {
+      count: number;
+      days: Set<string>;
+      deployments: Set<string>;
+      types: Map<string, GatewayExceptionCount>;
+    }
+  >();
+  const byDeployment = new Map<
+    string,
+    {
+      models: Set<string>;
+      count: number;
+      classes: Map<GatewayExceptionClass, number>;
+      days: Map<string, number>;
+    }
+  >();
+
+  for (const observation of history.observations) {
+    if (!Number.isFinite(observation.count) || observation.count <= 0) continue;
+    const exceptionClass = classifyGatewayException(observation.type);
+
+    let day = byDay.get(observation.date);
+    if (day === undefined) {
+      day = { total: 0, classes: new Map(), deployments: new Set() };
+      byDay.set(observation.date, day);
+    }
+    day.total += observation.count;
+    day.classes.set(exceptionClass, (day.classes.get(exceptionClass) ?? 0) + observation.count);
+    day.deployments.add(observation.deployment);
+
+    let klass = byClass.get(exceptionClass);
+    if (klass === undefined) {
+      klass = { count: 0, days: new Set(), deployments: new Set(), types: new Map() };
+      byClass.set(exceptionClass, klass);
+    }
+    klass.count += observation.count;
+    klass.days.add(observation.date);
+    klass.deployments.add(observation.deployment);
+    const type = klass.types.get(observation.type);
+    if (type === undefined) {
+      klass.types.set(observation.type, {
+        type: observation.type,
+        class: exceptionClass,
+        count: observation.count,
+      });
+    } else {
+      type.count += observation.count;
+    }
+
+    let deployment = byDeployment.get(observation.deployment);
+    if (deployment === undefined) {
+      deployment = { models: new Set(), count: 0, classes: new Map(), days: new Map() };
+      byDeployment.set(observation.deployment, deployment);
+    }
+    deployment.models.add(observation.model);
+    deployment.count += observation.count;
+    deployment.classes.set(
+      exceptionClass,
+      (deployment.classes.get(exceptionClass) ?? 0) + observation.count,
+    );
+    deployment.days.set(
+      observation.date,
+      (deployment.days.get(observation.date) ?? 0) + observation.count,
+    );
+  }
+
+  // The night series is driven by the *receipts*, not by the rows: a swept night
+  // that recorded nothing is a day of the series with a total of zero, and a
+  // night nobody swept is absent from it. A day carrying rows but no receipt is
+  // tolerated as observed — the rows are proof the sweep ran, whatever went
+  // missing on the way to the receipt table.
+  const dayDates = new Set<string>([...sweptDays.keys(), ...byDay.keys()]);
+  const days: GatewayExceptionHistoryDay[] = [...dayDates]
+    .sort((a, b) => a.localeCompare(b))
+    .map((date) => {
+      const recorded = byDay.get(date);
+      const sweep = sweptDays.get(date);
+      const classes = [...(recorded?.classes ?? new Map<GatewayExceptionClass, number>())]
+        .map(([exceptionClass, count]) => ({ class: exceptionClass, count }))
+        .sort((a, b) => b.count - a.count || a.class.localeCompare(b.class));
+      const total = recorded?.total ?? 0;
+      return {
+        date,
+        total,
+        classes,
+        deployments: recorded?.deployments.size ?? 0,
+        models: sweep?.models ?? 0,
+        clean: total === 0,
+      };
+    });
+  const observedDays = days.map((day) => day.date);
+  const total = days.reduce((sum, day) => sum + day.total, 0);
+
+  const trend = buildMixTrend(days, history.observations);
+  const trendClasses = new Map(trend?.classes.map((entry) => [entry.class, entry]) ?? []);
+
+  const classes: GatewayExceptionHistoryClass[] = [...byClass.entries()]
+    .map(([exceptionClass, bucket]) => {
+      const dates = [...bucket.days].sort((a, b) => a.localeCompare(b));
+      const moved = trendClasses.get(exceptionClass);
+      return {
+        class: exceptionClass,
+        count: bucket.count,
+        share: total === 0 ? 0 : bucket.count / total,
+        daysPresent: dates.length,
+        deployments: bucket.deployments.size,
+        types: [...bucket.types.values()].sort((a, b) => b.count - a.count),
+        firstDate: dates[0] ?? '',
+        lastDate: dates[dates.length - 1] ?? '',
+        shiftPoints: moved?.deltaPoints ?? null,
+        newInRecentHalf:
+          trend === null ? null : moved !== undefined && moved.earlierCount === 0 && moved.recentCount > 0,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.class.localeCompare(b.class));
+
+  const deployments: GatewayExceptionHistoryDeployment[] = [...byDeployment.entries()]
+    .map(([deployment, bucket]) => {
+      const dates = [...bucket.days.keys()].sort((a, b) => a.localeCompare(b));
+      let dominant: { class: GatewayExceptionClass; count: number } | null = null;
+      for (const [exceptionClass, count] of bucket.classes) {
+        if (dominant === null || count > dominant.count) dominant = { class: exceptionClass, count };
+      }
+      let worstDay: GatewayExceptionHistoryDeployment['worstDay'] = null;
+      for (const [date, count] of bucket.days) {
+        if (worstDay === null || count > worstDay.count) worstDay = { date, count };
+      }
+      return {
+        deployment,
+        models: [...bucket.models].sort(),
+        count: bucket.count,
+        share: total === 0 ? 0 : bucket.count / total,
+        dominantClass: dominant?.class ?? null,
+        dominantShare: dominant === null || bucket.count === 0 ? null : dominant.count / bucket.count,
+        daysPresent: dates.length,
+        firstDate: dates[0] ?? '',
+        lastDate: dates[dates.length - 1] ?? '',
+        worstDay,
+      };
+    })
+    .sort((a, b) => b.count - a.count || a.deployment.localeCompare(b.deployment));
+
+  // Gaps are counted from the first night anything was ever swept, so the
+  // stretch before this dashboard was watching is not reported as missing data.
+  const start =
+    history.recordingSince !== null && history.recordingSince > history.from
+      ? history.recordingSince
+      : history.from;
+  const span = start > history.to ? 0 : daysBetweenIso(start, history.to) + 1;
+  const observedInSpan = observedDays.filter((date) => date >= start && date <= history.to).length;
+
+  return {
+    from: history.from,
+    to: history.to,
+    recordingSince: history.recordingSince,
+    observedDays,
+    unobservedDays: Math.max(0, span - observedInSpan),
+    cleanDays: days.filter((day) => day.clean).length,
+    days,
+    classes,
+    deployments,
+    total,
+    trend,
+  };
+}
+
+/**
+ * Split the swept nights down the middle and compare the two halves' mixes.
+ *
+ * The split is on *swept* nights rather than on the calendar, so a fortnight the
+ * scheduler was down shifts the boundary instead of emptying a half; an odd
+ * night goes to the recent half, because the question is about now. Clean nights
+ * count towards the split — they are evidence the gateway was quiet — but a half
+ * that recorded nothing at all has no mix to compare, so the trend is withheld
+ * rather than reported as every class moving to zero.
+ */
+function buildMixTrend(
+  days: GatewayExceptionHistoryDay[],
+  observations: GatewayExceptionObservation[],
+): GatewayExceptionMixTrend | null {
+  if (days.length < EXCEPTION_TREND_MIN_DAYS) return null;
+  const cut = Math.floor(days.length / 2);
+  const earlierDays = days.slice(0, cut);
+  const recentDays = days.slice(cut);
+  const first = earlierDays[0];
+  const lastEarlier = earlierDays[earlierDays.length - 1];
+  const firstRecent = recentDays[0];
+  const last = recentDays[recentDays.length - 1];
+  if (
+    first === undefined ||
+    lastEarlier === undefined ||
+    firstRecent === undefined ||
+    last === undefined
+  ) {
+    return null;
+  }
+
+  const earlierTotal = earlierDays.reduce((sum, day) => sum + day.total, 0);
+  const recentTotal = recentDays.reduce((sum, day) => sum + day.total, 0);
+  if (earlierTotal <= 0 || recentTotal <= 0) return null;
+
+  const earlierByClass = new Map<GatewayExceptionClass, number>();
+  const recentByClass = new Map<GatewayExceptionClass, number>();
+  for (const observation of observations) {
+    if (!Number.isFinite(observation.count) || observation.count <= 0) continue;
+    const bucket =
+      observation.date <= lastEarlier.date
+        ? earlierByClass
+        : observation.date >= firstRecent.date
+          ? recentByClass
+          : null;
+    if (bucket === null) continue;
+    const exceptionClass = classifyGatewayException(observation.type);
+    bucket.set(exceptionClass, (bucket.get(exceptionClass) ?? 0) + observation.count);
+  }
+
+  const seen = new Set<GatewayExceptionClass>([...earlierByClass.keys(), ...recentByClass.keys()]);
+  const classes = [...seen]
+    .map((exceptionClass) => {
+      const earlierCount = earlierByClass.get(exceptionClass) ?? 0;
+      const recentCount = recentByClass.get(exceptionClass) ?? 0;
+      const earlierShare = earlierCount / earlierTotal;
+      const recentShare = recentCount / recentTotal;
+      return {
+        class: exceptionClass,
+        earlierCount,
+        earlierShare,
+        recentCount,
+        recentShare,
+        deltaPoints: (recentShare - earlierShare) * 100,
+      };
+    })
+    .sort((a, b) => Math.abs(b.deltaPoints) - Math.abs(a.deltaPoints) || a.class.localeCompare(b.class));
+
+  return {
+    earlier: {
+      from: first.date,
+      to: lastEarlier.date,
+      days: earlierDays.length,
+      total: earlierTotal,
+    },
+    recent: {
+      from: firstRecent.date,
+      to: last.date,
+      days: recentDays.length,
+      total: recentTotal,
+    },
+    classes,
+  };
+}

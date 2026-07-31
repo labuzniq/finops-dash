@@ -768,6 +768,93 @@ export const gatewaySlowResponseDaily = pgTable(
   ],
 );
 
+/**
+ * Why calls failed, kept — one row per exception type per deployment per alias
+ * per UTC day.
+ *
+ * The second *live* read to get a table, licensed by the same arithmetic as the
+ * first: `LiteLLM_ErrorLogs` rows are disjoint, so counting them adds across the
+ * aliases of one sweep and across nights. `/model/metrics` still has no table
+ * and cannot have one — it answers a mean of per-request ratios with the counts
+ * behind them already discarded.
+ *
+ * What it does *not* inherit from `gateway_slow_response_daily` is a
+ * denominator. This route carries none at all, so nothing read off this table
+ * may become a rate, a share of traffic or a badge: the only share it supports
+ * is of the exceptions it recorded, which is a *mix*. That is also what makes
+ * the stored version worth having — the live card answers "what is breaking in
+ * the window on screen" and cannot answer "and is that different from last
+ * week", which for a fault taxonomy is the whole question.
+ *
+ * `exception_type` is stored verbatim and classified on read. The contrast with
+ * `gateway_deployment_health_history.model` is deliberate: that column is
+ * resolved against the catalogue fetched in the same run, so it is stored as
+ * resolved or a later catalogue would re-file a deployment that has since moved.
+ * A class is a static mapping from a Python class name to whoever can act on it,
+ * so deriving it on read means adding a name to the taxonomy re-files the
+ * history instead of stranding it under `other`.
+ *
+ * `deployment` is LiteLLM's `combined_model_api_base` verbatim, never parsed —
+ * the join to `gateway_deployment_health` runs the other way, through
+ * `deploymentExceptionKey`.
+ *
+ * Written by full syncs only, for the window's last day (yesterday), upserted on
+ * the grain so a second run the same afternoon replaces the reading rather than
+ * doubling counts that are meant to be added. A backfill records nothing: the
+ * error log is pruned on its own schedule, so asking it about six days in May
+ * would file whatever survived pruning as the reading for those days.
+ */
+export const gatewayExceptionDaily = pgTable(
+  'gateway_exception_daily',
+  {
+    /** UTC day the counts cover — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `CONCAT(litellm_model_name, '-', api_base)` verbatim. Never split. */
+    deployment: varchar('deployment', { length: 400 }).notNull(),
+    /** `exception_type` as the proxy stored it — the Python class name. */
+    exceptionType: varchar('exception_type', { length: 200 }).notNull(),
+    /** How many of them. A count of error-log rows, with no denominator anywhere. */
+    count: bigint('count', { mode: 'number' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deployment, table.exceptionType] }),
+    // Every read is a window across every deployment, so date leads.
+    index('gateway_exception_daily_date_idx').on(table.date),
+  ],
+);
+
+/**
+ * That the exception sweep ran on a night, whatever it found.
+ *
+ * The one table in this integration whose only purpose is to make an *absence*
+ * legible, and it exists because of a difference between two otherwise identical
+ * routes. `/model/metrics/slow_responses` answers a row for every deployment key
+ * that carried traffic, so a night that was read always leaves rows behind and
+ * "no rows" can only mean "nobody read". `/model/metrics/exceptions` answers rows
+ * only where something *failed*, so a night on which the gateway behaved perfectly
+ * records nothing at all — identical, in the table, to a night the sweep was
+ * refused, timed out, or never ran.
+ *
+ * Those are opposite findings, so the fact that the sweep ran is filed apart from
+ * what it found. A date here with no rows in `gateway_exception_daily` is a clean
+ * night; a date in neither is unread and stays unknown.
+ */
+export const gatewayExceptionSweep = pgTable('gateway_exception_sweep', {
+  /** UTC day swept. One row per day, replaced when the day is swept again. */
+  date: date('date').primaryKey(),
+  /** How many aliases were asked about — the sweep's own coverage. */
+  models: integer('models').notNull(),
+  /** How many deployments came back carrying at least one exception. */
+  deployments: integer('deployments').notNull(),
+  /** Our sum over the night's rows. Never the proxy's `total_exceptions`. */
+  exceptions: integer('exceptions').notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -920,6 +1007,10 @@ export type GatewayDeploymentHealthHistoryInsert =
   typeof gatewayDeploymentHealthHistory.$inferInsert;
 export type GatewaySlowResponseDailyRow = typeof gatewaySlowResponseDaily.$inferSelect;
 export type GatewaySlowResponseDailyInsert = typeof gatewaySlowResponseDaily.$inferInsert;
+export type GatewayExceptionDailyRow = typeof gatewayExceptionDaily.$inferSelect;
+export type GatewayExceptionDailyInsert = typeof gatewayExceptionDaily.$inferInsert;
+export type GatewayExceptionSweepRow = typeof gatewayExceptionSweep.$inferSelect;
+export type GatewayExceptionSweepInsert = typeof gatewayExceptionSweep.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

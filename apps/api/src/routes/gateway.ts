@@ -27,6 +27,7 @@ import {
   getGatewayHealth,
   getGatewayLatency,
   getGatewayModels,
+  getGatewayExceptionHistory,
   getGatewaySlowResponseHistory,
   getGatewaySlowResponses,
   getGatewaySpendLogs,
@@ -287,6 +288,29 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
       }
       throw error;
     }
+  });
+
+  /**
+   * What the nightly exception sweep recorded on each of the last `days` days.
+   *
+   * The stored twin of the route above, and the second history any of the four
+   * live reads has. It answers two lists rather than one: the exceptions, and the
+   * nights the sweep ran. That second list is the whole reason this layer can say
+   * anything — the proxy answers rows only where something failed, so a night
+   * with no rows is a clean gateway *or* a refused sweep, and those are opposite
+   * findings.
+   *
+   * Nothing is filled in for a night the sweep did not run, was refused, or found
+   * error logging switched off. Same window rules as the three other history
+   * routes — 60 days by default, 365 at most, a payload cap rather than a
+   * retention one, since these rows are ours.
+   */
+  app.get('/api/gateway/exceptions/history', async (request, reply) => {
+    const parsed = historyQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewayExceptionHistory(parsed.data.days);
   });
 
   /**
