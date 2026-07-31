@@ -306,6 +306,40 @@ governance does, one fewer schedule to reason about. Three rules:
 - **Never fails the sync.** The usage has already landed by then, and a
   bookkeeping step that could not run today runs tomorrow.
 
+Finally — again only after a **full** sync — the job **evaluates governance and
+sends what it finds** (`services/gateway-notify.ts`). This is the one gateway
+finding that can leave the dashboard, and it can only because governance is a
+table: every other card derives its findings in the browser from the
+usage payload, so they exist only while somebody is looking at the page. Four
+states travel — `blocked`, `over`, `soft`, and *pacing* past a cap — and they are
+classified by `assessBudget` in `@dash/shared`, the same function the budget card
+and the attention digest read, so a notification and the card it names cannot
+disagree. `warn`, `ok` and `uncapped` deliberately produce nothing: a threshold
+nobody configured is worth a row on a card and is not worth waking somebody, and
+an uncapped key is a standing decision rather than an event.
+
+The de-duplication story is `gateway_notification`, keyed on the finding's
+**fingerprint** — `kind:scope:key`, carrying no numbers:
+
+- **A finding still true tomorrow is not a new alert.** A counter climbing from
+  104% to 137% is the same episode and only moves `last_seen_at`. Crossing from
+  `soft` to `over` changes the *kind*, so it is a new episode and is sent.
+- **A resolution is recorded, not delivered.** `cleared_at` bounds the episode
+  (which is what makes a later reappearance a new one, dated and delivered
+  afresh); announcing recoveries is a different product decision, and a channel
+  that makes both is one people mute.
+- **Undelivered is the retry state.** A refused POST, or no
+  `GATEWAY_ALERT_WEBHOOK_URL` at all, leaves `delivered_at` null and the next
+  sync tries again — there is no queue, because the sync is already a schedule.
+  With no target configured nothing is attempted and no attempt is counted, so
+  the column reads as *unconfigured* rather than as a broken endpoint, and
+  turning a webhook on tomorrow sends what was found today.
+
+Delivery is one POST per run carrying at most 50 findings (worst first, so a
+truncated batch is the batch that matters), with a 10-second timeout, no retry
+inside the run, and a body that leads with a plain `text` line — a chat webhook
+renders nothing else. Like the seal, it never fails the sync.
+
 Only `/user/daily/activity` contributes the gateway-wide totals. `/team/…` and
 `/tag/…` report the same spend re-sliced; adding their `metrics` in would
 triple-count every dollar, so they are pulled purely for their `entities`
@@ -406,15 +440,30 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   read on the page still derives from the daily rows; the seal exists to be
   compared against them, so a re-seal is always explicit and always replaces a
   statement that was issued.
+- **An alert is one per episode, and an episode is bounded by the finding
+  going away.** `gateway_notification`'s key is `kind:scope:key` and carries no
+  numbers: a counter climbing further is the same finding, escalating into a
+  worse state is a new one, and a resolved one closes so that a reappearance is
+  a fresh episode. `delivered_at` is the retry flag — null means it has not been
+  accepted by a target, whether the POST failed or none is configured — and no
+  attempt is counted when there is nowhere to send it.
+- **A notified state is never re-derived.** Every state a notification carries
+  comes from `assessBudget` in `@dash/shared`, the one the budget card and the
+  attention digest read. A second implementation on the server would let the
+  alert somebody received disagree with the card they open to check it, which is
+  strictly worse than the digest's two-answers failure because one of the
+  answers is already out of the building.
 - **Nothing outside `apps/api/src/gateway/` knows which source is active** —
   the same rule `copilot/` follows.
 
 ## Configuration
 
 ```bash
-GATEWAY_SOURCE=off        # off (default) | mock | litellm
-LITELLM_BASE_URL=         # https://llm-gateway.corp.example
-LITELLM_API_KEY=          # admin / admin-viewer virtual key
+GATEWAY_SOURCE=off             # off (default) | mock | litellm
+LITELLM_BASE_URL=              # https://llm-gateway.corp.example
+LITELLM_API_KEY=               # admin / admin-viewer virtual key
+GATEWAY_ALERT_WEBHOOK_URL=     # optional: where governance findings are POSTed
+GATEWAY_ALERT_WEBHOOK_TOKEN=   # optional: bearer token for that endpoint
 ```
 
 `off` keeps the feature dormant: `POST /api/refresh/gateway` answers 503, the
@@ -534,6 +583,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `?revision=` quotes a *replaced* statement by number; omitted, it answers with the current one. `404` when the month was never sealed (or has no such revision), carrying the `check` that says why (still running, or missing days to backfill). |
 | `GET` | `/api/gateway/months/:month/revisions` | Every statement the month has carried, newest first, with a pure diff for each re-seal: what the month moved by, and which payer lines moved with it. `404` for a month that was never sealed. |
 | `POST` | `/api/gateway/months/:month/seal` | Seal a closed month by hand. `400` for a month still in flight or with holes in it, `409` for one already sealed — `?force=true` re-seals and replaces the statement that was issued. |
+| `GET` | `/api/gateway/notifications?days=` | `{ notifications, deliveryConfigured, open, pending, evaluatedAt }` — governance findings and whether they left the building. Every open episode plus the ones that closed inside `days` (default 30, max 365). The only gateway read about the dashboard's own behaviour rather than the proxy's. |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -610,6 +660,29 @@ its own generated day, so the panel has something to render before anyone has a
 proxy. It cannot be made to fail: every interesting failure is wire-level and
 belongs to the live client, where the contract harness drives them against a
 server that really answers `403`.
+
+## Governance alerts on the Data sources page
+
+`GatewayAlertPanel`, under the connection check
+(`apps/web/src/components/sources/GatewayAlertPanel.tsx`), reading
+`GET /api/gateway/notifications`. It is the only gateway surface that is not on
+the gateway page, and deliberately so: it does not describe the proxy, it
+describes **this dashboard's own alerting** — what governance findings are open,
+which are still waiting to be sent, and when the last evaluation ran.
+
+The one thing it exists to make impossible is a silent channel. An unconfigured
+target is stated in the header rather than implied by an empty list; a finding
+recorded but never delivered says so on its own row, carrying the target's own
+error verbatim, because "the webhook 404s" and "nothing is wrong" look identical
+in a quiet channel. `evaluatedAt` comes from the last successful sync rather than
+from the rows, so "nothing is open" and "this has never run" stay different
+answers — the same rule as `recordingSince` on budget history and coverage's
+`floor`.
+
+Closed episodes are listed beside open ones, which is the other reason the panel
+is a list and not two counters: an episode that opened and cleared between two
+visits is invisible in the budget card, whose snapshot has already moved on, and
+it is exactly what "did anything happen last week" means.
 
 ## The view
 
@@ -1645,6 +1718,31 @@ runs on distinct days), so the crossing case is planted the way earlier syncs
 would have written it. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-alerts.ts`.
 
+`apps/api/scripts/verify-gateway-notify.ts` covers governance *alerting*, and it
+is the only script here whose subject is a side effect rather than a number: the
+question is not whether a finding is right but whether it is sent, once, at the
+right moment. Three halves. The **pure** one pins which states travel (`blocked`,
+`over`, `soft`, pacing) and which do not (`warn` — a threshold nobody
+configured — plus `ok` and `uncapped`), that a fingerprint carries no numbers so
+a counter climbing from 104% to 999% is one episode, that crossing from `soft`
+to `over` is a *different* one, and that a tag never produces a pace finding
+however far through its period it is — asserted the way iteration 25's withheld
+projection was, by proving the minimum-elapsed gate could not have fired instead.
+The **cross-module** one is the check no single module can make: the budget card
+and the notifier are run over the same real snapshot and required to agree row by
+row on state and on pacing, because one of them arrives by mail and the other is
+what the reader opens to check it. The **Postgres** half drives the whole
+de-duplication story against a throwaway HTTP server standing in for the webhook:
+a first evaluation delivers once with a bearer token and a readable sentence, a
+re-evaluation with a bigger number delivers nothing while still updating what the
+row says, an escalation closes the superseded finding and sends the new one, a
+refused delivery is recorded with the target's own error and left undelivered
+(then retried and stamped on the next run, with the attempt counted), and a
+resolved finding closes silently but re-opens dated afresh and is delivered
+again. It plants budget rows under a `verify-notify-` prefix and removes them.
+Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-notify.ts`.
+
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a
 throwaway HTTP server answering the envelope documented above and points
@@ -1848,12 +1946,21 @@ Governance is now rendered end to end across all three scopes
   answers "was this key already over last week" — but only back to the first
   sync that wrote it, and only at daily resolution. Neither limit can be lifted
   from here: the proxy serves current state and has nothing older to give, and a
-  finer sample would mean syncing more often for no other reason. A crossing no
-  longer has to be found by opening a row — the attention digest at the top of
-  the page carries it — but it is still only *on the page*: nothing leaves the
-  dashboard. Sending it somewhere (mail, Slack, a webhook) needs a scheduler
-  hook, a delivery target and a de-duplication story, none of which the console
-  has today.
+  finer sample would mean syncing more often for no other reason.
+- **Alerting beyond governance.** A budget finding now leaves the dashboard:
+  every full sync evaluates the snapshot, records each finding as an episode in
+  `gateway_notification`, and POSTs the undelivered ones to
+  `GATEWAY_ALERT_WEBHOOK_URL`. The other five sources the attention digest reads
+  cannot follow it there, and the reason is structural rather than a missing
+  feature: anomalies, reliability, cache churn and coverage gaps are derived in
+  the *browser* from the usage payload, so sending them would mean either running
+  those derivations server-side (a second implementation of five modules, i.e.
+  precisely the two-answers failure the digest exists to prevent) or moving them
+  into `@dash/shared` and giving the API a range to evaluate them over — which is
+  a real design question, since "what range" has no obvious answer for a nightly
+  job. Delivery itself is also deliberately thin: one URL, one POST, no
+  per-recipient routing, no severity filter and no quiet hours. Each of those is
+  a policy somebody has to actually want before it is worth encoding.
 - **Pricing what the catalogue now makes priceable.** Both cards the catalogue
   was fetched for now exist. `Price catalogue`
   (`lib/metrics/gatewayCatalog.ts`) puts list rates beside the effective rate

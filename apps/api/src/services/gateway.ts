@@ -29,7 +29,7 @@ import {
   gatewayDaily,
   gatewayModel,
 } from '../db/schema.js';
-import type { GatewayBreakdownRow, GatewayDailyRow } from '../db/schema.js';
+import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
 import { nanoToDollars } from '../lib/nano.js';
 
 /**
@@ -142,26 +142,39 @@ export async function getGatewayCoverage(): Promise<GatewayCoverage> {
  * the columns that hold a number, so an uncapped key stays `null` rather than
  * becoming `$0.00`, which would read as the strictest budget on the gateway.
  */
+/**
+ * One stored governance row as the shared contract sees it, or null when the
+ * scope is one this build does not know (a row written by a newer version).
+ *
+ * Exported because the notifier assesses the same rows the read route serves,
+ * and a second copy of this mapping is a second chance for a null limit to
+ * become `$0.00` in one of the two.
+ */
+export function toGatewayBudget(row: GatewayBudgetRow): GatewayBudget | null {
+  const scope = GATEWAY_BUDGET_SCOPES.find((candidate) => candidate === row.scope);
+  if (scope === undefined) return null;
+  return {
+    scope,
+    key: row.key,
+    label: row.label,
+    spend: nanoToDollars(row.spendNano),
+    maxBudget: row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano),
+    softBudget: row.softBudgetNano === null ? null : nanoToDollars(row.softBudgetNano),
+    budgetDuration: row.budgetDuration,
+    resetAt: row.resetAt === null ? null : row.resetAt.toISOString(),
+    tpmLimit: row.tpmLimit,
+    rpmLimit: row.rpmLimit,
+    blocked: row.blocked,
+  };
+}
+
 export async function getGatewayBudgets(): Promise<GatewayBudgets> {
   const rows = await db.select().from(gatewayBudget);
 
   const budgets: GatewayBudget[] = [];
   for (const row of rows) {
-    const scope = GATEWAY_BUDGET_SCOPES.find((candidate) => candidate === row.scope);
-    if (scope === undefined) continue;
-    budgets.push({
-      scope,
-      key: row.key,
-      label: row.label,
-      spend: nanoToDollars(row.spendNano),
-      maxBudget: row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano),
-      softBudget: row.softBudgetNano === null ? null : nanoToDollars(row.softBudgetNano),
-      budgetDuration: row.budgetDuration,
-      resetAt: row.resetAt === null ? null : row.resetAt.toISOString(),
-      tpmLimit: row.tpmLimit,
-      rpmLimit: row.rpmLimit,
-      blocked: row.blocked,
-    });
+    const budget = toGatewayBudget(row);
+    if (budget !== null) budgets.push(budget);
   }
 
   const consumed = (budget: GatewayBudget): number =>

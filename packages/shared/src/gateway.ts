@@ -605,6 +605,433 @@ export function budgetPeriodStart(budget: Readonly<GatewayBudget>): string | nul
 }
 
 /**
+ * ─── Budget assessment ───────────────────────────────────────────────────────
+ *
+ * What state a governed object is in, and what its counter is heading for.
+ *
+ * This lives in `@dash/shared` rather than in the browser's metrics layer for
+ * one reason: two things now read it. The budget card derives it from
+ * `GET /api/gateway/budgets` to render a table, and the API derives it after
+ * every full sync to decide what to *send* somewhere. If each owned its own
+ * copy of "over its cap" they would drift the first time one of them was
+ * adjusted — a notification saying a key is fine while the card it links to says
+ * it is blocked is the same two-answers failure the attention digest is built to
+ * avoid, only worse, because one of the answers arrives by mail.
+ *
+ * Pure and clock-injected: `now` is a parameter, so a projection is testable
+ * and a server evaluating at 07:00 and a browser rendering at noon differ only
+ * by the argument they passed.
+ */
+
+/**
+ * Worst first.
+ *
+ *  - `blocked` — the proxy is rejecting its calls right now, either because an
+ *    admin disabled it or because it is budgeted at zero dollars. Two different
+ *    causes, one observable effect, so they share a state and carry a reason.
+ *  - `over` — past its hard cap. A proxy can bill past a cap on in-flight
+ *    requests, so this is reachable without `blocked` being set.
+ *  - `soft` — past the alert threshold its owner set, still under the cap. The
+ *    last state anybody can act on before calls start failing.
+ *  - `warn` — no soft budget configured, but far enough through the cap to say
+ *    so. Derived, not reported — a stand-in for the threshold nobody set.
+ *  - `ok` — capped and comfortably under.
+ *  - `uncapped` — no hard cap at all. Not a good state and not a bad one: on a
+ *    corporate gateway the biggest workload is usually the one nobody dares cap.
+ */
+export type GatewayBudgetState = 'blocked' | 'over' | 'soft' | 'warn' | 'ok' | 'uncapped';
+
+/** Why a `blocked` row is blocked. Null on every other state. */
+export type GatewayBudgetBlockReason = 'disabled' | 'zero-cap';
+
+export interface GatewayBudgetAssessmentOptions {
+  /**
+   * Share of the cap at which a row with no soft budget is called out anyway.
+   *
+   * A derived threshold is weaker evidence than a configured one — the owner
+   * said nothing about 80% — so it gets its own state rather than being folded
+   * into `soft`, and both readers word it differently.
+   */
+  warnAt: number;
+  /**
+   * How far into a period the pace projection starts answering.
+   *
+   * `spend ÷ elapsed` is a ratio of two small numbers early on and it swings
+   * wildly: one batch job on the first morning of a month projects thirty times
+   * itself. A sixth of the period is roughly where a single day stops dominating
+   * a monthly counter.
+   */
+  minElapsed: number;
+}
+
+export const DEFAULT_BUDGET_ASSESSMENT_OPTIONS: GatewayBudgetAssessmentOptions = {
+  warnAt: 0.8,
+  minElapsed: 1 / 6,
+};
+
+/** Everything derivable about one governed object from its own row plus a clock. */
+export interface GatewayBudgetAssessment {
+  state: GatewayBudgetState;
+  blockReason: GatewayBudgetBlockReason | null;
+  /** Share of the hard cap consumed, 0–100 and above 100 on overrun. Null when uncapped. */
+  utilization: number | null;
+  /** Dollars left before the cap; negative when overrun. Null when uncapped. */
+  remaining: number | null;
+  /** Where the soft budget sits on the cap's scale, 0–100. Null when unset or uncapped. */
+  softMark: number | null;
+  /** ISO instant the period in flight began — `resetAt` less one duration. */
+  periodStart: string | null;
+  /** Fraction of the period elapsed at `now`, 0–1. Null when the period is unknown. */
+  periodElapsed: number | null;
+  /**
+   * What this period ends at if the current pace holds — `spend ÷ elapsed`.
+   *
+   * Deliberately linear, deliberately null early in a period, and null for a row
+   * with no period at all — which is not a gap in the maths but the fact that a
+   * counter that never resets has no period to project to the end of.
+   *
+   * Also null for every row whose counter the proxy does not reset, however
+   * clearly its budget states a period — see `spendIsCumulative`.
+   */
+  projectedSpend: number | null;
+  /** Projected past the cap while not yet over it — the actionable one. */
+  projectedOverrun: boolean;
+  /** Either limit set. A key with no budget but a TPM ceiling is still governed. */
+  rateLimited: boolean;
+  /**
+   * The counter is spend since the object was created, not spend this period.
+   *
+   * True for the `tag` scope and nothing else, and it is a statement about
+   * LiteLLM rather than about this row (BerriAI/litellm#27481). `utilization` is
+   * *more* meaningful here than elsewhere — it is the exact comparison the proxy
+   * enforces — while `projectedSpend` is withheld entirely, because dividing a
+   * lifetime counter by a fraction of one period is not a slow forecast, it is a
+   * wrong one.
+   */
+  spendIsCumulative: boolean;
+}
+
+function classifyBudget(
+  budget: Readonly<GatewayBudget>,
+  utilization: number | null,
+  options: GatewayBudgetAssessmentOptions,
+): { state: GatewayBudgetState; blockReason: GatewayBudgetBlockReason | null } {
+  // Both block states are checked before anything else because they describe
+  // what is happening to calls *now*, which outranks any percentage. A key
+  // budgeted at zero is not "0% of its budget used" — it is closed.
+  if (budget.blocked) return { state: 'blocked', blockReason: 'disabled' };
+  if (budget.maxBudget === 0) return { state: 'blocked', blockReason: 'zero-cap' };
+  if (budget.maxBudget === null || utilization === null) {
+    return { state: 'uncapped', blockReason: null };
+  }
+  if (utilization >= 100) return { state: 'over', blockReason: null };
+  if (budget.softBudget !== null && budget.spend >= budget.softBudget) {
+    return { state: 'soft', blockReason: null };
+  }
+  if (utilization >= options.warnAt * 100) return { state: 'warn', blockReason: null };
+  return { state: 'ok', blockReason: null };
+}
+
+/**
+ * How far through its period a budget is, 0–1, or null when that is unknowable.
+ *
+ * Needs both ends: `resetAt` from the proxy and a parseable duration to walk
+ * back from it. A counter with no period has no elapsed fraction — it is not 0%
+ * through a period, it is outside the concept.
+ */
+function elapsedFraction(
+  budget: Readonly<GatewayBudget>,
+  periodStart: string | null,
+  now: Date,
+): number | null {
+  if (periodStart === null || budget.resetAt === null) return null;
+  const start = new Date(periodStart).getTime();
+  const end = new Date(budget.resetAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return Math.min(1, Math.max(0, (now.getTime() - start) / (end - start)));
+}
+
+/** Classify one governed object and project its period. Pure; `now` decides the pace only. */
+export function assessBudget(
+  budget: Readonly<GatewayBudget>,
+  now: Date,
+  options: GatewayBudgetAssessmentOptions = DEFAULT_BUDGET_ASSESSMENT_OPTIONS,
+): GatewayBudgetAssessment {
+  const utilization = budgetUtilization(budget);
+  const { state, blockReason } = classifyBudget(budget, utilization, options);
+  const periodStart = budgetPeriodStart(budget);
+  const periodElapsed = elapsedFraction(budget, periodStart, now);
+  const spendIsCumulative = !budgetCounterResets(budget.scope);
+
+  // The period is still reported — the cap's window is real and "resets in four
+  // days" is true — but the pace is not, because the numerator does not belong
+  // to the denominator on a scope whose counter never went back to zero.
+  const projectedSpend =
+    !spendIsCumulative && periodElapsed !== null && periodElapsed >= options.minElapsed
+      ? budget.spend / periodElapsed
+      : null;
+
+  return {
+    state,
+    blockReason,
+    utilization,
+    remaining: budgetRemaining(budget),
+    softMark:
+      budget.softBudget === null || budget.maxBudget === null || budget.maxBudget <= 0
+        ? null
+        : Math.min(100, (budget.softBudget / budget.maxBudget) * 100),
+    periodStart,
+    periodElapsed,
+    projectedSpend,
+    projectedOverrun:
+      projectedSpend !== null &&
+      budget.maxBudget !== null &&
+      budget.maxBudget > 0 &&
+      state !== 'over' &&
+      state !== 'blocked' &&
+      projectedSpend > budget.maxBudget,
+    rateLimited: budget.tpmLimit !== null || budget.rpmLimit !== null,
+    spendIsCumulative,
+  };
+}
+
+/**
+ * ─── Governance findings that can leave the page ─────────────────────────────
+ *
+ * The attention digest on the gateway page collects findings from six sources,
+ * five of which are derived in the browser from the usage payload. These four
+ * are the subset the *server* can reach on its own, because governance is a
+ * table rather than a derivation: after every full sync the API can assess the
+ * same snapshot the card will, and hand what it finds to something outside the
+ * dashboard.
+ *
+ * The kinds and their severities are shared with the page's digest rather than
+ * re-declared, so a mailed alert and the card it names cannot disagree about how
+ * urgent the same state is.
+ */
+export const GATEWAY_BUDGET_ALERT_KINDS = [
+  'budget-blocked',
+  'budget-over',
+  'budget-soft',
+  'budget-pacing',
+] as const;
+export type GatewayBudgetAlertKind = (typeof GATEWAY_BUDGET_ALERT_KINDS)[number];
+
+/**
+ * Editorial, not a second test: `critical` is calls already being rejected or
+ * money already past a line somebody drew, `warning` is a decision somebody owes.
+ */
+export const GATEWAY_BUDGET_ALERT_SEVERITY: Record<
+  GatewayBudgetAlertKind,
+  'critical' | 'warning'
+> = {
+  'budget-blocked': 'critical',
+  'budget-over': 'critical',
+  'budget-soft': 'warning',
+  'budget-pacing': 'warning',
+};
+
+/**
+ * One governance finding, with the numbers that justify it.
+ *
+ * `fingerprint` is the identity of the *episode*, not of the reading: the same
+ * key still over the same cap tomorrow is the same finding and must not be sent
+ * again. It deliberately excludes every number, so a counter climbing from 104%
+ * to 137% does not re-alert — while a key crossing from `soft` to `over` does,
+ * because the kind changed.
+ */
+export interface GatewayBudgetAlert {
+  kind: GatewayBudgetAlertKind;
+  severity: 'critical' | 'warning';
+  scope: GatewayBudgetScope;
+  key: string;
+  label: string | null;
+  fingerprint: string;
+  state: GatewayBudgetState;
+  blockReason: GatewayBudgetBlockReason | null;
+  spend: number;
+  maxBudget: number | null;
+  utilization: number | null;
+  projectedSpend: number | null;
+  spendIsCumulative: boolean;
+}
+
+export function budgetAlertFingerprint(
+  kind: GatewayBudgetAlertKind,
+  scope: GatewayBudgetScope,
+  key: string,
+): string {
+  return `${kind}:${scope}:${key}`;
+}
+
+const ALERT_KIND_ORDER: Record<GatewayBudgetAlertKind, number> = {
+  'budget-blocked': 0,
+  'budget-over': 1,
+  'budget-soft': 2,
+  'budget-pacing': 3,
+};
+
+/**
+ * The governance findings a budget snapshot carries, worst first.
+ *
+ * At most one *state* finding per object — the states are ordered and a row is
+ * in exactly one of them — plus a pace finding, which is a different claim about
+ * the same row ("not over yet, but heading there") and is deliberately kept
+ * beside a `soft` finding rather than folded into it. `warn`, `ok` and
+ * `uncapped` produce nothing: a derived threshold nobody configured is worth a
+ * row on a card and is not worth waking somebody, and an uncapped key is a
+ * standing decision rather than an event.
+ */
+export function deriveBudgetAlerts(
+  budgets: readonly GatewayBudget[],
+  now: Date,
+  options: GatewayBudgetAssessmentOptions = DEFAULT_BUDGET_ASSESSMENT_OPTIONS,
+): GatewayBudgetAlert[] {
+  const alerts: GatewayBudgetAlert[] = [];
+
+  for (const budget of budgets) {
+    const assessment = assessBudget(budget, now, options);
+    const kinds: GatewayBudgetAlertKind[] = [];
+    if (assessment.state === 'blocked') kinds.push('budget-blocked');
+    else if (assessment.state === 'over') kinds.push('budget-over');
+    else if (assessment.state === 'soft') kinds.push('budget-soft');
+    if (assessment.projectedOverrun) kinds.push('budget-pacing');
+
+    for (const kind of kinds) {
+      alerts.push({
+        kind,
+        severity: GATEWAY_BUDGET_ALERT_SEVERITY[kind],
+        scope: budget.scope,
+        key: budget.key,
+        label: budget.label,
+        fingerprint: budgetAlertFingerprint(kind, budget.scope, budget.key),
+        state: assessment.state,
+        blockReason: assessment.blockReason,
+        spend: budget.spend,
+        maxBudget: budget.maxBudget,
+        utilization: assessment.utilization,
+        projectedSpend: assessment.projectedSpend,
+        spendIsCumulative: assessment.spendIsCumulative,
+      });
+    }
+  }
+
+  alerts.sort((a, b) => {
+    if (a.kind !== b.kind) return ALERT_KIND_ORDER[a.kind] - ALERT_KIND_ORDER[b.kind];
+    // Within a kind, by how far past the line — uncapped rows cannot appear here
+    // except as `blocked`, which has no percentage, so those fall back to spend.
+    const left = a.utilization ?? Number.NEGATIVE_INFINITY;
+    const right = b.utilization ?? Number.NEGATIVE_INFINITY;
+    if (left !== right) return right > left ? 1 : -1;
+    if (a.spend !== b.spend) return b.spend - a.spend;
+    return (a.label ?? a.key).localeCompare(b.label ?? b.key);
+  });
+
+  return alerts;
+}
+
+/**
+ * How one finding reads as a sentence.
+ *
+ * Shared because it is sent *and* displayed: the webhook body carries it so a
+ * chat client that renders nothing but text still says something useful, and the
+ * delivery panel renders the same string. Two copies would let the message
+ * somebody received and the row explaining it drift apart, which is the one
+ * thing an alert channel cannot afford.
+ */
+export function describeBudgetAlert(
+  alert: Pick<
+    GatewayBudgetAlert,
+    'kind' | 'scope' | 'key' | 'label' | 'spend' | 'maxBudget' | 'utilization'
+  >,
+): string {
+  const who = `${GATEWAY_BUDGET_SCOPE_LABELS[alert.scope]} ${alert.label ?? alert.key}`;
+  const usd = (value: number): string => `$${value.toFixed(2)}`;
+  const share = alert.utilization === null ? null : `${alert.utilization.toFixed(1)}%`;
+
+  switch (alert.kind) {
+    case 'budget-blocked':
+      return `${who} is blocked — the proxy is rejecting its calls`;
+    case 'budget-over':
+      return `${who} is over its budget: ${usd(alert.spend)} of ${
+        alert.maxBudget === null ? 'no cap' : usd(alert.maxBudget)
+      }${share === null ? '' : ` (${share})`}`;
+    case 'budget-soft':
+      return `${who} is past its soft budget: ${usd(alert.spend)}${
+        share === null ? '' : ` (${share} of cap)`
+      }`;
+    case 'budget-pacing':
+      return `${who} is pacing past its cap${
+        alert.maxBudget === null ? '' : ` of ${usd(alert.maxBudget)}`
+      } before the period ends`;
+  }
+}
+
+/**
+ * ─── Notification records ────────────────────────────────────────────────────
+ *
+ * What was found, when it was first found, and whether it left the building.
+ *
+ * The table behind this is the de-duplication story: an alert is delivered once
+ * per *episode*, and an episode is bounded by the finding disappearing. Three
+ * rules fall out of that, and they are what keep a nightly evaluation from
+ * becoming a nightly mailing:
+ *
+ *  - **A finding still true tomorrow is not a new alert.** Only `lastSeenAt`
+ *    moves. This is why the fingerprint carries no numbers.
+ *  - **A resolution is recorded, not delivered.** `clearedAt` is what makes the
+ *    next appearance a new episode; sending "the key is fine again" is a
+ *    different product decision and this one deliberately does not make it.
+ *  - **An undelivered finding stays undelivered.** A failed webhook, or no
+ *    webhook configured at all, leaves `deliveredAt` null, so the next sync
+ *    retries it. That is the whole retry policy — there is no queue, because the
+ *    sync is already a schedule.
+ */
+export interface GatewayNotification {
+  fingerprint: string;
+  kind: GatewayBudgetAlertKind;
+  severity: 'critical' | 'warning';
+  scope: GatewayBudgetScope;
+  key: string;
+  label: string | null;
+  /** The state as of the most recent evaluation, with the numbers behind it. */
+  state: GatewayBudgetState;
+  spend: number;
+  maxBudget: number | null;
+  utilization: number | null;
+  /** ISO instant this episode began — not the first time the object was seen. */
+  firstSeenAt: string;
+  /** ISO instant the finding was last still true. */
+  lastSeenAt: string;
+  /** ISO instant it stopped being true; null while it is open. */
+  clearedAt: string | null;
+  /** ISO instant it was accepted by the delivery target; null while pending. */
+  deliveredAt: string | null;
+  /** How many delivery attempts this episode has cost. */
+  deliveryAttempts: number;
+  /** Why the last attempt failed. Null when it succeeded or was never tried. */
+  deliveryError: string | null;
+}
+
+/** Everything `GET /api/gateway/notifications` returns. */
+export interface GatewayNotifications {
+  notifications: GatewayNotification[];
+  /** A delivery target is configured — without one, findings accrue as pending. */
+  deliveryConfigured: boolean;
+  /** Open findings, i.e. `clearedAt === null`. */
+  open: number;
+  /** Open and not yet delivered — what the next sync will try to send. */
+  pending: number;
+  /**
+   * ISO instant governance was last evaluated — the finish of the last
+   * successful full sync, since that is what runs the evaluation. Taken from the
+   * job rather than from these rows so "nothing is open" and "nothing has ever
+   * run" stay distinguishable, exactly as `recordingSince` does for history.
+   */
+  evaluatedAt: string | null;
+}
+
+/**
  * ─── Budget history ──────────────────────────────────────────────────────────
  *
  * `gateway_budget` is current state and nothing else: every sync replaces it,

@@ -23,6 +23,7 @@ import type {
 } from '../gateway/index.js';
 import { moduleLogger } from '../log.js';
 import { sealClosedMonths } from './gateway-seal.js';
+import { notifyGatewayFindings } from './gateway-notify.js';
 import { startJob } from './refresh.js';
 
 const log = moduleLogger('services.gateway-sync');
@@ -287,6 +288,29 @@ async function sealNewlyClosedMonths(ranged: boolean): Promise<void> {
 }
 
 /**
+ * Assess the governance snapshot that has just landed and send what is new.
+ *
+ * Skipped by a backfill for the same reason the budget fetch is: a ranged sync
+ * does not read governance at all, so the snapshot it would be evaluating is
+ * whatever the last full run left, and re-evaluating it would only risk closing
+ * and reopening episodes on a schedule nobody chose.
+ *
+ * Never fails the sync. The usage has landed; an alert that could not be sent
+ * tonight is still pending tomorrow, which is exactly the retry policy.
+ */
+async function notifyGovernanceFindings(ranged: boolean): Promise<void> {
+  if (ranged) return;
+  try {
+    const result = await notifyGatewayFindings();
+    if (result.opened > 0 || result.cleared > 0 || result.delivered > 0) {
+      log.info({ dash: result }, 'gateway governance findings evaluated');
+    }
+  } catch (error) {
+    log.error({ err: error }, 'evaluating gateway governance failed — usage sync unaffected');
+  }
+}
+
+/**
  * Starts a gateway sync and returns the job to poll — single-flight per kind,
  * concurrent with every other sync. The whole window is fetched before
  * anything is written, so a mid-fetch failure fails the job and leaves the
@@ -331,6 +355,7 @@ export async function startGatewaySync(
       // would make the history disagree with the snapshot it came from.
       await persist(snapshot, budgets, models, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
+      await notifyGovernanceFindings(ranged);
       return snapshot.dates.length;
     },
   });

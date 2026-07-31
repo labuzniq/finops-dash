@@ -6,6 +6,7 @@ import { useLatestJob } from '../../hooks/useCopilotData.js';
 import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { useGatewayStatus } from '../../hooks/useGatewayData.js';
 import { useTelemetryFreshness } from '../../hooks/useTelemetry.js';
+import { GatewayAlertPanel } from './GatewayAlertPanel.js';
 import { GatewayProbePanel } from './GatewayProbePanel.js';
 import styles from './DataSourcesPage.module.css';
 
@@ -286,6 +287,7 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
           }
         />
         <GatewayProbePanel enabled={gatewayConfigured} />
+        <GatewayAlertPanel enabled={gatewayConfigured} />
       </ProviderGroup>
 
       <ProviderGroup label="AZURE COST MANAGEMENT">

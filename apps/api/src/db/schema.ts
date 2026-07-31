@@ -412,6 +412,67 @@ export const gatewayBudgetHistory = pgTable(
 );
 
 /**
+ * One governance finding per *episode* — what was found, and whether it left
+ * the building.
+ *
+ * Every other gateway finding on the dashboard is derived in the browser from
+ * the usage payload and exists only while somebody is looking at the page.
+ * Governance is the exception: it is a table, so the API can assess it after
+ * every full sync and hand what it finds to something outside the dashboard.
+ * This is the de-duplication story that makes a nightly evaluation something
+ * other than a nightly mailing.
+ *
+ * Keyed on the finding's fingerprint (`kind:scope:key`) and on nothing
+ * numeric, which is the whole design: a key still over the same cap tomorrow is
+ * the *same* finding and only moves `last_seen_at`, while one crossing from
+ * `soft` to `over` changes kind and is a new row. `cleared_at` closes an
+ * episode; the next time the same finding appears it starts a new one and
+ * delivers again, which is why the row is reset rather than deleted — the
+ * previous episode's dates are what say "this key has been over its cap three
+ * times this quarter".
+ *
+ * `delivered_at` is the retry policy in one column. Null means the alert has not
+ * been accepted by a delivery target, whether because the attempt failed or
+ * because none is configured, and the next sync tries again. There is no queue,
+ * because the sync is already a schedule.
+ *
+ * Money is nano-dollars like every other table here, and `max_budget_nano`
+ * keeps the snapshot's null-vs-zero rule: null is uncapped, 0 rejects everything.
+ */
+export const gatewayNotification = pgTable(
+  'gateway_notification',
+  {
+    /** `kind:scope:key` — the identity of the episode, carrying no numbers. */
+    fingerprint: varchar('fingerprint', { length: 260 }).primaryKey(),
+    /** See GATEWAY_BUDGET_ALERT_KINDS in @dash/shared. */
+    kind: varchar('kind', { length: 40 }).notNull(),
+    severity: varchar('severity', { length: 20 }).notNull(),
+    scope: varchar('scope', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    /** The governed object's state at the most recent evaluation. */
+    state: varchar('state', { length: 20 }).notNull(),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    /** When this episode began — not when the object was first seen. */
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The last evaluation at which the finding was still true. */
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When it stopped being true. Null while open. */
+    clearedAt: timestamp('cleared_at', { withTimezone: true }),
+    /** When a delivery target accepted it. Null while pending — the retry flag. */
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    deliveryAttempts: integer('delivery_attempts').notNull().default(0),
+    deliveryError: text('delivery_error'),
+  },
+  (table) => [
+    // The panel reads open findings newest-first; the sync reads the pending
+    // ones. Both start from "is this cleared".
+    index('gateway_notification_cleared_idx').on(table.clearedAt, table.lastSeenAt),
+  ],
+);
+
+/**
  * The proxy's configured price list — one row per routable public model name.
  *
  * The third kind of gateway fact and the second snapshot table: `gateway_daily`
@@ -686,6 +747,8 @@ export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
 export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
 export type GatewayBudgetHistoryRow = typeof gatewayBudgetHistory.$inferSelect;
 export type GatewayBudgetHistoryInsert = typeof gatewayBudgetHistory.$inferInsert;
+export type GatewayNotificationRow = typeof gatewayNotification.$inferSelect;
+export type GatewayNotificationInsert = typeof gatewayNotification.$inferInsert;
 export type GatewayModelRow = typeof gatewayModel.$inferSelect;
 export type GatewayModelInsert = typeof gatewayModel.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;

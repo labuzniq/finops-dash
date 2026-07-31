@@ -9,6 +9,7 @@ import {
   listGatewaySeals,
   sealGatewayMonth,
 } from '../services/gateway-seal.js';
+import { getGatewayNotifications } from '../services/gateway-notify.js';
 import {
   getGatewayBudgetHistory,
   getGatewayBudgets,
@@ -42,6 +43,11 @@ const SEAL_ERROR_STATUS = {
 
 const historyQuery = z.object({
   days: z.coerce.number().int().min(1).max(365).optional().default(60),
+});
+
+/** How far back closed episodes are still worth reporting. Open ones are always returned. */
+const notificationsQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).optional().default(30),
 });
 
 const rangeQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q.from <= q.to, {
@@ -118,6 +124,23 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
     }
     return getGatewayBudgetHistory(parsed.data.days);
+  });
+
+  /**
+   * Governance findings and whether they left the building.
+   *
+   * The only gateway read about the dashboard's *own* behaviour rather than the
+   * proxy's: every open finding, the ones that closed inside the window, and
+   * whether a delivery target is configured at all. A closed episode is the
+   * reason this is a list — one that opened and cleared between two visits is
+   * invisible in the budget snapshot, which has already moved on.
+   */
+  app.get('/api/gateway/notifications', async (request, reply) => {
+    const parsed = notificationsQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewayNotifications(parsed.data.days);
   });
 
   /**

@@ -105,6 +105,26 @@ const schema = z
       (value) => (value === '' ? undefined : value),
       z.string().optional(),
     ),
+    /**
+     * Where governance findings go when they leave the dashboard.
+     *
+     * A single URL that accepts `POST` with a JSON body — a Slack or Teams
+     * incoming webhook, or anything else that will take one. Optional and off by
+     * default: with nothing set, every sync still *evaluates* governance and
+     * records what it found, and those findings sit pending until a target
+     * exists. That is deliberate, and it is why this is a URL rather than a
+     * feature flag — turning delivery on later is one variable, and the open
+     * findings go out on the next sync rather than being lost.
+     */
+    GATEWAY_ALERT_WEBHOOK_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().url().optional(),
+    ),
+    /** Sent as `Authorization: Bearer …` when the target wants one. */
+    GATEWAY_ALERT_WEBHOOK_TOKEN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
   })
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',

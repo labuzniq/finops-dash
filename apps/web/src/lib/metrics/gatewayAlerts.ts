@@ -1,4 +1,8 @@
-import { GATEWAY_BUDGET_SCOPE_LABELS, GATEWAY_DIMENSION_LABELS } from '@dash/shared';
+import {
+  GATEWAY_BUDGET_ALERT_SEVERITY,
+  GATEWAY_BUDGET_SCOPE_LABELS,
+  GATEWAY_DIMENSION_LABELS,
+} from '@dash/shared';
 import type { GatewayCoverage, GatewayDimension } from '@dash/shared';
 import { compactCount, count, isoDateLabel, percent, usd } from '../format.js';
 import type { SpendAnomaly } from './gatewayAnomaly.js';
@@ -94,10 +98,11 @@ export const KIND_ORDER: readonly AlertKind[] = [
 ];
 
 export const KIND_SEVERITY: Record<AlertKind, AlertSeverity> = {
-  'budget-blocked': 'critical',
-  'budget-over': 'critical',
-  'budget-soft': 'warning',
-  'budget-pacing': 'warning',
+  // The four governance kinds take their severity from `@dash/shared`, because
+  // the API derives the same four from the same snapshot after every sync and
+  // delivers them off the page. A mailed alert and the card it names must not
+  // disagree about how urgent the same state is.
+  ...GATEWAY_BUDGET_ALERT_SEVERITY,
   'budget-crossed': 'warning',
   'spend-anomaly': 'warning',
   'reliability-elevated': 'warning',

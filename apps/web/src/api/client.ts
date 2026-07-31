@@ -6,6 +6,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayModels,
+  GatewayNotifications,
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
@@ -249,6 +250,14 @@ export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
  */
 export function fetchGatewayBudgetHistory(days: number): Promise<GatewayBudgetHistory> {
   return request<GatewayBudgetHistory>(`/gateway/budgets/history?days=${days}`);
+}
+
+/**
+ * Governance findings and their delivery state — the one gateway read about the
+ * dashboard's own behaviour rather than the proxy's.
+ */
+export function fetchGatewayNotifications(days: number): Promise<GatewayNotifications> {
+  return request<GatewayNotifications>(`/gateway/notifications?days=${days}`);
 }
 
 /**

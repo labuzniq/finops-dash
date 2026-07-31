@@ -5,6 +5,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayModels,
+  GatewayNotifications,
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
@@ -15,6 +16,7 @@ import {
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayModels,
+  fetchGatewayNotifications,
   fetchGatewayProbe,
   fetchGatewaySealHistory,
   fetchGatewaySeals,
@@ -148,6 +150,22 @@ export function useGatewayModels(enabled: boolean) {
   return useQuery<GatewayModels>({
     queryKey: ['gateway', 'models'],
     queryFn: fetchGatewayModels,
+    enabled,
+  });
+}
+
+/**
+ * Governance findings and their delivery state.
+ *
+ * Cached under the day count on the `gateway` prefix like every other
+ * governance read, and invalidated by a sync for a stronger reason than the
+ * others: the sync is what *evaluates* it. A finding that opened tonight did so
+ * inside the same job the button started.
+ */
+export function useGatewayNotifications(days: number, enabled: boolean) {
+  return useQuery<GatewayNotifications>({
+    queryKey: ['gateway', 'notifications', days],
+    queryFn: () => fetchGatewayNotifications(days),
     enabled,
   });
 }
