@@ -529,6 +529,20 @@ sibling trends compare shares while this compares a rate. It is withheld under
 `LATENCY_TREND_MIN_DAYS` (6), and it is evidence about the reading rather than a verdict about the
 backends: the average is per request, so a classifier answering in one token drags it without anything
 having got slower.
+`lib/metrics/gatewayLatencyHistory.ts` and `GatewayLatencyHistoryCard` render it directly under the
+live card, and like the three other history views they add no rule about the gateway — the shared
+summariser is the whole statement — only three about the drawing: the spine is clamped forward to
+`recordingSince` (there is no backfill and cannot be, since the sweep asks about one settled night), a
+night with no reading is a **hole** in every strip with the gateway strip drawn at height for the
+night's median and *opacity* for how many pairs reported it, and the third cell state is not "clean"
+as it is on the two sibling history cards — there is no clean reading here, so a cell that carries one
+is drawn against the **pair's own** median (the row's ratio column already answers "slow for the
+gateway"; the strip is the only place that can answer "slow for itself"). A recording shorter than
+`LATENCY_TREND_MIN_DAYS` says so above the numbers, and it is the card's *only* silence: with no
+denominator there is no badge to explain. No finding travels from it either, for the exception
+history's reason — a standing fault names the deployment tonight's snapshot is already reporting, and
+a rise in a per-token rate can be a classifier answering in one token rather than a backend that got
+slower.
 `GET /api/gateway/slow-responses?from=&to=` is the fourth live read and the last thing the gateway will
 say about a request that did not fail: `/model/metrics/slow_responses` over the same
 `LiteLLM_SpendLogs`, counting the calls whose wall clock reached the proxy's own `alerting_threshold`

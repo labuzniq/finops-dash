@@ -10,6 +10,7 @@ import type {
   GatewayExceptions,
   GatewayHealth,
   GatewayLatency,
+  GatewayLatencyHistory,
   GatewayModels,
   GatewayNotifications,
   GatewayProbe,
@@ -408,6 +409,25 @@ export function fetchGatewayExceptionHistory(days: number): Promise<GatewayExcep
 export function fetchGatewayLatency(from: string, to: string): Promise<GatewayLatency> {
   const query = new URLSearchParams({ from, to });
   return request<GatewayLatency>(`/gateway/latency?${query.toString()}`);
+}
+
+/**
+ * The nightly latency sweeps kept — our own recording, not a second read of the
+ * proxy.
+ *
+ * The third of the four live reads to have a history, and the first on a licence
+ * that is not arithmetic: the hang and exception tables accumulate counts of
+ * disjoint rows, while these are readings that may be kept and compared and
+ * never pooled — the same licence the deployment-health recording runs on. Read
+ * on mount unlike the live sweep above it, because it is a table of ours rather
+ * than a round trip per alias into the proxy's request log.
+ *
+ * Its window ends *yesterday*, like the hang and exception histories: the sweep
+ * covers the day usage has settled for, so today can never carry a reading and a
+ * window ending on it would report a gap on the newest night forever.
+ */
+export function fetchGatewayLatencyHistory(days: number): Promise<GatewayLatencyHistory> {
+  return request<GatewayLatencyHistory>(`/gateway/latency/history?days=${days}`);
 }
 
 /**

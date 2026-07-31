@@ -59,6 +59,11 @@ import {
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveGatewayLatency, latencyWindow } from '../../lib/metrics/gatewayLatency.js';
 import {
+  LATENCY_HISTORY_DAYS,
+  deriveLatencyHistory,
+  hasLatencyHistory,
+} from '../../lib/metrics/gatewayLatencyHistory.js';
+import {
   deriveGatewaySlowResponses,
   slowResponseWindow,
 } from '../../lib/metrics/gatewaySlowResponses.js';
@@ -86,6 +91,7 @@ import {
   useGatewayExceptions,
   useGatewayHealth,
   useGatewayLatency,
+  useGatewayLatencyHistory,
   useGatewaySlowResponseHistory,
   useGatewaySlowResponses,
   useGatewayModels,
@@ -121,6 +127,7 @@ import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayExceptionCard } from './GatewayExceptionCard.js';
 import { GatewayExceptionHistoryCard } from './GatewayExceptionHistoryCard.js';
 import { GatewayLatencyCard } from './GatewayLatencyCard.js';
+import { GatewayLatencyHistoryCard } from './GatewayLatencyHistoryCard.js';
 import { GatewaySlowResponseCard } from './GatewaySlowResponseCard.js';
 import { GatewaySlowResponseHistoryCard } from './GatewaySlowResponseHistoryCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
@@ -650,6 +657,24 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [latencyQuery.data, healthQuery.data],
   );
 
+  // The same sweeps kept, and the third of the four live reads to have a
+  // history. Its licence is the narrower one: the hang and exception tables
+  // accumulate counts of disjoint rows, while these are readings that may be
+  // kept and compared and never pooled — which is enough to answer the one
+  // question a windowed route cannot be asked, whether an endpoint has been
+  // reading slow all week or only tonight. Its own window rather than the range
+  // picker's, like the three other history cards, and it runs on mount because
+  // it is a table of ours. The health snapshot rides along for the same
+  // four-state deployment join the live card makes.
+  const latencyHistoryQuery = useGatewayLatencyHistory(LATENCY_HISTORY_DAYS, configured);
+  const latencyHistory = useMemo(
+    () =>
+      deriveLatencyHistory(latencyHistoryQuery.data ?? null, {
+        health: healthQuery.data ?? null,
+      }),
+    [latencyHistoryQuery.data, healthQuery.data],
+  );
+
   // How many of the calls that did not fail hung anyway — the page's fourth and
   // last live read, and the only one that measures wall clock. Same window rule
   // and same press-to-read rule as the two sweeps above it; the two parameters
@@ -1074,6 +1099,20 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               error={latencyQuery.error instanceof Error ? latencyQuery.error : null}
               enabled={configured && latencyRead !== null}
             />
+          </div>
+
+          {/*
+            Directly under the live read, because it is the same sweep with the
+            question a single window cannot answer asked of it: a rate is only
+            ever readable next to the rate it usually is. It stands itself down
+            until a night has been filed — there is no backfill for this table,
+            so an empty one means the recording has not started rather than that
+            nothing has ever been slow.
+          */}
+          <div id="gateway-latency-history">
+            {hasLatencyHistory(latencyHistory) && (
+              <GatewayLatencyHistoryCard view={latencyHistory} />
+            )}
           </div>
 
           {/*

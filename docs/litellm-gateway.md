@@ -1471,6 +1471,7 @@ What it shows, and why each one is there:
 | Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
 | What broke over time | The same nightly sweeps kept, and the second of the four live reads to have a history — legal here because error-log rows are disjoint, so counts add across nights. It needs one thing no other history here does: a **receipt** per night the sweep ran, since this route answers rows only where something faulted and a clean gateway files the same nothing a refused sweep does. A night with a receipt and no rows is **clean**, a night with neither is **unread**, and the strips draw the two differently. Every share is of what was *recorded* — there is no denominator, so no rate, no badge and no significance test anywhere on the card — and the one statement it adds is a **mix shift** in percentage points, half-over-half and pooled: a class taking a bigger slice of the same errors is a change in what is breaking, where a rise in the count is indistinguishable from a rise in traffic. Withheld under `EXCEPTION_TREND_MIN_DAYS` swept nights, because "nothing moved" would be a fact about the age of the recording |
 | How slowly the backends answered | The page's only card about **time**, read live on a button press, and the only one whose unit has to be spelled out: seconds per completion token, averaged per request, so nothing on it is a request duration, a percentile or an SLA figure — the one re-reading is its reciprocal, tokens per second. A per-day median across the keys that reported (a median, never a sum: rates do not add) with a thin day drawn dim rather than short, and the deployment keys ranked slowest first with each row's ratio to the gateway median, its fastest and slowest day, and the gate that stopped a badge where one did not land. Every row is joined to tonight's health reading — and because this route keys a row by its `api_base` alone, a base fronting deployments the reading disagrees about reads **mixed** rather than being attributed to either |
+| Latency over time | The same nightly readings kept, and the third of the four live reads to have a history — on a licence neither sibling table needs: nothing here **adds**, since the proxy averaged the request counts away, so these are readings that may be **kept and compared and never pooled**, which is what `gateway_deployment_health_history` already runs on. The window's median rate with a half-over-half **trend as a ratio** (not percentage points — a difference of two rates is a number in seconds-per-token whose size depends on which models the gateway runs), a per-night strip where height is the median and *opacity* is how many endpoints reported it, and a strip per (alias, endpoint) pair with three states (fast, slow **for itself**, **no reading filed**) — never "clean", which this layer has no such thing as. The grain keeps the alias, because two aliases behind one endpoint are two averages over two workloads with no weight to combine them. Every claim is the shared roll-up's, the badge is the live card's own ratio and days-observed gate, and a recording too short to split says so instead of drawing a flat direction |
 | How many calls hung | The last of the four questions about one window of traffic, read live on a button press: how many requests ran past **the proxy's own alerting threshold** — a number the response does not carry, so no figure on the card carries a duration and two proxies' counts are not comparable. Every share is taken against the route's **own** denominator (request-log rows, cache hits excluded upstream), with the ledger's count for the same days beside it as a disagreement between two tables and never as a divisor. Endpoints rank by hangs, each with its rate, its ratio to the gateway, the aliases that routed to it, the gate that stopped a badge where one did not land, and tonight's health verdict — except the `api_base`-less bucket, which takes **no** verdict: it is not an endpoint, so there is nothing to look it up by |
 | Hangs over time | The same nightly sweeps kept — the only one of the four live reads that has a history, and the only one that may have one, because counts of disjoint request-log rows are the one thing here that adds across nights. The window's pooled hang rate with a **half-over-half trend in percentage points** (pooled, never a mean of nightly shares: the denominators differ by orders of magnitude), a per-night strip where height is the rate and *opacity* is how many endpoints reported it, and a strip per endpoint with three states (clean, hangs, **no sweep filed**). Every claim is the shared roll-up's — the badge is the live card's own two gates over the pooled counts — and a recording too short to split says so instead of drawing a flat direction |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
@@ -1955,7 +1956,7 @@ Thirty decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because twenty-three cards each flagging their own faults means every
+  their findings in one list, because twenty-four cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -2478,6 +2479,47 @@ Thirty decisions worth keeping:
   of its own: a standing fault names the deployment tonight's health reading is
   already reporting, and the only quantity that could carry an alert here — a
   rise in the count — moves with traffic.
+
+- **The latency history is the same sweep asked whether that rate is the usual
+  one.** `lib/metrics/gatewayLatencyHistory.ts` and `GatewayLatencyHistoryCard`
+  read `gateway_latency_daily` through `summarizeLatencyHistory`, directly under
+  the live latency card. It exists for the reason the two sibling histories do —
+  the live route aggregates whatever window it is handed and has no memory, so a
+  reader who presses the button sees 7.3 ms/tok and no way to know whether last
+  week was 4 or 12 — and it is kept on a **narrower licence** than either of
+  them: nothing here adds, so the rows may be compared and never pooled, exactly
+  as the deployment-health recording is.
+
+  Like every other history card it adds **no rule about the gateway**: the shared
+  summary is passed through verbatim (asserted as deep equality in the harness),
+  the badge is the live card's own ratio gated on days observed — there is no
+  significance test, because this payload carries no counts anywhere — and the
+  trend is the shared one. Three rules about the *drawing* are its own.
+
+  **The spine is clamped forward to `recordingSince`,** the three sibling cards'
+  rule for the same reason: there is no backfill for this table and cannot be, so
+  a 60-night window on a four-night recording draws four.
+
+  **A night with no reading is a hole, and the third cell state is not "clean".**
+  There is no clean reading here — only a fast one, a slow one and a night nobody
+  read — so a cell that carries a reading is drawn against the pair's **own**
+  median rather than the gateway's, because the row's ratio column already
+  answers "slow for the gateway" and the strip is the only place that can answer
+  "slow for itself". The gateway strip carries the live card's second channel:
+  height is the night's median, opacity is how many pairs reported it, since a
+  night two of nine endpoints answered has a valid median that describes almost
+  nothing.
+
+  **Under `LATENCY_TREND_MIN_DAYS` observed nights the direction is withheld and
+  the card says which silence it is.** With no badge to explain (this layer has
+  no denominator to be significant against) the withheld trend is the card's only
+  silence, so it is the one that has to be named.
+
+  It **feeds no finding to the digest**, and unlike the live card the reason is
+  not the button: a standing fault names the deployment tonight's health snapshot
+  is already reporting as `down` or `degraded`, and a rise in this number can be
+  a classifier answering in one token rather than a backend that got slower —
+  which is open question 20 and needs a real proxy.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -3477,6 +3519,27 @@ the refusing PTU pool the only badged endpoint, and the worst night one of the
 two the mock plants a regional incident on. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-response-history-view.ts`.
 
+`apps/api/scripts/verify-gateway-latency-history-view.ts` covers what the *page*
+does with the stored readings, and only that: `verify-gateway-latency-history.ts`
+already pins the recording and the shared median rule. Fifty-four checks in two
+halves. The pure half asserts the summary passes through as deep equality; the
+spine clamped forward to `recordingSince` and refusing to stretch backwards past
+the window; the three cell states with the unread night carrying no reading at
+all (`fast, fast, slow, unread`, where the slow cell is measured against the
+pair's own median); the pair grain, where two aliases behind one endpoint stay
+two rows carrying their own readings rather than one row carrying the endpoint
+mean; a night swept twice drawing the later reading and never the mean of the
+two; `tooShort` on both sides of `LATENCY_TREND_MIN_DAYS` and against a sparse
+month-long spine, with the withheld sentence naming which silence it is; both
+badge gates from both sides over a fixture whose five baseline pairs own the
+gateway median, producing three distinct reason sentences; and the health join in
+all four states including `mixed`. The mock half sweeps twelve nights one at a
+time exactly as `readLatency` does, then draws them: every row's median is the
+median of exactly its own drawn cells, every night reports how many pairs and
+aliases produced it, no reading round-trips to zero, and every pair the nightly
+sweeps stored is a pair the same window answered in one call. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-latency-history-view.ts`.
+
 `apps/api/scripts/verify-gateway-exception-history-view.ts` covers what the
 *card* adds over the recording, and only that — `verify-gateway-exception-history.ts`
 already pins the stored sweep and the shared summarizer. 48 checks in two halves.
@@ -3851,12 +3914,13 @@ Governance is now rendered end to end across all four scopes
   answers a window, but a sequence of nightly windows is a series, which is where
   the half-over-half ratio comes from.
 
-  Two things are still not built, and only one of them is a decision anybody can
-  take from here. There is no **view** on the recording yet (the three sibling
-  history cards are the template, and the drawing rules are already forced: a
-  spine clamped forward to `recordingSince`, an unread night as a hole rather
-  than a fast cell, and a withheld trend that says which silence it is). And no
-  finding **travels**: an episode key would be `latency:model:<endpoint>`, and
+  The **view** on the recording now exists too: `Latency over time`
+  (`lib/metrics/gatewayLatencyHistory.ts`) draws the nightly medians under the
+  live card with the three drawing rules the sibling histories forced — a spine
+  clamped forward to `recordingSince`, an unread night as a hole rather than a
+  fast cell, and a withheld trend that says which silence it is. What is still
+  not built is the one thing that is a decision rather than a drawing: no finding
+  **travels**: an episode key would be `latency:model:<endpoint>`, and
   the first question a latency alert raises is the one the stored trend exists to
   answer — whether a corporate gateway's per-token rate is stable enough night to
   night that a change in it is a finding, or whether it moves with the workload
