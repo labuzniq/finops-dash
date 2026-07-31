@@ -1457,6 +1457,7 @@ What it shows, and why each one is there:
 
 | Element | Reads |
 | --- | --- |
+| Section nav | The page's own table of contents, sticky at the top: one chip per section that drew something, in page order, with how many of its cards rendered. It carries no severity and no count of findings — the digest under it is the "look here first" answer, and a second one computed differently would be two answers to one question |
 | Needs attention | Every finding the cards below have already made, in one list at the top: severity, what it is, the numbers the source card carries, and a button that scrolls to it — plus a **Not checked** footer naming the inputs that could not be read. Renders nothing when there is nothing to report *and* nothing unread |
 | KPI row 1 | Gateway spend · requests (with success rate) · tokens (in / out) · blended $/1M tokens |
 | KPI row 2 | Prompt-cache hit rate · cost per request · failed requests |
@@ -2520,6 +2521,55 @@ Thirty decisions worth keeping:
   is already reporting as `down` or `degraded`, and a rise in this number can be
   a classifier answering in one token rather than a backend that got slower —
   which is open question 20 and needs a real proxy.
+
+- **The page is eight named sections with a nav, and the nav is derived rather
+  than written.** Twenty-four cards accumulated one under another, each placed
+  directly beneath the card it argues with, which makes the page readable top to
+  bottom and unusable to somebody arriving with a question. `lib/gatewaySections.ts`
+  is the one statement of the structure — Overview, Governance, Statements,
+  Spend, Operations, Efficiency, Adoption, Requests — and three rules keep it
+  from becoming a second opinion about the gateway.
+
+  **It lists only what rendered.** More than half the cards stand themselves
+  down (no cache activity, no sealed month, no MCP traffic, a recording that has
+  not started), so the nav is derived from the page's own presence map — the
+  identical `has*` predicates the JSX is gated on, written once and read twice.
+  A chip pointing at an empty wrapper is the same failure the anchor comment
+  already names: worse than no chip.
+
+  **It never re-ranks.** Sections come back in page order however busy they are.
+  A nav that floated the section with findings to the front would move under the
+  reader between two visits, and the digest immediately below it already carries
+  "look here first" *with the numbers behind it*.
+
+  **The count beside a section is cards, not findings.** Counting findings would
+  be a second digest computed a second way, which is precisely the two-answers
+  failure `gatewayAlerts.ts` exists to prevent.
+
+  Two orderings changed with it, both because a section forces the question. The
+  **breakdown switcher moved above** reliability, the anomaly attribution and the
+  movers list, since all three read whichever dimension it selects and a control
+  below the things it governs reads as a filter nobody applied; and the **request
+  sample moved last**, where the one card that reads individual calls belongs.
+  The card anchors are the same ids the digest scrolls to, extended to the cards
+  nothing pointed at yet, and the section headings are separate ids so a
+  one-card section lands on the heading that names it rather than mid-card.
+
+`apps/api/scripts/verify-gateway-sections.ts` covers that model, and the half
+worth having is textual rather than pure: the section list and the page are two
+files that must agree on a set of string ids and nothing in the type system
+connects them, so a card renamed on one side typechecks, builds, and renders a
+chip that scrolls nowhere. It asserts every declared anchor appears as an `id=`
+on the page exactly once, every `gateway-*` id on the page is declared, both
+agree on *order*, every anchor carries an entry in the presence map, one heading
+is rendered per section in the declared order, and every anchor the **digest**
+scrolls to is still one of them. The pure half pins the three rules above: the
+declared order survives an arbitrary presence-map key order, a section whose
+every card stood down is dropped rather than listed empty while the rest keep
+their order, a partly-drawn section reports the difference as `hidden`, and an
+anchor nobody declared cannot add itself. Run it with
+`node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-sections.ts`
+(no env needed — it touches no database and no proxy).
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`

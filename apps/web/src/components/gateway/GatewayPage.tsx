@@ -13,6 +13,8 @@ import {
 import type { DateRange, GatewayBudgetScope, GatewayDimension } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
+import { deriveGatewayNav } from '../../lib/gatewaySections.js';
+import type { GatewayNavEntry } from '../../lib/gatewaySections.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
 import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.js';
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
@@ -132,6 +134,7 @@ import { GatewaySlowResponseCard } from './GatewaySlowResponseCard.js';
 import { GatewaySlowResponseHistoryCard } from './GatewaySlowResponseHistoryCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
+import { GatewaySectionHeading, GatewaySectionNav } from './GatewaySectionNav.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
 import styles from './GatewayPage.module.css';
 
@@ -768,6 +771,64 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     ],
   );
 
+  /*
+    What actually rendered, keyed by the same anchors the sections are declared
+    over. Every entry is the identical predicate the JSX below is gated on —
+    written once here and read twice — because a nav computed from anything else
+    is a table of contents that can disagree with the page it indexes.
+  */
+  const nav = useMemo(
+    () =>
+      deriveGatewayNav({
+        'gateway-coverage': true,
+        'gateway-attention': !attention.allClear,
+        'gateway-kpis': true,
+        'gateway-forecast': forecast !== null,
+        'gateway-budgets': true,
+        'gateway-chargeback': true,
+        'gateway-ledger': hasLedger(ledger),
+        'gateway-trends': true,
+        'gateway-anomalies': true,
+        'gateway-breakdown': true,
+        'gateway-movers': compared !== null && movers.length > 0,
+        'gateway-mix': hasMixSignal(mix),
+        'gateway-reliability': true,
+        'gateway-exceptions': true,
+        'gateway-exception-history': hasExceptionHistory(exceptionHistory),
+        'gateway-latency': true,
+        'gateway-latency-history': hasLatencyHistory(latencyHistory),
+        'gateway-slow-responses': true,
+        'gateway-slow-response-history': hasSlowResponseHistory(slowHistory),
+        'gateway-health': health.answered && !health.isEmpty,
+        'gateway-health-history': hasHealthHistory(healthHistory),
+        'gateway-cache': hasCacheActivity(cache),
+        'gateway-catalog': hasCatalog(catalog),
+        'gateway-agents': hasAgentTraffic(agents),
+        'gateway-adoption': hasAdoption(adoption),
+        'gateway-request-log': true,
+      }),
+    [
+      attention.allClear,
+      forecast,
+      ledger,
+      compared,
+      movers.length,
+      mix,
+      exceptionHistory,
+      latencyHistory,
+      slowHistory,
+      health,
+      healthHistory,
+      cache,
+      catalog,
+      agents,
+      adoption,
+    ],
+  );
+
+  const section = (id: string): GatewayNavEntry | undefined =>
+    nav.find((entry) => entry.section.id === id);
+
   const selectedDaily = useMemo(
     () =>
       selectedRow === null
@@ -864,12 +925,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
       {configured && !usageQuery.error && !usageQuery.isPending && hasData && (
         <>
           {/*
-            The anchors the digest scrolls to. Wrapper elements rather than ids
-            on the cards themselves, because a card that stands itself down —
-            the cache card on a gateway with no cache activity — would take its
-            anchor with it, and a jump button pointing at nothing is worse than
-            no button.
+            The anchors the nav and the digest scroll to. Wrapper elements
+            rather than ids on the cards themselves, because a card that stands
+            itself down — the cache card on a gateway with no cache activity —
+            would take its anchor with it, and a jump button pointing at nothing
+            is worse than no button. `lib/gatewaySections.ts` declares the same
+            anchors and the presence map above says which of them drew anything.
           */}
+          <GatewaySectionNav entries={nav} />
+
+          <GatewaySectionHeading entry={section('gateway-section-overview')} />
+
           <div id="gateway-coverage">
             <GatewayCoverageNote
               coverage={coverage}
@@ -878,7 +944,9 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             />
           </div>
 
-          <GatewayAttentionCard digest={attention} />
+          <div id="gateway-attention">
+            <GatewayAttentionCard digest={attention} />
+          </div>
 
           {compared !== null && (
             <div className={styles.compareNote}>
@@ -887,6 +955,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             </div>
           )}
 
+          {/* Both KPI rows are one jump target: they are read together. */}
+          <div id="gateway-kpis">
           <div className={styles.kpiRow}>
             <KpiCard
               kicker={`GATEWAY SPEND · ${rangeDays}d`}
@@ -995,8 +1065,14 @@ export function GatewayPage({ sync }: GatewayPageProps) {
                 : `${percent((totals.failedRequests / totals.requests) * 100)} of all calls`}
             </KpiCard>
           </div>
+          </div>
+          {/* end #gateway-kpis */}
 
-          {forecast !== null && <GatewayForecastCard forecast={forecast} />}
+          <div id="gateway-forecast">
+            {forecast !== null && <GatewayForecastCard forecast={forecast} />}
+          </div>
+
+          <GatewaySectionHeading entry={section('gateway-section-governance')} />
 
           <div id="gateway-budgets">
             <GatewayBudgetCard
@@ -1008,16 +1084,20 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             />
           </div>
 
-          <GatewayChargebackCard
-            statement={statement}
-            months={billMonths}
-            onMonth={setBillMonth}
-            onDimension={setBillDimension}
-            available={billDimensions}
-            seal={activeSeal}
-            history={sealHistoryQuery.data ?? null}
-            loading={billQuery.isPending}
-          />
+          <GatewaySectionHeading entry={section('gateway-section-statements')} />
+
+          <div id="gateway-chargeback">
+            <GatewayChargebackCard
+              statement={statement}
+              months={billMonths}
+              onMonth={setBillMonth}
+              onDimension={setBillDimension}
+              available={billDimensions}
+              seal={activeSeal}
+              history={sealHistoryQuery.data ?? null}
+              loading={billQuery.isPending}
+            />
+          </div>
 
           {/*
             Directly under the statement on purpose: that card bills one month
@@ -1026,15 +1106,28 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             the gateway is new, when what it means is that no month has closed
             with all of its days stored yet.
           */}
-          {hasLedger(ledger) && <GatewayHistoryCard ledger={ledger} />}
-
-
-          <div className={styles.chartRow}>
-            <GatewayTrendCard title="Daily gateway spend" sub={rangeLabel(range)} chart={charts.spend} />
-            <GatewayTrendCard title="Daily tokens" sub="input + output" chart={charts.tokens} />
+          <div id="gateway-ledger">
+            {hasLedger(ledger) && <GatewayHistoryCard ledger={ledger} />}
           </div>
 
-          <GatewayTrendCard title="Daily requests" sub="successes + failures" chart={charts.requests} />
+          <GatewaySectionHeading entry={section('gateway-section-spend')} />
+
+          <div id="gateway-trends">
+            <div className={styles.chartRow}>
+              <GatewayTrendCard
+                title="Daily gateway spend"
+                sub={rangeLabel(range)}
+                chart={charts.spend}
+              />
+              <GatewayTrendCard title="Daily tokens" sub="input + output" chart={charts.tokens} />
+            </div>
+
+            <GatewayTrendCard
+              title="Daily requests"
+              sub="successes + failures"
+              chart={charts.requests}
+            />
+          </div>
 
           <div id="gateway-anomalies">
             <GatewayAnomalyCard
@@ -1045,6 +1138,43 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               attribution={attribution}
             />
           </div>
+
+          {/*
+            The breakdown switcher is above the cards that follow it on purpose:
+            reliability, the anomaly attribution and the movers list all read
+            whichever dimension is selected here, and a control below the things
+            it governs reads as a filter nobody applied.
+          */}
+          <div id="gateway-breakdown">
+            <GatewayBreakdownCard
+              rows={summary.breakdowns[activeDimension]}
+              dimension={activeDimension}
+              available={summary.availableDimensions}
+              onDimension={setDimension}
+              selectedKey={selectedRow?.key ?? null}
+              onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
+            />
+
+            {selectedRow !== null && (
+              <GatewayKeyDetail
+                dimension={activeDimension}
+                row={selectedRow}
+                daily={selectedDaily}
+                rangeLabel={rangeLabel(range)}
+                onClose={() => setSelectedKey(null)}
+              />
+            )}
+          </div>
+
+          <div id="gateway-movers">
+            {compared !== null && movers.length > 0 && (
+              <GatewayMoversCard rows={movers} dimension={activeDimension} window={compared.window} />
+            )}
+          </div>
+
+          <div id="gateway-mix">{hasMixSignal(mix) && <GatewayMixCard decomposition={mix} />}</div>
+
+          <GatewaySectionHeading entry={section('gateway-section-operations')} />
 
           <div id="gateway-reliability">
             <GatewayReliabilityCard summary={reliability} />
@@ -1172,6 +1302,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             )}
           </div>
 
+          <GatewaySectionHeading entry={section('gateway-section-efficiency')} />
+
           <div id="gateway-cache">
             {hasCacheActivity(cache) && <GatewayCacheCard summary={cache} value={cacheValue} />}
           </div>
@@ -1187,22 +1319,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             {hasCatalog(catalog) && <GatewayCatalogCard summary={catalog} />}
           </div>
 
-          {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
+          <GatewaySectionHeading entry={section('gateway-section-adoption')} />
 
-          {hasAdoption(adoption) && <GatewayAdoptionCard summary={adoption} />}
+          <div id="gateway-agents">
+            {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
+          </div>
 
-          <GatewayBreakdownCard
-            rows={summary.breakdowns[activeDimension]}
-            dimension={activeDimension}
-            available={summary.availableDimensions}
-            onDimension={setDimension}
-            selectedKey={selectedRow?.key ?? null}
-            onSelect={(key) => setSelectedKey((current) => (current === key ? null : key))}
-          />
+          <div id="gateway-adoption">
+            {hasAdoption(adoption) && <GatewayAdoptionCard summary={adoption} />}
+          </div>
 
-          {compared !== null && movers.length > 0 && (
-            <GatewayMoversCard rows={movers} dimension={activeDimension} window={compared.window} />
-          )}
+          <GatewaySectionHeading entry={section('gateway-section-requests')} />
 
           {/*
             Last of the analysis cards, and the only one that fetches on a
@@ -1223,18 +1350,6 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               enabled={configured && logWindow !== null}
             />
           </div>
-
-          {hasMixSignal(mix) && <GatewayMixCard decomposition={mix} />}
-
-          {selectedRow !== null && (
-            <GatewayKeyDetail
-              dimension={activeDimension}
-              row={selectedRow}
-              daily={selectedDaily}
-              rangeLabel={rangeLabel(range)}
-              onClose={() => setSelectedKey(null)}
-            />
-          )}
         </>
       )}
     </>

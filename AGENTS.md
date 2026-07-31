@@ -543,6 +543,17 @@ denominator there is no badge to explain. No finding travels from it either, for
 history's reason — a standing fault names the deployment tonight's snapshot is already reporting, and
 a rise in a per-token rate can be a classifier answering in one token rather than a backend that got
 slower.
+`lib/gatewaySections.ts` is the only gateway module that describes the *page* rather than the proxy:
+the twenty-four cards grouped into eight named sections (Overview, Governance, Statements, Spend,
+Operations, Efficiency, Adoption, Requests) with a sticky nav derived from the page's own presence map,
+so a chip can only name a section that drew something — more than half the cards stand themselves down,
+and a jump target pointing at an empty wrapper is the failure the card anchors already exist to avoid.
+It never re-ranks (page order, whatever is busy, because the digest below it is the "look here first"
+answer) and its count is **cards, never findings**, which is the same one-answer rule
+`gatewayAlerts.ts` runs on. The card anchors are the digest's own ids extended to the cards nothing
+pointed at yet, section headings are separate ids, and `verify-gateway-sections.ts` checks the model
+and `GatewayPage.tsx` against each other as text — a renamed anchor typechecks and builds while
+scrolling nowhere.
 `GET /api/gateway/slow-responses?from=&to=` is the fourth live read and the last thing the gateway will
 say about a request that did not fail: `/model/metrics/slow_responses` over the same
 `LiteLLM_SpendLogs`, counting the calls whose wall clock reached the proxy's own `alerting_threshold`
