@@ -1,4 +1,5 @@
 import type { GatewayCoverage, GatewayCoverageGap } from '@dash/shared';
+import type { GatewaySyncWindow } from '../../api/client.js';
 import styles from './GatewayCoverageNote.module.css';
 
 /**
@@ -22,6 +23,14 @@ import styles from './GatewayCoverageNote.module.css';
  *   plainly, because it is also the part of the range no future sync can
  *   correct if it is wrong.
  *
+ * A gap newer than the retention floor also carries a **Fill** button, which is
+ * the whole reason the note distinguishes the two kinds: a run the proxy can
+ * still answer for is a repair someone can make in one click, and a run it has
+ * pruned is a fact to be read. The button asks for exactly that run rather than
+ * the nightly window, so repairing six days in May does not re-pull a quarter —
+ * and a run straddling the floor is asked for from the floor onwards, since
+ * that is the part of it that still exists upstream.
+ *
  * Renders nothing when there is nothing to say, which is the normal state of a
  * gateway synced daily for under three months.
  */
@@ -35,7 +44,29 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
-export function GatewayCoverageNote({ coverage }: { coverage: GatewayCoverage | null }) {
+/**
+ * The part of a gap a sync could still fill, or null when the proxy has pruned
+ * all of it. Clamping at the floor rather than dropping the whole run is what
+ * makes a gap that straddles it half-repairable instead of hopeless.
+ */
+function fillableWindow(gap: GatewayCoverageGap, retentionFloor: string): GatewaySyncWindow | null {
+  if (gap.to < retentionFloor) return null;
+  return { from: gap.from < retentionFloor ? retentionFloor : gap.from, to: gap.to };
+}
+
+interface GatewayCoverageNoteProps {
+  coverage: GatewayCoverage | null;
+  /** Kicks off a backfill of exactly one gap run. */
+  onBackfill: (window: GatewaySyncWindow) => void;
+  /** A sync of any window is in flight — every button waits for it. */
+  isSyncing: boolean;
+}
+
+export function GatewayCoverageNote({
+  coverage,
+  onBackfill,
+  isSyncing,
+}: GatewayCoverageNoteProps) {
   if (coverage === null || coverage.firstDay === null) return null;
 
   const hasGaps = coverage.missingDays > 0;
@@ -47,19 +78,47 @@ export function GatewayCoverageNote({ coverage }: { coverage: GatewayCoverage | 
       {hasGaps && (
         <div className={styles.row}>
           <span className={styles.badge}>Gaps</span>
-          <span className={styles.text}>
-            {plural(coverage.missingDays, 'day')} between {coverage.firstDay} and {coverage.lastDay}{' '}
-            carry no data at all — they draw as zero on every chart here, which is not the same
-            claim as a quiet day.{' '}
+          <div className={styles.body}>
+            <span className={styles.text}>
+              {plural(coverage.missingDays, 'day')} between {coverage.firstDay} and{' '}
+              {coverage.lastDay} carry no data at all — they draw as zero on every chart here, which
+              is not the same claim as a quiet day. Days older than {coverage.retentionFloor} can no
+              longer be re-fetched; anything newer a sync will fill.
+            </span>
+
             {coverage.gaps.length > 0 && (
-              <>
-                Missing: {coverage.gaps.map(gapLabel).join(', ')}
-                {coverage.gapsTruncated ? ', …' : '.'}
-              </>
-            )}{' '}
-            Days older than {coverage.retentionFloor} can no longer be re-fetched; anything newer a
-            sync will fill.
-          </span>
+              <ul className={styles.gaps}>
+                {coverage.gaps.map((gap) => {
+                  const window = fillableWindow(gap, coverage.retentionFloor);
+                  return (
+                    <li key={gap.from} className={styles.gap}>
+                      <span className={styles.gapLabel}>{gapLabel(gap)}</span>
+                      {window === null ? (
+                        <span className={styles.gone}>pruned upstream</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className={styles.fill}
+                          onClick={() => onBackfill(window)}
+                          disabled={isSyncing}
+                          title={`Re-fetch ${window.from} – ${window.to} from the proxy`}
+                        >
+                          {isSyncing ? 'Syncing…' : 'Fill'}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+                {coverage.gapsTruncated && (
+                  <li className={styles.gap}>
+                    <span className={styles.gapLabel}>
+                      … and older runs — a full sync covers every one still inside the window
+                    </span>
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
         </div>
       )}
 
@@ -67,7 +126,7 @@ export function GatewayCoverageNote({ coverage }: { coverage: GatewayCoverage | 
         <div className={styles.row}>
           <span className={styles.badge}>Archive</span>
           <span className={styles.text}>
-            {plural(coverage.daysBeyondRetention, 'day')} of history here predate the proxy's{' '}
+            {plural(coverage.daysBeyondRetention, 'day')} of history here predate the proxy&apos;s{' '}
             {coverage.retentionDays}-day window and exist only in this database. The range picker
             reaches back to {coverage.firstDay} because of them, and they cannot be re-synced if
             they are wrong.

@@ -25,6 +25,7 @@ import {
   startJiraSync,
   startRefresh,
 } from '../api/client.js';
+import type { GatewaySyncWindow } from '../api/client.js';
 
 /**
  * Server data and the on-demand refresh.
@@ -179,7 +180,13 @@ export function useLatestJob(kind: RefreshKind) {
  * polling hook below.
  */
 interface SyncSource {
-  start: () => Promise<RefreshJob>;
+  /**
+   * The window argument is read by the gateway source alone — its sync can be
+   * narrowed to a backfill of the days the coverage note reports missing. The
+   * other three take no argument at all, which is assignable here, so passing
+   * one to them is a no-op rather than a lie about what was synced.
+   */
+  start: (window?: GatewaySyncWindow) => Promise<RefreshJob>;
   invalidates: readonly string[];
 }
 
@@ -197,8 +204,13 @@ const SYNC_SOURCES = {
 } satisfies Record<RefreshKind, SyncSource>;
 
 export interface UseSyncJob {
-  /** Kick off a sync; safe to call twice — the API returns the in-flight job. */
-  sync: () => void;
+  /**
+   * Kick off a sync; safe to call twice — the API returns the in-flight job.
+   * The optional window narrows a gateway sync to a backfill (and is ignored
+   * by every other source); note that an in-flight full sync is returned as
+   * is, so the job that answers may cover more than was asked for.
+   */
+  sync: (window?: GatewaySyncWindow) => void;
   isRunning: boolean;
   /** A failed job's error, or the start call's own (e.g. a 503 for unset env). */
   error: string | null;
@@ -240,7 +252,7 @@ export function useSyncJob(kind: RefreshKind): UseSyncJob {
   }, [job, kind, source, queryClient]);
 
   return {
-    sync: () => start.mutate(),
+    sync: (window?: GatewaySyncWindow) => start.mutate(window),
     isRunning: jobId !== null || start.isPending,
     // A 503 from the start call never produces a job, so surface it directly.
     error: job?.status === 'failed' ? job.error : (start.error?.message ?? null),

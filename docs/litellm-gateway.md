@@ -133,6 +133,30 @@ walks `mo` on the calendar for exactly that reason (a `1mo` budget resetting on
 - Runs from the daily 07:00 Europe/Prague scheduler alongside the other three
   pulls, and on demand via `POST /api/refresh/gateway`.
 
+`POST /api/refresh/gateway?from=&to=` is the same job with a narrower window — a
+**backfill**, for repairing the gaps `GET /api/gateway/coverage` reports without
+re-pulling a quarter to do it. Both bounds are optional and default
+independently to the nightly window's own, and `resolveGatewaySyncWindow` is the
+one place the rules live:
+
+- Bounds outside the window are **clamped**, not refused. A request reaching
+  further back than the proxy holds gets what the proxy holds, and one running
+  through today stops at yesterday — the same answer a full sync would give, so
+  a gap straddling the retention floor is half-repairable rather than hopeless.
+- An **inverted** window and one lying **entirely** outside retention are `400`.
+  The second is the one worth arguing for: those days are pruned upstream, so a
+  sync of them would succeed, write nothing, and leave the gap exactly where it
+  was — a button going quiet and green while fixing nothing is worse than a
+  refusal that says why.
+- A ranged sync **writes only the days it fetched**, `gateway_budget` included:
+  governance is a snapshot of the whole proxy, not of a date range, so a repair
+  of six days in May has no business replacing it. The full sync still replaces
+  it every night.
+- Single-flight is per *kind*, so a backfill asked for while the nightly sync is
+  already running gets that job back instead. Benign — the full window is a
+  superset of any range it would have covered — but it does mean the job that
+  answers can be wider than the one requested.
+
 The same job also pulls **budgets** and replaces `gateway_budget` entire, inside
 the same transaction. Governance rides along with usage rather than on its own
 schedule: it is two small requests, and a cap read hours apart from the spend it
@@ -310,6 +334,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
+| `POST` | `/api/refresh/gateway?from=&to=` | The same job narrowed to a backfill of those days — how a coverage gap is repaired. Bounds are optional and clamped to the sync's own window; `400` for an inverted range or one the proxy has pruned entirely. |
 
 ## The connection check
 
@@ -403,7 +428,7 @@ What it shows, and why each one is there:
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
-| Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Renders nothing when there is nothing to say, which is the normal state |
+| Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
 Fifteen decisions worth keeping:
 
@@ -947,6 +972,28 @@ normal 90-day sync writes one row per day, no gaps, no archive, and the note
 renders nothing. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-coverage.ts`.
 
+`apps/api/scripts/verify-gateway-range-sync.ts` covers the backfill, and it is
+the only gateway script that checks two unrelated kinds of thing because the
+feature fails in two unrelated ways. The window arithmetic is pure and is where
+the off-by-ones live: the default must still be 90 days ending yesterday, each
+bound must default independently, a window straddling the retention floor must
+clamp to it, one running through today must stop at yesterday, and the two
+refusals (inverted, entirely pruned) must fire — with the boundary cases pinned
+on both sides, since a window *ending* on the floor is fetchable and one ending
+the day before is not. The blast radius is not pure and cannot be reasoned
+about, so it is asserted against Postgres: a run of five stored days is deleted,
+backfilled by exactly that range, and then every *other* stored day's spend must
+be byte-identical, the backfilled days must carry both totals and breakdown
+rows, and a sentinel row planted in `gateway_budget` must survive — a full sync
+empties that table, so the sentinel is the assertion that a ranged one left
+governance alone. What the script deliberately does *not* assert is that a
+backfilled day comes back to the same cent: the mock consumes its Lehmer stream
+from the start of the requested window, so a five-day pull and a ninety-day pull
+disagree about the same date, and equality there would be a property of the
+generator rather than of the sync. The database section is skipped loudly when
+the gateway has never synced locally. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-range-sync.ts`.
+
 `apps/api/scripts/verify-gateway-mix.ts` covers the volume/mix/rate
 decomposition, and it is the one layer where the checks *are* the design: the
 split has to be an identity or the card is three opinions. So the script asserts
@@ -1081,12 +1128,13 @@ missing on this side of the gateway:
   a statement a fixed thing to quote and would survive a schema change to the
   daily tables. Worth doing the first time a statement has to be reproduced
   months later and match to the cent.
-- **Backfilling a gap.** The coverage note names days that carry no rows, and
-  says which of them are still inside the proxy's window — but the only way to
-  fill them is a full 90-day re-sync, which is also the only sync the service
-  offers. A ranged sync (`POST /api/refresh/gateway?from=&to=`) would let
-  someone repair a gap without re-pulling a quarter, and would make the note
-  actionable rather than only informative.
+- **Backfilling beyond the window.** A gap inside the proxy's 90 days is now a
+  **Fill** button on the coverage note (`POST /api/refresh/gateway?from=&to=`).
+  A gap older than the retention floor still has no answer and structurally
+  cannot have one from the proxy: those aggregates are pruned upstream. The only
+  route to them would be a second source — an export taken before they aged out,
+  or the proxy's own database — which is a different integration, not a wider
+  window.
 - **Cost centres on a gateway line.** A statement bills a team id, a tag or an
   email, not a department: joining those to the org taxonomy the Copilot side
   already has (`lib/metrics/costCentre.ts`) needs the `user`/`team` ids to be

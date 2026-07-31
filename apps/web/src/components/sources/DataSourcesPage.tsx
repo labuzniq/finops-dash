@@ -198,7 +198,7 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
               type="button"
               className={styles.connect}
               aria-label="Sync GitHub Copilot APIs"
-              onClick={syncCopilot}
+              onClick={() => syncCopilot()}
               disabled={isRefreshing}
             >
               {isRefreshing ? 'Syncing…' : 'Sync'}
@@ -218,7 +218,7 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
               type="button"
               className={styles.connect}
               aria-label="Sync GitHub billing API"
-              onClick={syncBilling}
+              onClick={() => syncBilling()}
               disabled={isBillingSyncing}
             >
               {isBillingSyncing ? 'Syncing…' : 'Sync'}
@@ -239,7 +239,7 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
               type="button"
               className={styles.connect}
               aria-label="Sync JIRA Insight identity"
-              onClick={syncJira}
+              onClick={() => syncJira()}
               disabled={isJiraSyncing}
             >
               {isJiraSyncing ? 'Syncing…' : 'Sync'}
@@ -278,7 +278,7 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
               type="button"
               className={styles.connect}
               aria-label="Sync LiteLLM gateway"
-              onClick={syncGateway}
+              onClick={() => syncGateway()}
               disabled={isGatewaySyncing || !gatewayConfigured}
             >
               {isGatewaySyncing ? 'Syncing…' : 'Sync'}

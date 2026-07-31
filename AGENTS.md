@@ -142,7 +142,15 @@ carry rows is the only place the two can be told apart. Gaps are reported as *ru
 floor named, because a gap newer than it a sync will fill and one older than it is gone from the proxy
 for good; `daysBeyondRetention` is that same fact read as history only this database holds. The retention
 floor is `today − retentionDays`, matching the first day the sync asks for (90 days *ending yesterday*) —
-`today − 89` reports the first day of every ordinary sync as unrepeatable archive. Everything above is
+`today − 89` reports the first day of every ordinary sync as unrepeatable archive. A run still inside
+that window is repairable, so the note draws a **Fill** button on it:
+`POST /api/refresh/gateway?from=&to=` is the same sync narrowed to those days, resolved by
+`resolveGatewaySyncWindow` in `services/gateway-sync.ts`. Bounds outside the window are *clamped* (a gap
+straddling the floor is half-repairable, not hopeless) while an inverted window and one entirely past
+retention are `400` — a sync that succeeds while filling nothing is the wrong answer to "fill this gap".
+A ranged sync writes only the days it fetched, `gateway_budget` included: governance is a snapshot of the
+whole proxy, so a repair of six days in May must not replace it, and only the nightly full sync does.
+Everything above is
 *usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the counter for the period in flight, per key and per team,

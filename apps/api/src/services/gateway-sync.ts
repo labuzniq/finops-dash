@@ -53,6 +53,79 @@ function utcDay(offset: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** `2026-07-31`, `-1` → `2026-07-30`. UTC, so DST never shifts a date. */
+function shiftIso(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/** A ranged sync asked for something the proxy cannot answer. */
+export class GatewaySyncRangeError extends Error {}
+
+/** The inclusive UTC window a sync run covers. */
+export interface GatewaySyncWindow {
+  from: string;
+  to: string;
+}
+
+/**
+ * What a caller may ask for: either bound, both, or neither. Written out rather
+ * than `Partial<GatewaySyncWindow>` because `exactOptionalPropertyTypes` makes
+ * the two different types, and a query parser hands over explicit `undefined`.
+ */
+export interface GatewaySyncRequest {
+  from?: string | undefined;
+  to?: string | undefined;
+}
+
+/**
+ * The window a sync will actually pull, from what the caller asked for.
+ *
+ * The default — no bounds at all — is the nightly run: `WINDOW_DAYS` ending
+ * yesterday. Today is deliberately excluded, because it is still accruing and
+ * the proxy's aggregate for it would be revised the moment we stored it.
+ *
+ * A ranged request exists for one job: repairing the gaps
+ * `GET /api/gateway/coverage` reports, without re-pulling a quarter to do it.
+ * Each bound defaults independently, and both are *clamped* rather than
+ * rejected — a caller asking for more than the proxy holds gets what the proxy
+ * holds, which is the same answer the default sync would give. The two genuine
+ * errors are a window that is inverted (a typo, not a clamp) and one that lies
+ * entirely outside the proxy's retention: those days are pruned upstream, so a
+ * sync would succeed while filling nothing, and reporting that as a success is
+ * worse than refusing it.
+ */
+export function resolveGatewaySyncWindow(
+  requested: GatewaySyncRequest | undefined,
+  today: string,
+): GatewaySyncWindow {
+  const latest = shiftIso(today, -1);
+  const earliest = shiftIso(today, -WINDOW_DAYS);
+
+  const from = requested?.from ?? earliest;
+  const to = requested?.to ?? latest;
+
+  if (from > to) {
+    throw new GatewaySyncRangeError(`from (${from}) must not be after to (${to})`);
+  }
+  if (to < earliest) {
+    throw new GatewaySyncRangeError(
+      `${from} – ${to} is older than the proxy's ${WINDOW_DAYS}-day window (it keeps nothing before ${earliest}), so a sync cannot fill it`,
+    );
+  }
+  if (from > latest) {
+    throw new GatewaySyncRangeError(
+      `${from} – ${to} is not settled yet — a sync covers days up to ${latest}`,
+    );
+  }
+
+  return {
+    from: from < earliest ? earliest : from,
+    to: to > latest ? latest : to,
+  };
+}
+
 /**
  * Replace every fetched day in one transaction. Delete-then-insert, not
  * upsert, for the same reason the Copilot breakdowns use it: a re-pulled day's
@@ -60,11 +133,20 @@ function utcDay(offset: number): string {
  * leave the vanished keys standing and double-counting. The delete is scoped
  * to the dates the client says it covered — days outside the window keep their
  * rows, so shrinking WINDOW_DAYS never destroys history.
+ *
+ * `budgets` is `null` for a ranged sync: governance is a snapshot of the whole
+ * proxy, not of a date range, so a backfill of six days in May has no business
+ * replacing it. Leaving the table alone is what makes "a ranged sync writes
+ * only the days it fetched" true of every table rather than only of the usage
+ * ones.
  */
-async function persist(snapshot: GatewaySnapshot, budgets: GatewayBudgetSnapshot[]): Promise<void> {
+async function persist(
+  snapshot: GatewaySnapshot,
+  budgets: GatewayBudgetSnapshot[] | null,
+): Promise<void> {
   const dailyRows: GatewayDailyInsert[] = snapshot.daily.map((day) => ({ ...day }));
   const breakdownRows: GatewayBreakdownInsert[] = snapshot.breakdowns.map((row) => ({ ...row }));
-  const budgetRows: GatewayBudgetInsert[] = budgets.map((budget) => ({ ...budget }));
+  const budgetRows: GatewayBudgetInsert[] = (budgets ?? []).map((budget) => ({ ...budget }));
 
   await db.transaction(async (tx) => {
     if (snapshot.dates.length > 0) {
@@ -85,9 +167,11 @@ async function persist(snapshot: GatewaySnapshot, budgets: GatewayBudgetSnapshot
     // a cap that nothing enforces any more. Emptied deliberately when the
     // proxy offers no management routes — the UI reads "no budgets visible",
     // which is true, rather than an ever-staler copy of the last ones seen.
-    await tx.delete(gatewayBudget);
-    for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
-      await tx.insert(gatewayBudget).values(rows);
+    if (budgets !== null) {
+      await tx.delete(gatewayBudget);
+      for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
+        await tx.insert(gatewayBudget).values(rows);
+      }
     }
   });
 
@@ -110,25 +194,36 @@ async function persist(snapshot: GatewaySnapshot, budgets: GatewayBudgetSnapshot
  * anything is written, so a mid-fetch failure fails the job and leaves the
  * previously synced usage untouched. `seats_synced` carries the number of days
  * covered (the column is the generic "how much did this job move" counter).
+ *
+ * With no `requested` window this is the nightly full re-pull. With one it is a
+ * *backfill*: the coverage route names days that carry no rows, and this is how
+ * they are repaired without re-pulling a quarter. Single-flight is per kind, so
+ * a backfill asked for while the nightly sync is running gets that job back
+ * instead — which is benign, since the full window is a superset of any range
+ * it would have covered, but it does mean the returned job's range may be wider
+ * than the one requested.
  */
-export async function startGatewaySync(): Promise<RefreshJob> {
+export async function startGatewaySync(
+  requested?: GatewaySyncRequest,
+): Promise<RefreshJob> {
   const client = createGatewayClient();
   if (client === null) throw new GatewaySyncUnavailableError();
 
-  // Yesterday backwards: today is still accruing, and the proxy's daily
-  // aggregates for it would be revised the moment we stored them.
-  const to = utcDay(-1);
-  const from = utcDay(-WINDOW_DAYS);
+  const ranged = requested?.from !== undefined || requested?.to !== undefined;
+  const { from, to } = resolveGatewaySyncWindow(requested, utcDay(0));
 
   return startJob('gateway', {
     action: 'gateway-sync',
-    context: { gatewaySource: client.name, from, to },
+    context: { gatewaySource: client.name, from, to, ranged },
     run: async () => {
       const snapshot = await client.fetchUsage(from, to);
       // Governance rides along with usage rather than on its own schedule: it
       // is two small requests, and a budget read hours apart from the spend it
-      // is shown next to would be a worse lie than a slightly stale one.
-      const budgets = await client.fetchBudgets();
+      // is shown next to would be a worse lie than a slightly stale one. A
+      // backfill skips it: current state has nothing to do with a repaired day
+      // in May, and re-reading it there would only widen what a repair can
+      // break.
+      const budgets = ranged ? null : await client.fetchBudgets();
       await persist(snapshot, budgets);
       return snapshot.dates.length;
     },

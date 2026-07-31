@@ -495,7 +495,7 @@ export function GatewayPage({ sync }: GatewayPageProps) {
         <button
           type="button"
           className={styles.syncButton}
-          onClick={sync.sync}
+          onClick={() => sync.sync()}
           disabled={sync.isRunning || !configured}
         >
           {sync.isRunning ? 'Syncing…' : 'Sync'}
@@ -531,7 +531,11 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
       {configured && !usageQuery.error && !usageQuery.isPending && hasData && (
         <>
-          <GatewayCoverageNote coverage={coverage} />
+          <GatewayCoverageNote
+            coverage={coverage}
+            onBackfill={(window) => sync.sync(window)}
+            isSyncing={sync.isRunning}
+          />
 
           {compared !== null && (
             <div className={styles.compareNote}>

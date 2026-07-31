@@ -195,13 +195,26 @@ export async function startBillingSync(): Promise<RefreshJob> {
   return job;
 }
 
+/** An inclusive day range for a backfill; absent means the full nightly window. */
+export interface GatewaySyncWindow {
+  from: string;
+  to: string;
+}
+
 /**
  * Kick off an LLM-gateway sync (kind `gateway`) — polled through
  * `fetchRefreshJob` like the others. A 503 (GATEWAY_SOURCE off) surfaces the
  * server's message via the shared error unwrapping.
+ *
+ * With a window it is a backfill of exactly those days, which is how the
+ * coverage note's gaps are repaired; a 400 (a range the proxy has pruned)
+ * surfaces the same way as the 503.
  */
-export async function startGatewaySync(): Promise<RefreshJob> {
-  const { job } = await request<{ job: RefreshJob }>('/refresh/gateway', { method: 'POST' });
+export async function startGatewaySync(window?: GatewaySyncWindow): Promise<RefreshJob> {
+  const query = window ? `?from=${window.from}&to=${window.to}` : '';
+  const { job } = await request<{ job: RefreshJob }>(`/refresh/gateway${query}`, {
+    method: 'POST',
+  });
   return job;
 }
 
