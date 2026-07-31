@@ -2,6 +2,7 @@ import type {
   BillingImportResult,
   CopilotSeat,
   DateRange,
+  GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
@@ -236,6 +237,17 @@ export function fetchGatewayUsage(from: string, to: string): Promise<GatewayUsag
  */
 export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
   return request<GatewayBudgets>('/gateway/budgets');
+}
+
+/**
+ * What those budgets read on each of the last `days` days.
+ *
+ * The only governance call with a window, and the only source of any budget
+ * fact older than the last sync — the proxy serves current state only, so this
+ * is the dashboard's own recording rather than a second read of LiteLLM.
+ */
+export function fetchGatewayBudgetHistory(days: number): Promise<GatewayBudgetHistory> {
+  return request<GatewayBudgetHistory>(`/gateway/budgets/history?days=${days}`);
 }
 
 /**

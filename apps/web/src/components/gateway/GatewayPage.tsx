@@ -17,6 +17,7 @@ import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.j
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
+import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
 import { deriveGatewayCache, hasCacheActivity } from '../../lib/metrics/gatewayCache.js';
 import {
   CHARGEBACK_DIMENSIONS,
@@ -39,6 +40,7 @@ import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayFor
 import { deriveGatewayMix, hasMixSignal } from '../../lib/metrics/gatewayMix.js';
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
+  useGatewayBudgetHistory,
   useGatewayBudgets,
   useGatewayChargebackData,
   useGatewayComparisonData,
@@ -84,6 +86,16 @@ import styles from './GatewayPage.module.css';
  */
 
 const MS_PER_DAY = 86_400_000;
+
+/**
+ * How far back the budget card's per-row history reaches.
+ *
+ * Not tied to the range picker or to the proxy's 90-day retention: these rows
+ * are our own observations and nothing prunes them. Sixty days covers two
+ * monthly budget periods, which is the shortest window in which "last period"
+ * means anything.
+ */
+const BUDGET_HISTORY_DAYS = 60;
 
 function KpiCard({
   kicker,
@@ -337,6 +349,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const budgets = useMemo(
     () => deriveBudgets(budgetsQuery.data?.budgets, new Date()),
     [budgetsQuery.data],
+  );
+
+  // ...and the one governance fact that *does* have a range: what those same
+  // budgets read on previous days, which only exists because the sync keeps a
+  // reading rather than because the proxy serves one. Its own fixed window, not
+  // the range picker's — a budget period has nothing to do with the days on the
+  // charts above, and the record starts when recording started either way.
+  const budgetHistoryQuery = useGatewayBudgetHistory(BUDGET_HISTORY_DAYS, configured);
+  const budgetHistory = useMemo(
+    () => deriveBudgetHistory(budgetHistoryQuery.data),
+    [budgetHistoryQuery.data],
   );
 
   // The chargeback statement's window is a calendar month picked here, plus
@@ -679,6 +702,7 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             scope={budgetScope}
             onScope={setBudgetScope}
             loaded={!budgetsQuery.isPending}
+            history={budgetHistory}
           />
 
           <GatewayChargebackCard

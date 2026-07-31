@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type {
   DateRange,
+  GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
@@ -9,6 +10,7 @@ import type {
   GatewayUsage,
 } from '@dash/shared';
 import {
+  fetchGatewayBudgetHistory,
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayProbe,
@@ -108,6 +110,23 @@ export function useGatewayBudgets(enabled: boolean) {
   return useQuery<GatewayBudgets>({
     queryKey: ['gateway', 'budgets'],
     queryFn: fetchGatewayBudgets,
+    enabled,
+  });
+}
+
+/**
+ * What those budgets read on each of the last `days` days — the dashboard's own
+ * recording, not a second read of the proxy.
+ *
+ * Cached under the day count rather than under dates: the window is relative to
+ * today and the payload is small (governed objects × days), so a page that
+ * switches scope re-reads nothing. Invalidated by the gateway sync prefix like
+ * the snapshot, because the sync is the only thing that appends to it.
+ */
+export function useGatewayBudgetHistory(days: number, enabled: boolean) {
+  return useQuery<GatewayBudgetHistory>({
+    queryKey: ['gateway', 'budget-history', days],
+    queryFn: () => fetchGatewayBudgetHistory(days),
     enabled,
   });
 }

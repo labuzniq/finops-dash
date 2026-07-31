@@ -362,6 +362,56 @@ export const gatewayBudget = pgTable(
 );
 
 /**
+ * What `gateway_budget` said, kept — one row per governed object per UTC day.
+ *
+ * The snapshot table above is replaced wholesale by every sync, which makes it
+ * exactly the wrong shape for the three questions an owner actually asks about
+ * a budget: when did this cross, what did the last period come to, and who
+ * moved the cap. None of the three can be re-derived from `gateway_daily`,
+ * because the proxy's enforced counter runs on the key's own period.
+ *
+ * Keyed on the *day*, not on the sync: the last observation of a day wins, so
+ * the table grows with the gateway and the calendar and is indifferent to how
+ * often the scheduler runs. `observed_at` keeps the instant that reading was
+ * taken, which is what says how stale the day's value is.
+ *
+ * Written only by a full sync. A ranged backfill does not fetch budgets at all
+ * (governance is a snapshot of the proxy, not of a date range), so it appends
+ * nothing here either — a repair of six days in May cannot invent a governance
+ * observation for May.
+ *
+ * Null still means "no such limit", exactly as in the snapshot: a row whose
+ * `max_budget_nano` is NULL was uncapped that day, and one whose value is 0 was
+ * rejecting every call.
+ */
+export const gatewayBudgetHistory = pgTable(
+  'gateway_budget_history',
+  {
+    scope: varchar('scope', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    /** UTC day the observation belongs to. */
+    date: date('date').notNull(),
+    /** The alias as it read that day — a rename is itself a recorded change. */
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    softBudgetNano: bigint('soft_budget_nano', { mode: 'bigint' }),
+    budgetDuration: varchar('budget_duration', { length: 20 }),
+    resetAt: timestamp('reset_at', { withTimezone: true }),
+    tpmLimit: bigint('tpm_limit', { mode: 'number' }),
+    rpmLimit: bigint('rpm_limit', { mode: 'number' }),
+    blocked: boolean('blocked').notNull().default(false),
+    /** When the reading this row kept was taken. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scope, table.key, table.date] }),
+    // The read is always a window over every object, so date leads.
+    index('gateway_budget_history_date_idx').on(table.date),
+  ],
+);
+
+/**
  * A closed calendar month, held still — one row per sealed month.
  *
  * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
@@ -589,6 +639,8 @@ export type GatewayBreakdownRow = typeof gatewayBreakdownDaily.$inferSelect;
 export type GatewayBreakdownInsert = typeof gatewayBreakdownDaily.$inferInsert;
 export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
 export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
+export type GatewayBudgetHistoryRow = typeof gatewayBudgetHistory.$inferSelect;
+export type GatewayBudgetHistoryInsert = typeof gatewayBudgetHistory.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

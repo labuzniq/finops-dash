@@ -10,6 +10,7 @@ import {
   sealGatewayMonth,
 } from '../services/gateway-seal.js';
 import {
+  getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
   getGatewayUsage,
@@ -37,6 +38,10 @@ const SEAL_ERROR_STATUS = {
   empty: 400,
   sealed: 409,
 } as const;
+
+const historyQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).optional().default(60),
+});
 
 const rangeQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q.from <= q.to, {
   message: 'from must not be after to',
@@ -80,6 +85,28 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * not allowed to list keys and teams.
    */
   app.get('/api/gateway/budgets', async () => getGatewayBudgets());
+
+  /**
+   * What those budgets read on each of the last `days` days.
+   *
+   * The one governance route with a window, because it is the only governance
+   * fact that *has* one: the snapshot above is replaced by every sync, and this
+   * is what the sync kept before replacing it. Nothing is filled in for a day
+   * the scheduler did not run — an unobserved day is unknown, not unchanged,
+   * and the card draws it as a hole.
+   *
+   * Defaults to 60 days and caps at 365. There is no retention argument to make
+   * here (the rows are ours, not the proxy's), only a payload one: the response
+   * is objects × days, and a year of a hundred governed keys is already a large
+   * thing to hand a browser.
+   */
+  app.get('/api/gateway/budgets/history', async (request, reply) => {
+    const parsed = historyQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewayBudgetHistory(parsed.data.days);
+  });
 
   /**
    * A live connection check — the only gateway route that talks to the proxy

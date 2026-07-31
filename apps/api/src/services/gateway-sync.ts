@@ -1,9 +1,15 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
-import { gatewayBreakdownDaily, gatewayBudget, gatewayDaily } from '../db/schema.js';
+import {
+  gatewayBreakdownDaily,
+  gatewayBudget,
+  gatewayBudgetHistory,
+  gatewayDaily,
+} from '../db/schema.js';
 import type {
   GatewayBreakdownInsert,
+  GatewayBudgetHistoryInsert,
   GatewayBudgetInsert,
   GatewayDailyInsert,
 } from '../db/schema.js';
@@ -139,15 +145,24 @@ export function resolveGatewaySyncWindow(
  * proxy, not of a date range, so a backfill of six days in May has no business
  * replacing it. Leaving the table alone is what makes "a ranged sync writes
  * only the days it fetched" true of every table rather than only of the usage
- * ones.
+ * ones — and it is why a backfill appends no governance *observation* either.
+ * `observedOn`/`observedAt` are passed in rather than read from the clock here
+ * so the day a run is recorded under is decided once, alongside the window.
  */
 async function persist(
   snapshot: GatewaySnapshot,
   budgets: GatewayBudgetSnapshot[] | null,
+  observedOn: string,
+  observedAt: Date,
 ): Promise<void> {
   const dailyRows: GatewayDailyInsert[] = snapshot.daily.map((day) => ({ ...day }));
   const breakdownRows: GatewayBreakdownInsert[] = snapshot.breakdowns.map((row) => ({ ...row }));
   const budgetRows: GatewayBudgetInsert[] = (budgets ?? []).map((budget) => ({ ...budget }));
+  const historyRows: GatewayBudgetHistoryInsert[] = (budgets ?? []).map((budget) => ({
+    ...budget,
+    date: observedOn,
+    observedAt,
+  }));
 
   await db.transaction(async (tx) => {
     if (snapshot.dates.length > 0) {
@@ -173,6 +188,38 @@ async function persist(
       for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
         await tx.insert(gatewayBudget).values(rows);
       }
+      // ...and appended to history, which is the opposite kind of write: keyed
+      // on the observation *day* rather than replaced, so a second sync the
+      // same afternoon updates today's row instead of adding one. That is what
+      // keeps the table growing with the gateway and the calendar rather than
+      // with the scheduler's frequency. A governance object the proxy no longer
+      // reports simply stops appearing — its past observations stay, because
+      // "this key was capped at $3,000 in June" does not stop being true when
+      // the key is rotated away.
+      for (const rows of chunk(historyRows, CHUNK_SIZE)) {
+        await tx
+          .insert(gatewayBudgetHistory)
+          .values(rows)
+          .onConflictDoUpdate({
+            target: [
+              gatewayBudgetHistory.scope,
+              gatewayBudgetHistory.key,
+              gatewayBudgetHistory.date,
+            ],
+            set: {
+              label: sql`excluded.label`,
+              spendNano: sql`excluded.spend_nano`,
+              maxBudgetNano: sql`excluded.max_budget_nano`,
+              softBudgetNano: sql`excluded.soft_budget_nano`,
+              budgetDuration: sql`excluded.budget_duration`,
+              resetAt: sql`excluded.reset_at`,
+              tpmLimit: sql`excluded.tpm_limit`,
+              rpmLimit: sql`excluded.rpm_limit`,
+              blocked: sql`excluded.blocked`,
+              observedAt: sql`excluded.observed_at`,
+            },
+          });
+      }
     }
   });
 
@@ -183,6 +230,7 @@ async function persist(
         dailyRows: dailyRows.length,
         breakdownRows: breakdownRows.length,
         budgetRows: budgetRows.length,
+        observedOn,
       },
     },
     'gateway usage persisted',
@@ -253,7 +301,11 @@ export async function startGatewaySync(
       // in May, and re-reading it there would only widen what a repair can
       // break.
       const budgets = ranged ? null : await client.fetchBudgets();
-      await persist(snapshot, budgets);
+      // The observation is stamped with the day the *reading* was taken, which
+      // is today — not with the last day of the usage window. A budget counter
+      // describes the period in flight right now, and filing it under yesterday
+      // would make the history disagree with the snapshot it came from.
+      await persist(snapshot, budgets, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
       return snapshot.dates.length;
     },

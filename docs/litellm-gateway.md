@@ -168,6 +168,27 @@ routes are: an analytics-only credential is a perfectly reasonable thing to
 point this integration at, it will be refused key management, and `fetchBudgets`
 answering `[]` is a supported outcome rather than a failed sync.
 
+The same fetch is also **appended** to `gateway_budget_history`, which is the
+opposite kind of write from the snapshot beside it: one row per governed object
+per **UTC day**, upserted, so a second sync the same afternoon updates that day's
+row instead of adding one. The day key is the whole design — the table grows
+with the gateway and the calendar and is indifferent to how often the scheduler
+runs, so a dashboard synced hourly costs exactly what one synced nightly does.
+It exists because the proxy has no history to give: `/key/list` answers with the
+counter for the period *in flight* and nothing about the period before it, which
+leaves three ordinary questions unanswerable — when did this team go over, what
+did its last period come to, who moved the cap. None of them can be recovered
+from `gateway_daily`, because the enforced counter runs on the key's own
+schedule and is not our sum of days. Two consequences:
+
+- A **backfill records nothing here.** It does not fetch budgets at all, so it
+  has no governance state to file; inventing an observation for a repaired day
+  in May would be recording something nobody saw.
+- **There is no bootstrap and never will be.** History starts when recording
+  started, which is why `GET /api/gateway/budgets/history` answers
+  `recordingSince` outside its own window: "this key was never over its cap in
+  the last 30 days" and "we started watching yesterday" are otherwise identical.
+
 After a **full** sync (never a backfill) the job takes a **month seal**: any
 calendar month that has now ended with every one of its days stored, and that
 carries no seal yet, is recorded in `gateway_month` and `gateway_month_line`.
@@ -233,6 +254,13 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   `gateway_daily` would silently disagree with the number the proxy actually
   enforces, and the enforced one is what an owner needs. `blocked` is likewise
   carried, not inferred: an admin can disable a key nowhere near its cap.
+- **A budget observation is a sample, not a series.** `gateway_budget_history`
+  holds one reading per governed object per day the sync ran. A day with no row
+  is a day nobody looked — not zero, and not "unchanged" — so nothing derived
+  from it may be interpolated, and a period total read from it (`observedTotal`)
+  is a **floor**: the counter is read once a day and the reset is on the proxy's
+  clock, so whatever landed in between is not in it. The same rule as
+  `gateway_daily`'s coverage gaps, one table over.
 - **A sealed month is a record, not a cache.** `gateway_month` is written once,
   at close, and is never refreshed to agree with `gateway_daily` again. Every
   read on the page still derives from the daily rows; the seal exists to be
@@ -359,6 +387,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | --- | --- | --- |
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and period spend per key and team, keys first, each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
+| `GET` | `/api/gateway/budgets/history?days=` | What those same budgets read on each of the last `days` days (default 60, max 365) — the dashboard's own recording, since the proxy serves current state only. Nothing is filled in for a day no sync ran. `recordingSince` is answered *outside* the window, because "never over its cap" and "we started watching yesterday" are otherwise the same answer. |
 | `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
 | `GET` | `/api/gateway/months` | `{ seals }` — every calendar month that has been sealed, newest first, with the totals as recorded. Headers only; no parameters. |
 | `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `?revision=` quotes a *replaced* statement by number; omitted, it answers with the current one. `404` when the month was never sealed (or has no such revision), carrying the `check` that says why (still running, or missing days to backfill). |
@@ -458,6 +487,7 @@ What it shows, and why each one is there:
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
+| Budget history (per row) | Opening a budget row shows what that key or team read on previous days: a strip of the recorded share of cap with a **hole** on every day nobody synced, the changes we caught (period resets, cap and soft-budget moves, rate-limit changes, renames, blocks, and the day it crossed its cap), and the periods that closed inside the record — each labelled *at least*, because the counter is read once a day |
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
@@ -465,7 +495,7 @@ What it shows, and why each one is there:
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Seventeen decisions worth keeping:
+Eighteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -872,6 +902,32 @@ Seventeen decisions worth keeping:
   rather than spread, for exactly the reason the statement's `unallocated` row
   is.
 
+- **The budget card grew a history, and the history is a sample.** Everything
+  above the fold on that card is current state, because that is all
+  `/key/list` has. The disclosure under each row is the dashboard's own
+  recording (`gateway_budget_history`, one reading per object per day, written
+  by the full sync), read by `lib/metrics/gatewayBudgetHistory.ts` as *changes*:
+  a counter that fell rolled its period, a cap that moved was moved by somebody,
+  a utilisation that crossed 100 crossed it on the day we saw it. Three
+  properties of the input decide the rest of the design.
+
+  A **day nobody observed is unknown** — not zero and not "unchanged" — so the
+  strip draws a hole, `daysMissing` is counted over the object's own span, and a
+  gap is itself an event, because a cap could have been raised and lowered again
+  inside it and this module would never know. A **closed period is a floor**:
+  `observedTotal` is the last counter seen before the roll, and whatever landed
+  between that reading and the proxy's own reset is not in it, so the card says
+  *at least*. And the **window is clamped forward to `recordingSince`** rather
+  than padded with empty days, because there is no backfill for this table and
+  never will be — the proxy does not serve past budget state.
+
+  Two consequences worth stating. A **lowered cap produces a crossing with no
+  spend at all**, which is why the crossing is measured against the previous
+  reading's own cap and the cap change sits on the same day as its explanation.
+  And the sub-cent guard is load-bearing: nano→dollars is a float division, and
+  reading a hair's fall as a period boundary would invent a one-day period every
+  time it happened.
+
 `apps/api/scripts/verify-gateway-seal-history.ts` covers both halves of that.
 The pure half is `diffSeals`: the sub-cent settle that is not a change, the
 alias that does not make a new payer, an arrival and a departure, the sample
@@ -988,6 +1044,33 @@ both regimes — a month one day in projects nothing, half a month at $600 again
 a $1,000 cap projects $1,200 and is flagged as pacing over, and every projection
 that does answer is exactly `spend ÷ elapsed`. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budgets.ts`.
+
+`apps/api/scripts/verify-gateway-budget-history.ts` covers the recording and
+what is read off it, and its two halves fail differently. The pure half drives
+`deriveBudgetHistory` over constructed readings, and the assertions that matter
+are the negative ones: a fall of two tenths of a cent is *not* a period
+boundary, a day nobody observed carries no numbers at all and is not filled in,
+a roll seen across a sampling gap does not claim to be contiguous, a soft breach
+is reported once rather than on every day it stays breached, and a day that goes
+over the hard cap is not also filed as a soft breach. The positive ones pin the
+rest: a closed period carries the last counter seen *before* the roll rather
+than the first of the next, a cap lowered under a standing spend produces a
+crossing dated to the day it was seen with the utilisation it came from, an
+uncapped row has no utilisation anywhere, and a window reaching before recording
+started is three days long rather than ten empty ones.
+
+The Postgres half asserts the two rules the write has to obey. A full sync
+appends exactly one row per governed object for today, agreeing with the
+snapshot it came from to the nano and keeping an uncapped cap `null` rather than
+`0` — and a *second* sync the same day updates that row instead of adding one,
+which is the day key doing its job. A ranged backfill appends nothing at all.
+Then it plants six days of readings for one really-stored capped key (a climb
+into an overrun, a roll, and one day nobody looked), reads them back through
+`getGatewayBudgetHistory`, runs the web derivation over the result, and requires
+the overrun, the reset, the one-day gap and the closed period's floor to all
+come out the other side — then deletes exactly what it planted and checks that
+it did. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budget-history.ts`.
 
 `apps/api/scripts/verify-gateway-adoption.ts` covers the population layer. The
 reconciliation first: the ranked user rows sum to the attributed totals, the
@@ -1225,11 +1308,13 @@ missing on this side of the gateway:
 - **Tag budgets.** LiteLLM's newer versions can budget per tag as well as per
   key and per team; only the latter two are read. Open question 7 above is what
   decides whether it is worth adding.
-- **Budget history.** `gateway_budget` is a snapshot replaced wholesale by every
-  sync, so "was this key already over last week" has no answer here. Keeping one
-  row per sync would give it one, at the cost of a table that grows with the
-  scheduler rather than with the gateway — worth doing only if someone asks the
-  question.
+- **Budget history beyond what we recorded.** `gateway_budget_history` now
+  answers "was this key already over last week" — but only back to the first
+  sync that wrote it, and only at daily resolution. Neither limit can be lifted
+  from here: the proxy serves current state and has nothing older to give, and a
+  finer sample would mean syncing more often for no other reason. The one thing
+  that *could* be added is an alert on the crossings the card already derives —
+  a key going over is currently something someone has to open a row to see.
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.

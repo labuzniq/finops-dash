@@ -235,6 +235,161 @@
   color: var(--text);
 }
 
+/* The name cell doubles as the history disclosure. */
+.nameButton {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nameButton:hover .key {
+  color: var(--accent);
+}
+
+.caret {
+  display: inline-block;
+  width: 10px;
+  margin-right: 4px;
+  color: var(--faint);
+  transition: transform 120ms ease;
+}
+
+.caretOpen {
+  transform: rotate(90deg);
+}
+
+/* ── recorded history ─────────────────────────────────────────────────── */
+
+.historyPanel {
+  padding: 12px 20px 16px 18px;
+  background: var(--card2);
+  border-left: 2px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+}
+
+.historyHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.historyPeak {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * One column per calendar day of the recorded window. A day nobody observed
+ * draws an empty slot rather than a zero-height bar, because "we did not look"
+ * and "it spent nothing" are different facts.
+ */
+.strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 46px;
+  margin: 8px 0 10px;
+}
+
+.stripCell {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 3px;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--muted) var(--chart-fill), transparent);
+}
+
+.stripMissing {
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--muted) 16%, transparent) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+.stripFill {
+  width: 100%;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--accent) 70%, var(--card));
+}
+
+.stripBad {
+  background: var(--neg);
+}
+
+/* The day the counter rolled — a break in the series, not a fall in spend. */
+.stripReset {
+  position: absolute;
+  left: -1px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in oklab, var(--text) 45%, transparent);
+}
+
+.historyGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.historyLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+
+.historyNote {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 6px;
+  max-width: 620px;
+}
+
+.eventList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.eventItem {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.eventAdverse {
+  color: var(--neg);
+}
+
+.eventDate {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .historyGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 1100px) {
   .row {
     grid-template-columns: 160px minmax(0, 1fr) 120px 110px;

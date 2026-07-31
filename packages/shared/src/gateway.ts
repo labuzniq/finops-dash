@@ -313,6 +313,75 @@ export function budgetPeriodStart(budget: Readonly<GatewayBudget>): string | nul
   return start.toISOString();
 }
 
+/**
+ * ─── Budget history ──────────────────────────────────────────────────────────
+ *
+ * `gateway_budget` is current state and nothing else: every sync replaces it,
+ * so the moment a key's counter rolls, or its cap is raised, the previous fact
+ * is gone. That makes three ordinary governance questions unanswerable — "when
+ * did this team go over", "what did it spend last period", "who raised this
+ * cap" — and none of them can be recovered from `gateway_daily`, because the
+ * proxy's enforced counter runs on the key's own period and is not our sum.
+ *
+ * So the sync also *appends* what it saw. One row per governed object per UTC
+ * day, upserted, so the last observation of a day wins: the table grows with
+ * the gateway and the calendar, never with how often the scheduler runs, and a
+ * dashboard synced hourly costs exactly what one synced nightly does.
+ *
+ * Three things follow, and they are what the derivation on top has to respect:
+ *
+ *  - **It is a sample, not a series.** A day with no observation is *unknown*,
+ *    not zero and not "unchanged". Nothing here may be interpolated.
+ *  - **A period total read from it is a floor.** The counter is only seen once
+ *    a day, so the last value before a roll misses whatever landed between the
+ *    observation and the reset.
+ *  - **History starts when recording started.** There is no backfill: the proxy
+ *    does not serve past budget state, and it never will.
+ */
+
+/**
+ * One governed object as the proxy had it on one UTC day — the same fields as
+ * `GatewayBudget`, stamped with when they were seen.
+ *
+ * `scope`/`key` join to the budget snapshot and to the usage dimension of the
+ * same name, so an observation can be read next to both.
+ */
+export interface GatewayBudgetObservation {
+  scope: GatewayBudgetScope;
+  key: string;
+  /** The alias as it read *that day* — a renamed team shows its old name here. */
+  label: string | null;
+  /** UTC calendar day the observation belongs to, `YYYY-MM-DD`. */
+  date: string;
+  /** ISO instant of the sync whose reading this row kept — the last one that day. */
+  observedAt: string;
+  /** LiteLLM's own counter for the period that was in flight at `observedAt`. */
+  spend: number;
+  maxBudget: number | null;
+  softBudget: number | null;
+  budgetDuration: string | null;
+  resetAt: string | null;
+  tpmLimit: number | null;
+  rpmLimit: number | null;
+  blocked: boolean;
+}
+
+/** Everything `GET /api/gateway/budgets/history` returns for a day window. */
+export interface GatewayBudgetHistory {
+  /** The inclusive window asked for, whether or not anything was recorded in it. */
+  from: string;
+  to: string;
+  /**
+   * The earliest day the table holds *any* observation, ignoring the window.
+   *
+   * The one number that separates "this key was never over its cap" from "we
+   * were not watching yet", which is why it is answered outside the range.
+   */
+  recordingSince: string | null;
+  /** Ascending by date, then scope, then key. */
+  observations: GatewayBudgetObservation[];
+}
+
 /* ------------------------------------------------------------------ probe */
 
 /**

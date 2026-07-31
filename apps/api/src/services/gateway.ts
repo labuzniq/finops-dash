@@ -8,6 +8,8 @@ import {
 import type {
   GatewayBreakdownPoint,
   GatewayBudget,
+  GatewayBudgetHistory,
+  GatewayBudgetObservation,
   GatewayBudgets,
   GatewayCoverage,
   GatewayDailyPoint,
@@ -18,7 +20,12 @@ import type {
 import { db } from '../db/client.js';
 import { env } from '../env.js';
 import { createGatewayClient } from '../gateway/index.js';
-import { gatewayBreakdownDaily, gatewayBudget, gatewayDaily } from '../db/schema.js';
+import {
+  gatewayBreakdownDaily,
+  gatewayBudget,
+  gatewayBudgetHistory,
+  gatewayDaily,
+} from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayDailyRow } from '../db/schema.js';
 import { nanoToDollars } from '../lib/nano.js';
 
@@ -165,6 +172,68 @@ export async function getGatewayBudgets(): Promise<GatewayBudgets> {
   });
 
   return { budgets };
+}
+
+/**
+ * What the budgets looked like on each of the last `days` days — the history
+ * `getGatewayBudgets` deliberately does not have.
+ *
+ * One row per governed object per UTC day the sync ran, and nothing is filled
+ * in for a day it did not: a missing day is a day nobody observed, which is a
+ * different fact from "unchanged" and must reach the browser as a hole. The
+ * derivation on the other end is what turns consecutive observations into
+ * resets, cap changes and breaches.
+ *
+ * `recordingSince` is answered outside the window on purpose. Without it, "this
+ * key was never over its cap in the last 30 days" is indistinguishable from
+ * "recording started yesterday", and the first is a finding while the second is
+ * an absence of one.
+ */
+export async function getGatewayBudgetHistory(days: number): Promise<GatewayBudgetHistory> {
+  const to = new Date().toISOString().slice(0, 10);
+  const fromDate = new Date(`${to}T00:00:00.000Z`);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const [rows, earliest] = await Promise.all([
+    db
+      .select()
+      .from(gatewayBudgetHistory)
+      .where(and(gte(gatewayBudgetHistory.date, from), lte(gatewayBudgetHistory.date, to)))
+      .orderBy(
+        asc(gatewayBudgetHistory.date),
+        asc(gatewayBudgetHistory.scope),
+        asc(gatewayBudgetHistory.key),
+      ),
+    db
+      .select({ date: gatewayBudgetHistory.date })
+      .from(gatewayBudgetHistory)
+      .orderBy(asc(gatewayBudgetHistory.date))
+      .limit(1),
+  ]);
+
+  const observations: GatewayBudgetObservation[] = [];
+  for (const row of rows) {
+    const scope = GATEWAY_BUDGET_SCOPES.find((candidate) => candidate === row.scope);
+    if (scope === undefined) continue;
+    observations.push({
+      scope,
+      key: row.key,
+      label: row.label,
+      date: row.date,
+      observedAt: row.observedAt.toISOString(),
+      spend: nanoToDollars(row.spendNano),
+      maxBudget: row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano),
+      softBudget: row.softBudgetNano === null ? null : nanoToDollars(row.softBudgetNano),
+      budgetDuration: row.budgetDuration,
+      resetAt: row.resetAt === null ? null : row.resetAt.toISOString(),
+      tpmLimit: row.tpmLimit,
+      rpmLimit: row.rpmLimit,
+      blocked: row.blocked,
+    });
+  }
+
+  return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
 }
 
 /**

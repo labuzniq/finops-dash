@@ -183,7 +183,19 @@ across rows produces a number with no unit — the card aggregates counts of obj
 governance coverage in keys rather than in dollars. Scopes are a switcher, not two tables, because a
 key's cap and its team's cap govern the same dollars. The one thing derived on top of the proxy's state
 is *pace* — `spend ÷ share of the period elapsed`, linear, null before a sixth of the period has passed
-and null for a counter with no period. **It is a draft against
+and null for a counter with no period. `gateway_budget_history` is the one governance fact that *does*
+have a range, and the only gateway table written by **appending** rather than replacing: the full sync
+files one reading per governed object per UTC day (upserted, so it grows with the gateway and the
+calendar and never with how often the scheduler runs), a backfill files none, and there is no bootstrap
+because the proxy serves current state only. `GET /api/gateway/budgets/history?days=` serves it and
+`lib/metrics/gatewayBudgetHistory.ts` reads consecutive readings as *changes* — a fallen counter rolled
+its period, a moved cap was moved by somebody, a utilisation that crossed 100 crossed it on the day we
+saw it — behind the per-row disclosure on the budget card. It is a **sample, not a series**: an
+unobserved day is unknown rather than unchanged and is never interpolated, a closed period's
+`observedTotal` is a *floor* (the counter is read once a day, the reset is on the proxy's clock), and the
+window is clamped forward to `recordingSince` rather than padded with empty days. A cap *lowered* under a
+standing spend produces a crossing with no spend at all, which is why a crossing is measured against the
+previous reading's own cap and sits on the same day as the cap change explaining it. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
 page) are the affordance for closing them: a live connection check that calls every route the sync needs
@@ -229,7 +241,11 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   Unlike the Copilot metrics, every gateway counter is non-null — the proxy omits what never happened,
   so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
   limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
-  must never be zero-filled.
+  must never be zero-filled, and the same rule carries into `gateway_budget_history`.
+- **A budget observation is a sample, not a series.** `gateway_budget_history` holds one reading per
+  governed object per day the sync ran. A day with no row is a day nobody looked — not zero, not
+  "unchanged" — so nothing derived from it may be interpolated, and a period total read off it is a
+  floor rather than a total.
 - **`last_activity_at` is stored as a timestamp; "days ago" is derived at read time.** Storing the day
   count would go stale overnight.
 - **Every colour, radius, and font comes from `apps/web/src/styles/tokens.css`** — the Nocturne token
