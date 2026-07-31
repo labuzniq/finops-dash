@@ -53,6 +53,10 @@ import {
 } from '../../lib/metrics/gatewayExceptions.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveGatewayLatency, latencyWindow } from '../../lib/metrics/gatewayLatency.js';
+import {
+  deriveGatewaySlowResponses,
+  slowResponseWindow,
+} from '../../lib/metrics/gatewaySlowResponses.js';
 import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
 import {
   deriveSpendLogs,
@@ -71,6 +75,7 @@ import {
   useGatewayExceptions,
   useGatewayHealth,
   useGatewayLatency,
+  useGatewaySlowResponses,
   useGatewayModels,
   useGatewaySealHistory,
   useGatewaySeals,
@@ -103,6 +108,7 @@ import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayExceptionCard } from './GatewayExceptionCard.js';
 import { GatewayLatencyCard } from './GatewayLatencyCard.js';
+import { GatewaySlowResponseCard } from './GatewaySlowResponseCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -630,6 +636,23 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [latencyQuery.data, healthQuery.data],
   );
 
+  // How many of the calls that did not fail hung anyway — the page's fourth and
+  // last live read, and the only one that measures wall clock. Same window rule
+  // and same press-to-read rule as the two sweeps above it; the two parameters
+  // it refuses to fetch for itself are the ledger's request count for the same
+  // days (a disagreement between two tables, shown beside the route's own
+  // denominator and never used as one) and tonight's health reading.
+  const slowRead = useMemo(() => slowResponseWindow(summary.daily), [summary.daily]);
+  const slowQuery = useGatewaySlowResponses(slowRead);
+  const slowResponses = useMemo(
+    () =>
+      deriveGatewaySlowResponses(slowQuery.data ?? null, {
+        ledgerRequests: ledgerRequestsIn(summary.daily, slowRead),
+        health: healthQuery.data ?? null,
+      }),
+    [slowQuery.data, summary.daily, slowRead, healthQuery.data],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -992,6 +1015,24 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               loading={latencyQuery.isFetching}
               error={latencyQuery.error instanceof Error ? latencyQuery.error : null}
               enabled={configured && latencyRead !== null}
+            />
+          </div>
+
+          {/*
+            The last of the four questions about the same window of traffic, and
+            the only one about wall clock: how many calls failed, why, how
+            slowly the rest came back per token — and here, how many ran past
+            the proxy's own alerting threshold and then answered anyway. That
+            call is a success on the reliability card, silent on the exception
+            card, and unremarkable on the latency card if the answer was long.
+          */}
+          <div id="gateway-slow-responses">
+            <GatewaySlowResponseCard
+              view={slowResponses}
+              onRead={() => void slowQuery.refetch()}
+              loading={slowQuery.isFetching}
+              error={slowQuery.error instanceof Error ? slowQuery.error : null}
+              enabled={configured && slowRead !== null}
             />
           </div>
 

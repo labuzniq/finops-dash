@@ -1293,6 +1293,7 @@ What it shows, and why each one is there:
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
 | How slowly the backends answered | The page's only card about **time**, read live on a button press, and the only one whose unit has to be spelled out: seconds per completion token, averaged per request, so nothing on it is a request duration, a percentile or an SLA figure — the one re-reading is its reciprocal, tokens per second. A per-day median across the keys that reported (a median, never a sum: rates do not add) with a thin day drawn dim rather than short, and the deployment keys ranked slowest first with each row's ratio to the gateway median, its fastest and slowest day, and the gate that stopped a badge where one did not land. Every row is joined to tonight's health reading — and because this route keys a row by its `api_base` alone, a base fronting deployments the reading disagrees about reads **mixed** rather than being attributed to either |
+| How many calls hung | The last of the four questions about one window of traffic, read live on a button press: how many requests ran past **the proxy's own alerting threshold** — a number the response does not carry, so no figure on the card carries a duration and two proxies' counts are not comparable. Every share is taken against the route's **own** denominator (request-log rows, cache hits excluded upstream), with the ledger's count for the same days beside it as a disagreement between two tables and never as a divisor. Endpoints rank by hangs, each with its rate, its ratio to the gateway, the aliases that routed to it, the gate that stopped a badge where one did not land, and tonight's health verdict — except the `api_base`-less bucket, which takes **no** verdict: it is not an endpoint, so there is nothing to look it up by |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
 | Deployment health over time | The same nightly readings kept as a sequence — the one thing the snapshot above structurally cannot say: which deployments have been refusing for nights rather than for one evening. A strip per deployment with three states (answering, failing, **no reading filed**), the gateway-wide failing count per night, standing faults first, then anything failing now, then intermittence — every figure a count of **readings**, never a duration or an availability percentage. A recording too short to hold a standing run says so instead of reporting a clean sheet |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
@@ -1309,7 +1310,7 @@ What it shows, and why each one is there:
 | Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-eight decisions worth keeping:
+Twenty-nine decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1775,7 +1776,7 @@ Twenty-eight decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because twenty cards each flagging their own faults means every
+  their findings in one list, because twenty-one cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -2170,6 +2171,53 @@ Twenty-eight decisions worth keeping:
   presses it would either report a blind spot on every visit or make the digest
   depend on whether anybody clicked. What it adds is evidence under an existing
   finding — a pool that is refusing *and* slow.
+
+- **The hang card counts against a line it cannot see, and says so first.** It
+  sits directly under the latency card and is the fourth question about the same
+  window: how many calls failed, why, how slowly the rest came back per token —
+  and here, how many ran for minutes and then answered anyway. That request is a
+  success on the reliability card, silent on the exception card, and, if the
+  answer was long, unremarkable on the latency card.
+
+  **No duration, anywhere, ever.** The threshold is the proxy's own
+  `alerting_threshold` and is not in the response, so the disclosure line leads
+  with that rather than footnoting it: the count is "requests past this proxy's
+  threshold", `SLOW_RESPONSE_DEFAULT_THRESHOLD_SECONDS` appears as prose about
+  the likely configuration and never as a label on a reading, and the card
+  states that the same workload on another proxy would answer a different
+  number.
+
+  **Every share is of the route's own denominator.** `total_count` is the
+  request-log rows the proxy grouped with cache hits excluded, which is neither
+  the ledger's request count nor a subset of it by a knowable margin. The
+  ledger's figure for the same days is shown beside it as a ratio between two
+  independently pruned tables — unclamped, like the exception card's
+  `recordedShare` — and *nothing on the card is divided by it*.
+
+  **Both badge gates, and this is the only live read that can afford them.**
+  The payload carries hits and trials, so `wilsonScoreLowerBound` asks whether a
+  difference is real and `SLOW_RESPONSE_ELEVATED_RATIO` asks whether it is worth
+  an afternoon — the reliability card's design, where exceptions get no gate
+  (no denominator) and latency gets one (the counts were averaged away). An
+  unbadged row names which gate rejected it, because "two hangs out of three
+  calls" and "0.6% against 0.53%" are opposite complaints.
+
+  **The bucket takes no health verdict.** This route keys a row by the
+  `api_base` alone with no fallback, so every deployment addressed by region
+  rather than by URL is one `UNKEYED_DEPLOYMENT` row per sweep. It is not an
+  endpoint, so the join does not run on it — `unkeyed`, a fifth state beside the
+  latency card's four, and deliberately not matched against health rows that
+  merely happen to carry no `api_base` either: two unrelated absences are not a
+  match, and reading them as one would file a Bedrock fleet's hangs under
+  whichever deployment this proxy failed to give a URL.
+
+  **Most hangs and worst hang rate are different rows, and both are named.**
+  Rows rank by hangs (the endpoint carrying the most of them is the one somebody
+  acts on) while the bars are scaled to the highest *share*, because the busiest
+  endpoint and the worst one are usually not the same one.
+
+  **Three silences again**, and **it feeds no finding to the attention digest**
+  — the button's reason, the same as the latency card's.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -3036,6 +3084,35 @@ third independent payload — while the sibling is not failing, which is why the
 alias reads as ordinary everywhere else. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-latency-view.ts`.
 
+`apps/api/scripts/verify-gateway-slow-responses-view.ts` covers what the *page*
+does with the hang counts, and its centre of gravity is again the join — for the
+opposite reason to the latency one. The **pure** half keeps the three silences
+apart, pins the window as the tail of the trimmed spine under the route's own
+cap, and checks the roll-up the card draws: one endpoint answering two aliases
+is one row with both aliases kept and the counts *added*, the gateway rate is
+the sweep's own, the per-key shares of all hangs sum to one, and the row with
+the most hangs and the row with the highest hang *share* are asserted to be
+different rows, since scaling the bars by the first would flatten the second.
+Both badge gates are driven from both sides on a fixture built so the gateway
+rate is not itself dragged by the key under test: a key 7.5× the rate over 400
+hangs is badged, the highest share in the window (two of three calls) is refused
+by the minimum-count floor, a key that is *certainly* worse and only 1.13× is
+refused by the ratio, and a key below the gateway rate is refused by the
+interval — with `slowResponseBadgeReason` asserted to name a different gate in
+each case. The ledger comparison is checked to move nothing on the card, to read
+past 100% unclamped, and to be absent rather than zero where the spine does not
+cover the window. The join gets five states, and the one this route forces is
+the point: the `api_base`-less bucket reads **`unkeyed`** even when the health
+reading carries a deployment with no `api_base` of its own, which would
+otherwise look exactly like a match. The **mock** half drives
+`fetchModelSlowResponses` and `fetchHealth` together: the refusing PTU pool is
+the one badged key and the reading names the same endpoint (a third independent
+payload about one deployment, after the error log and the latency aggregate),
+the two-day incident averages away below the badge, the whole Bedrock fleet
+arrives as one unattributable bucket, and the sweep's denominator is *short* of
+the ledger's requests for the same days. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-responses-view.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -3388,24 +3465,19 @@ Governance is now rendered end to end across all four scopes
   carry real durations (`/spend/logs`) is the head of the window rather than a
   draw from it.
 
-- **A view on the hang counter.** `GET /api/gateway/slow-responses` is read
-  end to end on the API side and nothing renders it yet. The shape the layer
-  already forces on that card is worth stating before it is written, because
-  three of its rules are not negotiable. It may not put a number of seconds
-  anywhere: the threshold is the proxy's `alerting_threshold` and is not in the
-  response, so the reading is "past the proxy's own alerting threshold" and
-  nothing more. It may not express a hang count as a share of gateway traffic:
-  the denominator here excludes cache hits and comes from another table, so the
-  only honest share is of this route's own total. And its rows are endpoints
-  rather than deployments — every Bedrock deployment of every alias is one
-  bucket — so a health verdict joined onto a row can only ever be a verdict
-  about the whole endpoint, which is the `mixed` state the latency card already
-  needed for a coarser reason.
+- **Alerting on hangs, and a hang trend.** The card is built; the layer under it
+  still stores nothing, so a hang episode cannot travel to a webhook and cannot
+  be compared with last week. Both need the same thing the exception and latency
+  layers need — a stored per-key roll-up per day — and this is the one of the
+  three whose payload could support it cleanly, since it carries a count and its
+  own denominator rather than an average. Until then the card is a read somebody
+  takes, and the digest deliberately does not carry it.
 
-  What it *can* do that no existing card can: name a deployment that is failing
-  nothing, billing normally and answering after minutes. That is the one fault
-  the reliability, exception and latency cards are each structurally blind to,
-  and it is why the badge here gets both gates rather than one.
+  What structurally cannot come from this route however it is stored: a
+  duration, a percentile, a comparison against another proxy's counts, a share
+  of gateway traffic, or a hang attributed to a deployment inside the
+  `api_base`-less bucket. The first three are the missing threshold, the fourth
+  is the route's own denominator, and the last is the `GROUP BY`.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

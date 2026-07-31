@@ -13,6 +13,7 @@ import type {
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
+  GatewaySlowResponses,
   GatewaySpendLogs,
   GatewayUsage,
 } from '@dash/shared';
@@ -29,6 +30,7 @@ import {
   fetchGatewayProbe,
   fetchGatewaySealHistory,
   fetchGatewaySeals,
+  fetchGatewaySlowResponses,
   fetchGatewaySpendLogs,
   fetchGatewayStatus,
   fetchGatewayUsage,
@@ -328,6 +330,25 @@ export function useGatewayLatency(window: { from: string; to: string } | null) {
   return useQuery<GatewayLatency>({
     queryKey: ['gateway', 'latency', window?.from ?? 'none', window?.to ?? 'none'],
     queryFn: () => fetchGatewayLatency(window?.from ?? '', window?.to ?? ''),
+    enabled: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+    gcTime: 10 * 60_000,
+  });
+}
+
+/**
+ * How many calls hung over a window, read on demand.
+ *
+ * The fifth gateway query that does not run on mount, and it carries the same
+ * two reasons as the latency read: a round trip per alias, over the proxy's
+ * largest table. `refetch()` is the trigger and the answer is cached under the
+ * window, so pressing it again for the same days costs nothing.
+ */
+export function useGatewaySlowResponses(window: { from: string; to: string } | null) {
+  return useQuery<GatewaySlowResponses>({
+    queryKey: ['gateway', 'slow-responses', window?.from ?? 'none', window?.to ?? 'none'],
+    queryFn: () => fetchGatewaySlowResponses(window?.from ?? '', window?.to ?? ''),
     enabled: false,
     staleTime: 5 * 60_000,
     retry: false,

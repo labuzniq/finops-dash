@@ -497,8 +497,19 @@ the counts arrive from `COUNT(*)`/`SUM(...)`, so a `bigint` handed back as a str
 row with no total is dropped rather than zero-filled. The roll-up is per *key* rather than per
 (alias, key) pair — the opposite of the latency layer, and forced by the route, since one endpoint
 answering four aliases returns four disjoint request counts of one deployment's traffic and counts,
-unlike rates, may be added. The API side is read end to end; the card is not built, and the shape the
-layer forces on it is recorded in `docs/litellm-gateway.md`.
+unlike rates, may be added. `lib/metrics/gatewaySlowResponses.ts` and `GatewaySlowResponseCard` are
+what read it, directly under the latency card and never in place of it — the four are the same traffic
+asked how many failed, why, how slowly the rest came back, and how many ran for minutes and then
+answered anyway. The module adds no rule about the gateway (the shared roll-up is the whole statement)
+and five about the *reading*: the missing threshold is the card's opening line rather than a footnote,
+so no figure carries a duration; every share is of the route's own denominator, with the ledger's count
+for the same days shown beside it as an unclamped disagreement between two tables and used as a divisor
+nowhere; the badge carries **both** gates, which no other live read can afford, and an unbadged row
+names which one rejected it; rows rank by hangs while the bars scale to the worst hang *share*, because
+the busiest endpoint and the worst one are rarely the same one; and the `UNKEYED_DEPLOYMENT` bucket
+takes **no** health verdict — `unkeyed`, a fifth state beside the latency card's four, and deliberately
+not matched against health rows that merely also carry no `api_base`, since two unrelated absences are
+not a join. It is read on a press and feeds no digest finding, for the latency card's reason.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`

@@ -14,6 +14,7 @@ import type {
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
+  GatewaySlowResponses,
   GatewaySource,
   GatewaySpendLogs,
   GatewayUsage,
@@ -387,6 +388,25 @@ export function fetchGatewayExceptions(from: string, to: string): Promise<Gatewa
 export function fetchGatewayLatency(from: string, to: string): Promise<GatewayLatency> {
   const query = new URLSearchParams({ from, to });
   return request<GatewayLatency>(`/gateway/latency?${query.toString()}`);
+}
+
+/**
+ * How many calls hung over a window, per endpoint — the only reading of wall
+ * clock the proxy will aggregate.
+ *
+ * Live and stored nowhere like the three reads above it, and manual for both of
+ * their reasons at once: it counts `LiteLLM_SpendLogs` rows (so
+ * `disable_spend_logs` empties it and its retention is the log's) and it filters
+ * on one alias at a time with no wildcard, so a read is a round trip per model.
+ * The threshold it counts against is the proxy's own and is not in the
+ * response — nothing downstream may attach seconds to what comes back.
+ */
+export function fetchGatewaySlowResponses(
+  from: string,
+  to: string,
+): Promise<GatewaySlowResponses> {
+  const query = new URLSearchParams({ from, to });
+  return request<GatewaySlowResponses>(`/gateway/slow-responses?${query.toString()}`);
 }
 
 /**
