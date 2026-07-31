@@ -13,6 +13,8 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDailyPoint,
+  GatewayDeployment,
+  GatewayHealth,
   GatewayModelPrice,
   GatewayModels,
   GatewayProbe,
@@ -27,6 +29,7 @@ import {
   gatewayBudget,
   gatewayBudgetHistory,
   gatewayDaily,
+  gatewayDeploymentHealth,
   gatewayModel,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
@@ -241,6 +244,57 @@ export async function getGatewayModels(): Promise<GatewayModels> {
   });
 
   return { models };
+}
+
+/**
+ * Every deployment as the last full sync found it.
+ *
+ * No query parameters, like the budget snapshot and the catalogue: this is
+ * current state, not a range. `checkedAt` is lifted out of the rows because the
+ * whole table is written in one transaction and therefore shares one reading —
+ * and because it has to survive an empty table, where "the router offers no
+ * deployments" and "`/health` has never answered" are different answers and only
+ * the timestamp separates them.
+ *
+ * Ordered unhealthy-first and then by name, so the rows a reader is looking for
+ * are the rows at the top. The alias-level up/degraded/down reading is
+ * `summarizeDeploymentHealth` in `@dash/shared` and is deliberately not
+ * pre-computed here: it is pure, the browser derives every other gateway card
+ * the same way, and a server-side copy would be a second answer to the same
+ * question.
+ */
+export async function getGatewayHealth(): Promise<GatewayHealth> {
+  const rows = await db.select().from(gatewayDeploymentHealth);
+
+  const deployments: GatewayDeployment[] = rows.map((row) => ({
+    id: row.id,
+    backend: row.backend,
+    model: row.model,
+    provider: row.provider,
+    apiBase: row.apiBase,
+    healthy: row.healthy,
+    error: row.error,
+    errorStatus: row.errorStatus,
+    checkedAt: row.checkedAt.toISOString(),
+  }));
+
+  deployments.sort((a, b) => {
+    if (a.healthy !== b.healthy) return a.healthy ? 1 : -1;
+    return (
+      (a.model ?? a.backend).localeCompare(b.model ?? b.backend) ||
+      a.backend.localeCompare(b.backend)
+    );
+  });
+
+  // The newest reading in the table. They are all written together, so this is
+  // one value rather than a maximum in any interesting sense — but reading it
+  // off the rows keeps it true if a future partial write ever changes that.
+  const checkedAt = deployments.reduce<string | null>(
+    (latest, row) => (latest === null || row.checkedAt > latest ? row.checkedAt : latest),
+    null,
+  );
+
+  return { deployments, checkedAt };
 }
 
 /**

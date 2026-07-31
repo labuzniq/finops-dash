@@ -199,6 +199,83 @@ covering input, output and both cache operations together, which is precisely
 why `lib/metrics/gatewayCache.ts` reports tokens and refuses dollars. Four rates
 per model are what lifts that refusal.
 
+### The health endpoints (which deployment is up)
+
+Everything above is keyed by something a *caller* can name — an alias, a key, a
+team, a tag. `/health` is keyed by a **deployment**: the individual Azure
+Foundry / Azure OpenAI / Bedrock endpoint the router picked, which is a
+resolution the daily aggregates simply do not have.
+
+```
+GET /health              → { "healthy_endpoints": [ … ], "unhealthy_endpoints": [ … ],
+                             "healthy_count": n, "unhealthy_count": n }
+GET /health/readiness    → { "status": "healthy", "db": "connected", … }   (no auth)
+```
+
+That gap is the whole argument for reading it. LiteLLM load-balances several
+deployments behind one public alias and **fails over silently** between them, so
+an alias with three regions and one of them dead answers every request, bills
+normally, and shows nothing at all on the reliability card. It is running on a
+third less capacity and no other route says so. Which makes the statement worth
+storing one about the *alias*:
+
+- **down** — every deployment behind it is failing, so there is nowhere to fail
+  over to. This is the only state the usage payload would eventually see, as
+  failures, tomorrow.
+- **degraded** — some failing, some not. The alias still answers. Invisible in
+  spend and in failures alike, and the reason this table exists.
+- **up** — nothing failing.
+
+Four things about the envelope, none of them shared with the other four:
+
+- **It is not a table.** Two lists, and *which list an entry is in* is its
+  state — there is no status field to read.
+- **An entry is that deployment's `litellm_params` with the secrets removed.**
+  LiteLLM's `ILLEGAL_DISPLAY_PARAMS` drops `api_key`, `messages`, the Vertex and
+  AWS credentials and the raw exception object, so what survives is the routing
+  string (`model`), usually `api_base`, usually `model_id`, and — on a failure —
+  an `error` string and the `exception_status` copied off the upstream error.
+  There is no public alias anywhere in it, which is why the alias is a **join**:
+  `resolveDeploymentModel` in `@dash/shared` is `resolveModelPrice` run
+  backwards, matching a routing string against the catalogue's `backend` and
+  then its `model`, with **no suffix matching** — filing a deployment under an
+  alias it does not serve would name the wrong model as degraded.
+- **`model_id` is what makes two deployments two rows.** Without it the routing
+  string is the id, which collapses a load-balanced pool into one row. That is a
+  real loss of resolution, so the id is tried first — but a single row saying
+  "azure/gpt-4o is failing" still beats dropping the entry.
+- **A proxy may legitimately strip the detail.** `health_check_details: false`
+  answers only `{"model": …}` per entry (`MINIMAL_DISPLAY_PARAMS`), which is a
+  reasonable hardening choice on a widely exposed gateway: the deployment is
+  still named and its state is still known, and only the URL and the error text
+  go missing. An absent `api_base` is not a fault — and on Bedrock it is not even
+  stripped detail, since those deployments are addressed by region rather than
+  by URL.
+
+**`/health` is the one route that does something rather than reading a table.**
+Unless the proxy is configured with `background_health_checks: true`, it issues a
+one-token test call to *every* deployment while answering. Three consequences,
+all of them encoded rather than documented-and-hoped:
+
+- the sync takes it **once per nightly full run** and a backfill takes it not at
+  all, exactly as with governance;
+- its timeout is three minutes rather than thirty seconds, because a corporate
+  gateway with fifty deployments answers slowly and correctly;
+- and a failure there is **swallowed** rather than propagated. It is the only
+  ride-along whose error does not fail the sync, and the asymmetry is
+  deliberate: a budget or catalogue read is two fast table lookups, so a failure
+  says something is wrong with the proxy, while a health check is a fan-out of
+  live calls that can time out on a gateway which is otherwise perfectly well.
+  Failing a sync that has already fetched ninety days because an operational
+  garnish was slow is the wrong trade. A skipped read leaves the last reading
+  standing with its own `checked_at` on it, rather than blanking the table into
+  "no deployments".
+
+`/health/readiness` is the free one — unauthenticated, no upstream calls, and it
+answers the question *upstream* of every other route: is the proxy up, and can it
+reach its own database. That is why it, and not `/health`, is the eighth route on
+the connection check.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -255,6 +332,18 @@ today. `/model/info` is independently optional like the other management routes,
 and there is no history table beside it — a price change is rare, and the one
 that matters is the one in force when the spend was billed, which the spend
 already carries.
+
+And the same job takes a **deployment health** reading and replaces
+`gateway_deployment_health` entire, under the same rule for a third time: a
+deployment the router no longer offers must lose its row rather than sit on the
+page as a permanent outage nobody can clear. It is the one ride-along with a cost
+attached — on a proxy without `background_health_checks`, `/health` issues a live
+test call to every deployment while answering — which is why a backfill skips it
+and why a failure there is logged and swallowed instead of failing the job. The
+alias each deployment serves is resolved in the sync rather than in the client,
+because the sync is the only place both snapshots exist: joining today's
+deployments against a stored catalogue would be joining them to yesterday's price
+list.
 
 Both management routes are optional in the same sense the team and tag activity
 routes are: an analytics-only credential is a perfectly reasonable thing to
@@ -453,6 +542,17 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   alert somebody received disagree with the card they open to check it, which is
   strictly worse than the digest's two-answers failure because one of the
   answers is already out of the building.
+- **Deployment health is keyed below the alias, and the alias reading is the
+  only one worth making.** `gateway_deployment_health` is one row per
+  deployment — the resolution `gateway_daily` does not have. LiteLLM fails over
+  silently between the deployments of one alias, so an alias is **down** only
+  when *every* deployment behind it is failing, and **degraded** when some are:
+  a degraded alias bills normally, fails nothing, and is invisible on every other
+  card. `model` on that table is a *resolved* column, never a fetched one, and a
+  deployment the catalogue could not name is stored as null rather than filed
+  under a near-match — naming the wrong model as degraded is worse than naming
+  none.
+
 - **Nothing outside `apps/api/src/gateway/` knows which source is active** —
   the same rule `copilot/` follows.
 
@@ -578,6 +678,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and the enforced counter per key, team and configured tag, grouped in `GATEWAY_BUDGET_SCOPES` order and each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
 | `GET` | `/api/gateway/budgets/history?days=` | What those same budgets read on each of the last `days` days (default 60, max 365) — the dashboard's own recording, since the proxy serves current state only. Nothing is filled in for a day no sync ran. `recordingSince` is answered *outside* the window, because "never over its cap" and "we started watching yesterday" are otherwise the same answer. |
 | `GET` | `/api/gateway/models` | `{ models }` — the proxy's configured price list as of the last full sync: per-model input/output/cache rates in dollars per million tokens, context window, modality and provider. Cheapest input first, with the unpriced models last. No parameters: state, not a range, and deliberately not folded into `/api/gateway`, which is a date range. |
+| `GET` | `/api/gateway/health` | `{ deployments, checkedAt }` — every deployment as the last full sync found it, failing ones first: routing string, resolved alias (null when the catalogue could not name it), provider, endpoint, state, the proxy's own error text and the upstream status. A *stored* reading rather than a live one, deliberately: forwarding `/health` would let a browser refresh bill a test call per deployment. `checkedAt` is null when it has never answered, which is not the same as a proxy that routes nothing. |
 | `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
 | `GET` | `/api/gateway/months` | `{ seals }` — every calendar month that has been sealed, newest first, with the totals as recorded. Headers only; no parameters. |
 | `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `?revision=` quotes a *replaced* statement by number; omitted, it answers with the current one. `404` when the month was never sealed (or has no such revision), carrying the `check` that says why (still running, or missing days to backfill). |
@@ -594,11 +695,22 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 `GET /api/gateway/probe`, behind **Test connection** on the `Data sources`
 page (`apps/web/src/components/sources/GatewayProbePanel.tsx`). It calls every
 route the sync depends on — the three activity routes for a single day, then
-`/key/list`, `/team/list`, `/tag/list` and `/model/info` — and reports what each
-one answered. `/model/info` judges itself on *priced* rows rather than returned
+`/key/list`, `/team/list`, `/tag/list`, `/model/info` and `/health/readiness` —
+and reports what each one answered. `/model/info` judges itself on *priced* rows rather than returned
 ones, for the same reason `/tag/list` judges itself on governed ones: a proxy can
 answer every deployment it routes to and know the price of none of them, and a
 catalogue of those prices nothing.
+`/health/readiness` is the one route on the panel the sync does **not** call, and
+the one route the sync calls that the panel does not. The sync reads `/health`,
+which issues a live test call to every deployment; probing that would bill the
+corporation a token per model per press, and a probe has to be free to press or
+nobody presses it. Readiness is the honest substitute — unauthenticated, no
+upstream calls, and it answers the question *upstream* of every other row: a
+proxy that cannot reach its own database explains the whole panel at once. It
+also has no rows to be empty of, so it reports `ok` or the status that says why
+not, and a `503` there classifies as `unreachable` rather than `denied` precisely
+because no credential was involved.
+
 `/tag/list` is the one route where `empty` is counted on the *governed* rows
 rather than on the response: a proxy that answers forty dynamic tags and no
 configured one has nothing to put on the budget card, which is the same
@@ -1800,6 +1912,27 @@ throwing. The pure join is checked in the same section: the alias resolves, the
 fully qualified backend resolves, a provider-prefixed key falls back to the
 deployment name, and a plausible near-miss resolves to nothing.
 
+`/health` gets the last of the wire sections, and it is the only envelope that
+is not a table: two lists, and which list an entry is in *is* its state. What it
+pins is the shapes a real proxy can legitimately send and a naive reader would
+mangle — an error string and an `exception_status` arriving as a number on one
+entry and as a string on the next, a `mode_error` standing in as the message when
+there is no other, a stray `error` on a *healthy* entry ignored (the list decides
+the state, not the keys), a Bedrock deployment with no `api_base` at all, a
+`custom_llm_provider` preferred over the prefix inferred from the routing string,
+an entry naming no deployment dropped rather than stored blank, the
+details-stripped (`health_check_details: false`) form still naming every
+deployment and its state, the `model_id` fallback collapsing a pool to one row
+per alias, a deployment reported in *both* lists resolving to the failing row,
+all five absent statuses yielding no deployments and no error, and a malformed
+body throwing rather than reporting a gateway with nothing behind it. The two
+pure functions are checked in the same section: `resolveDeploymentModel` matching
+on backend then alias and refusing a near miss, and `summarizeDeploymentHealth`'s
+up/degraded/down rule over constructed rows — including that the counts
+reconcile, that the unnamed deployments are a bucket rather than a merge, that
+three regions failing identically is one fault, and that an empty gateway
+summarises to nothing rather than to a healthy one.
+
 A section then checks the pure budget arithmetic in `@dash/shared`,
 because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
 `1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
@@ -1834,8 +1967,24 @@ unpriced rows sorted last but still visible, and a planted retired model cleared
 by the next full sync, since the catalogue is replaced wholesale. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-catalog.ts`.
 `verify-gateway-range-sync.ts` carries the matching negative: a sentinel row in
-`gateway_model`, like the one in `gateway_budget`, that a backfill must leave
-standing.
+`gateway_model`, like the one in `gateway_budget` and the one in
+`gateway_deployment_health`, that a backfill must leave standing.
+
+`apps/api/scripts/verify-gateway-health.ts` covers the three things the fake
+proxy cannot answer about deployment health. The **join** — `/health` reports
+routing strings and `/model/info` reports aliases, and only the sync holds both,
+so the mock's retired `azure/gpt-35-turbo` deployment must be the one and only
+row that fails to resolve, and every row that does resolve must land on an alias
+the catalogue actually carries. The **reading nothing else can make** — the whole
+argument for the table is that a *degraded* alias is invisible in spend and in
+failures, which is checkable rather than assertable: the mock's degraded
+`azure/gpt-4o` must still be billing on the same days its PTU pool is refusing,
+and its failure rate must sit below the 1.5× materiality gate the reliability
+card would need to badge it (2.81% against 3.49% gateway-wide). And the **blast
+radius** — a full sync stores every deployment, an unresolved alias survives as
+null, a null `api_base` survives as null, and a planted sentinel row is still
+there after a ranged backfill. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-health.ts`.
 
 It cannot confirm that a real proxy *sends* these shapes — that is still an open
 question below. It is, though, the harness for answering it: drop a captured
@@ -1925,6 +2074,25 @@ job's error string.
     `prompt_tokens` rather than inside it, which is a one-line change to
     `uncachedInputTokens` — but it must be *seen*, not assumed, which is why the
     detector exists and the convention is not simply a comment.
+13. **Does `/health` carry `model_id`, and does this proxy run background
+    health checks?** Two questions with one consequence each, and only the first
+    is about correctness. Without `model_id` the routing string becomes the id,
+    which collapses a load-balanced pool into a single row — the client handles
+    it and says so in the logs, but a gateway whose PTU pool and pay-as-you-go
+    fallback share one row can never read as *degraded*, only as up or down. The
+    second is about cost: with `background_health_checks: true` the nightly sync
+    reads a cached result for nothing, and without it the sync issues a
+    one-token test call to every deployment once a night. Neither is knowable
+    from the response — nothing in it says which of the two happened — so both
+    are questions for whoever configures the proxy, and the recommendation is
+    the same one LiteLLM's own docs make: turn background checks on.
+14. **Is the routing string in `/health` the same string `/model/info` reports
+    as `litellm_params.model`?** The alias join assumes so, and on the mock it
+    is true by construction. If a real proxy normalises one of them (a trailing
+    region suffix, a case difference) every deployment resolves to null and the
+    health card reports a gateway of unnamed endpoints — which is visible rather
+    than silent, since `unnamed` is a first-class count, but it is the first
+    thing to check against a live proxy.
 
 ## Not yet built
 
@@ -1983,6 +2151,25 @@ Governance is now rendered end to end across all three scopes
   so a substitution suggestion needs a quality signal the proxy does not export,
   and the card deliberately stops at reporting rates rather than recommending
   routes.
+- **The health *view*.** `gateway_deployment_health` is fetched, resolved,
+  stored and served (`GET /api/gateway/health`), and `summarizeDeploymentHealth`
+  in `@dash/shared` is the pure up/degraded/down reading a card would render —
+  but no card renders it yet. That is the next step and the shape is settled:
+  the alias list worst-first with each alias's deployments under it, the provider
+  rollup beside it (a whole cloud going dark is a different incident from one
+  model), the reading's own age on it, and the digest picking up `down` as
+  critical and `degraded` as a warning. What it must not do is present itself as
+  live: the reading is nightly, so a card that does not lead with *when* it was
+  taken would be read as current.
+
+- **History of an outage.** Health is a snapshot like budgets were before
+  iteration 23, so "was this deployment already failing last Tuesday" is
+  unanswerable. The fix is the same one budgets got — append a daily observation
+  beside the snapshot — and it is deliberately not built yet, because a nightly
+  sample of a thing that recovers in minutes is a much weaker signal than a
+  nightly sample of a budget counter, and it is worth knowing whether the
+  snapshot is useful before recording a year of it.
+
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.

@@ -35,6 +35,7 @@ import {
   gatewayBreakdownDaily,
   gatewayBudget,
   gatewayDaily,
+  gatewayDeploymentHealth,
   gatewayModel,
   refreshJobs,
 } from '../src/db/schema.js';
@@ -244,6 +245,23 @@ if (client === null) {
       priceVaries: false,
     });
 
+    // And deployment health is the third, scoped by the same rule for the same
+    // reason: which endpoint is up now has nothing to do with a repaired day in
+    // May, and re-reading it would also mean a backfill triggers a live test
+    // call against every backend.
+    const HEALTH_SENTINEL = 'verify-range-sync/sentinel-deployment';
+    await db.delete(gatewayDeploymentHealth).where(eq(gatewayDeploymentHealth.id, HEALTH_SENTINEL));
+    await db.insert(gatewayDeploymentHealth).values({
+      id: HEALTH_SENTINEL,
+      backend: 'azure/sentinel',
+      model: null,
+      provider: null,
+      apiBase: null,
+      healthy: false,
+      error: null,
+      errorStatus: null,
+    });
+
     await db.delete(gatewayDaily).where(inArray(gatewayDaily.date, targets));
     await db.delete(gatewayBreakdownDaily).where(inArray(gatewayBreakdownDaily.date, targets));
 
@@ -295,6 +313,13 @@ if (client === null) {
       .where(eq(gatewayModel.model, MODEL_SENTINEL));
     check(modelSentinel !== undefined, 'a ranged sync wiped the model catalogue');
     await db.delete(gatewayModel).where(eq(gatewayModel.model, MODEL_SENTINEL));
+
+    const [healthSentinel] = await db
+      .select()
+      .from(gatewayDeploymentHealth)
+      .where(eq(gatewayDeploymentHealth.id, HEALTH_SENTINEL));
+    check(healthSentinel !== undefined, 'a ranged sync wiped deployment health');
+    await db.delete(gatewayDeploymentHealth).where(eq(gatewayDeploymentHealth.id, HEALTH_SENTINEL));
 
     // Breakdown rows are deleted and re-inserted per date like the daily ones;
     // a backfilled day with no breakdown at all would leave every card on the

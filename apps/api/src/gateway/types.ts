@@ -102,6 +102,25 @@ export interface GatewayModelSnapshot {
   priceVaries: boolean;
 }
 
+/**
+ * One deployment as `GET /health` last reported it — the router's own view of a
+ * single Azure/Bedrock endpoint rather than of the alias in front of it.
+ *
+ * `model` is deliberately absent here: the client reads `/health`, which reports
+ * routing strings and never public aliases, so resolving the alias is a *join*
+ * against the catalogue and belongs to the sync, which holds both snapshots.
+ */
+export interface GatewayHealthSnapshot {
+  /** `model_info.id`, or the routing string when the proxy reported no id. */
+  id: string;
+  backend: string;
+  provider: string | null;
+  apiBase: string | null;
+  healthy: boolean;
+  error: string | null;
+  errorStatus: number | null;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -122,6 +141,17 @@ export interface GatewayClient {
    * a usage sync rather than a precondition for one. `[]` is a supported answer.
    */
   fetchModels(): Promise<GatewayModelSnapshot[]>;
+  /**
+   * Per-deployment health, from the router rather than from the usage tables.
+   *
+   * Optional exactly like the other two management reads, and with one extra
+   * caveat of its own: unless the proxy is configured with
+   * `background_health_checks`, `/health` performs a live test call against
+   * every deployment while answering. That is a real (small) cost on a real
+   * gateway, which is why it is taken once per nightly full sync and never on a
+   * backfill, and why nothing in the dashboard calls it behind a button.
+   */
+  fetchHealth(): Promise<GatewayHealthSnapshot[]>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

@@ -191,8 +191,8 @@ suppressing sub-cent settles from the list while still counting them in `unattri
 the dimension's lines do not account for, reported and never spread, for the same reason the statement's
 `unallocated` row is.
 Everything above is
-*usage*; `gateway_model` and `gateway_budget` are the two gateway tables that are
-not. `gateway_model` is the proxy's configured **price list** from
+*usage*; `gateway_model`, `gateway_budget` and `gateway_deployment_health` are the
+three gateway tables that are not. `gateway_model` is the proxy's configured **price list** from
 `/model/info` — one row per public model alias, replaced wholesale by the full
 sync and served by `GET /api/gateway/models`. It is a fourth management envelope
 (`{"data": […]}`, one entry per *deployment*, three nested objects each), and
@@ -229,7 +229,28 @@ rounding and below any discount worth naming — and never flags or aggregates a
 `priceVaries` row, whose estimate is a lower bound by construction. It is pinned
 to the `model` dimension rather than the switcher, like the agent and adoption
 cards: a catalogue prices models, and a team's $/1M is a fact about its mix.
-`gateway_budget` is the other. It is a snapshot of the proxy's
+`gateway_deployment_health` is the third, and the only gateway table keyed
+*below* the model alias: one row per deployment, from `GET /health` (a fifth
+envelope — two lists, and which list an entry is in *is* its state), replaced
+wholesale by the full sync and served by `GET /api/gateway/health`. It exists
+because LiteLLM fails over silently between the deployments behind one alias, so
+an alias with a dead region bills normally, fails nothing, and is invisible on
+every other card — which makes **degraded** (some deployments failing, the alias
+still answering) the finding no usage payload can produce, as against **down**
+(all of them failing), which it merely produces late, as failures tomorrow.
+`summarizeDeploymentHealth` in `@dash/shared` is the one place that rule is
+written. Three things about it are load-bearing: `/health` reports routing
+strings and never public aliases, so `model` is a column the *sync* resolves via
+`resolveDeploymentModel` (`resolveModelPrice` run backwards, no suffix matching —
+naming the wrong model as degraded is worse than naming none) against the
+catalogue fetched in the same run; `model_id` is what makes two deployments two
+rows, and a proxy that omits it collapses a load-balanced pool into one that can
+never read as degraded; and `/health` is the only route the sync calls that *does
+something* — without `background_health_checks` it issues a live test call to
+every deployment while answering, which is why a backfill skips it, why its
+timeout is three minutes, why a failure there is swallowed rather than failing
+the sync, and why the connection check probes the free `/health/readiness`
+instead. `gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
 by the same sync and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means
@@ -373,6 +394,14 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   counted) when no target is configured. Every state a notification carries comes from `assessBudget` in
   `@dash/shared` — the same function the budget card and the digest read — because an alert that has
   already left the building must not disagree with the card the reader opens to check it.
+- **Deployment health is keyed below the alias, and an alias is only `down` when
+  every deployment behind it is failing.** `gateway_deployment_health` holds one
+  row per deployment — the resolution `gateway_daily` does not have. A
+  **degraded** alias (some failing, some not) bills normally and fails nothing,
+  so it is invisible on every other card, which is the whole reason the table
+  exists. `model` there is *resolved*, never fetched, and a deployment the
+  catalogue could not name is stored as null rather than filed under a
+  near-match.
 - **`last_activity_at` is stored as a timestamp; "days ago" is derived at read time.** Storing the day
   count would go stale overnight.
 - **Every colour, radius, and font comes from `apps/web/src/styles/tokens.css`** — the Nocturne token

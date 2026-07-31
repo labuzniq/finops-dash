@@ -1,4 +1,5 @@
 import { inArray, sql } from 'drizzle-orm';
+import { resolveDeploymentModel } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
 import {
@@ -6,6 +7,7 @@ import {
   gatewayBudget,
   gatewayBudgetHistory,
   gatewayDaily,
+  gatewayDeploymentHealth,
   gatewayModel,
 } from '../db/schema.js';
 import type {
@@ -13,11 +15,13 @@ import type {
   GatewayBudgetHistoryInsert,
   GatewayBudgetInsert,
   GatewayDailyInsert,
+  GatewayDeploymentHealthInsert,
   GatewayModelInsert,
 } from '../db/schema.js';
 import { createGatewayClient } from '../gateway/index.js';
 import type {
   GatewayBudgetSnapshot,
+  GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
 } from '../gateway/index.js';
@@ -160,6 +164,7 @@ async function persist(
   snapshot: GatewaySnapshot,
   budgets: GatewayBudgetSnapshot[] | null,
   models: GatewayModelSnapshot[] | null,
+  health: GatewayHealthSnapshot[] | null,
   observedOn: string,
   observedAt: Date,
 ): Promise<void> {
@@ -167,6 +172,16 @@ async function persist(
   const breakdownRows: GatewayBreakdownInsert[] = snapshot.breakdowns.map((row) => ({ ...row }));
   const budgetRows: GatewayBudgetInsert[] = (budgets ?? []).map((budget) => ({ ...budget }));
   const modelRows: GatewayModelInsert[] = (models ?? []).map((model) => ({ ...model }));
+  // The alias join happens here rather than in the client because this is the
+  // one place both snapshots exist: `/health` reports routing strings and
+  // `/model/info` reports aliases, and the two are only guaranteed to describe
+  // the same proxy when they came from the same run. Resolving against a stored
+  // catalogue instead would join today's deployments to yesterday's price list.
+  const healthRows: GatewayDeploymentHealthInsert[] = (health ?? []).map((deployment) => ({
+    ...deployment,
+    model: resolveDeploymentModel(models ?? [], deployment.backend),
+    checkedAt: observedAt,
+  }));
   const historyRows: GatewayBudgetHistoryInsert[] = (budgets ?? []).map((budget) => ({
     ...budget,
     date: observedOn,
@@ -202,6 +217,17 @@ async function persist(
       await tx.delete(gatewayModel);
       for (const rows of chunk(modelRows, CHUNK_SIZE)) {
         await tx.insert(gatewayModel).values(rows);
+      }
+    }
+    // Deployment health is the third current-state table and takes the same
+    // rule for a third time: a full sync replaces it entire, a ranged one does
+    // not touch it. A deployment the router no longer offers must lose its row
+    // rather than sit on the page as a permanent outage nobody can clear, and a
+    // repair of six days in May says nothing about which endpoint is up now.
+    if (health !== null) {
+      await tx.delete(gatewayDeploymentHealth);
+      for (const rows of chunk(healthRows, CHUNK_SIZE)) {
+        await tx.insert(gatewayDeploymentHealth).values(rows);
       }
     }
     if (budgets !== null) {
@@ -252,11 +278,50 @@ async function persist(
         breakdownRows: breakdownRows.length,
         budgetRows: budgetRows.length,
         modelRows: modelRows.length,
+        healthRows: healthRows.length,
+        unhealthy: healthRows.filter((row) => !row.healthy).length,
         observedOn,
       },
     },
     'gateway usage persisted',
   );
+}
+
+/**
+ * Read `/health`, and never let it fail the sync.
+ *
+ * Health rides along with usage like governance and the price list, and is the
+ * one read with a cost attached: on a proxy without `background_health_checks`
+ * configured, `/health` issues a live test call to every deployment while
+ * answering. Once a night is a price worth paying for the only view of the
+ * deployments *behind* an alias; once per backfill would be paying it to learn
+ * nothing new, which is why a ranged sync skips it exactly as it skips
+ * governance.
+ *
+ * It is also the only ride-along whose failure is swallowed rather than
+ * propagated, and the asymmetry is deliberate. A budget or catalogue read is two
+ * fast table lookups, so a failure there says something is wrong with the proxy
+ * and failing the job is the honest answer. A health check is a fan-out of live
+ * calls against every backend the corporation uses: it can legitimately take
+ * minutes and time out on a gateway that is otherwise perfectly well. Failing a
+ * usage sync that has already fetched ninety days because an operational garnish
+ * was slow would be the wrong trade.
+ *
+ * `null` — from a backfill or from a failure — leaves the table untouched, so
+ * the last successful reading stands with its own `checkedAt` on it rather than
+ * being blanked into "no deployments".
+ */
+async function readDeploymentHealth(
+  client: { fetchHealth: () => Promise<GatewayHealthSnapshot[]> },
+  ranged: boolean,
+): Promise<GatewayHealthSnapshot[] | null> {
+  if (ranged) return null;
+  try {
+    return await client.fetchHealth();
+  } catch (error) {
+    log.error({ err: error }, 'reading gateway deployment health failed — usage sync unaffected');
+    return null;
+  }
 }
 
 /**
@@ -349,11 +414,12 @@ export async function startGatewaySync(
       // The price list rides along for the same reason and under the same rule:
       // two requests, current state, and a backfill has no business touching it.
       const models = ranged ? null : await client.fetchModels();
+      const health = await readDeploymentHealth(client, ranged);
       // The observation is stamped with the day the *reading* was taken, which
       // is today — not with the last day of the usage window. A budget counter
       // describes the period in flight right now, and filing it under yesterday
       // would make the history disagree with the snapshot it came from.
-      await persist(snapshot, budgets, models, utcDay(0), new Date());
+      await persist(snapshot, budgets, models, health, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
       await notifyGovernanceFindings(ranged);
       return snapshot.dates.length;

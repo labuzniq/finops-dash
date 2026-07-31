@@ -518,6 +518,40 @@ export const gatewayModel = pgTable('gateway_model', {
 });
 
 /**
+ * One deployment as `GET /health` last reported it — the only gateway table
+ * keyed below the model alias.
+ *
+ * Every other table here is keyed by something a caller can name. This one is
+ * keyed by the individual Azure/Bedrock endpoint the router chose, which is a
+ * resolution the usage aggregates simply do not have: LiteLLM fails over
+ * silently between the deployments of one alias, so an alias with a dead region
+ * bills normally, fails nothing, and shows up nowhere except here.
+ *
+ * Current state like `gateway_budget` and `gateway_model`, replaced wholesale by
+ * a full sync and untouched by a ranged one. `model` is a *resolved* column
+ * rather than a fetched one — `/health` reports routing strings and never public
+ * aliases, so the sync joins it against the catalogue it fetched in the same
+ * run, and a null means no catalogue row claimed the deployment.
+ */
+export const gatewayDeploymentHealth = pgTable('gateway_deployment_health', {
+  /** LiteLLM's `model_info.id`, or the routing string when it reported none. */
+  id: varchar('id', { length: 200 }).primaryKey(),
+  /** `litellm_params.model` — the deployment this row is about. */
+  backend: varchar('backend', { length: 200 }).notNull(),
+  /** The public alias it serves, resolved through `gateway_model`. */
+  model: varchar('model', { length: 200 }),
+  provider: varchar('provider', { length: 60 }),
+  /** Null on Bedrock (addressed by region) and on a details-stripped proxy alike. */
+  apiBase: varchar('api_base', { length: 300 }),
+  healthy: boolean('healthy').notNull(),
+  /** The proxy's own error text. Null on a healthy row and on a stripped one. */
+  error: text('error'),
+  /** `exception_status` — the upstream status, where the failure carried one. */
+  errorStatus: integer('error_status'),
+  checkedAt: timestamp('checked_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * A closed calendar month, held still — one row per sealed month.
  *
  * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
@@ -751,6 +785,8 @@ export type GatewayNotificationRow = typeof gatewayNotification.$inferSelect;
 export type GatewayNotificationInsert = typeof gatewayNotification.$inferInsert;
 export type GatewayModelRow = typeof gatewayModel.$inferSelect;
 export type GatewayModelInsert = typeof gatewayModel.$inferInsert;
+export type GatewayDeploymentHealthRow = typeof gatewayDeploymentHealth.$inferSelect;
+export type GatewayDeploymentHealthInsert = typeof gatewayDeploymentHealth.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

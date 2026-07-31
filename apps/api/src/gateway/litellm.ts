@@ -48,6 +48,7 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
 } from './types.js';
@@ -63,6 +64,14 @@ const MAX_PAGES = 50;
 const RETRY_DELAYS_MS = [500, 1_000, 2_000];
 
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * `/health`'s own timeout. Every other route reads a table and answers in
+ * milliseconds; this one may issue a live test call to each of a corporate
+ * gateway's deployments and only then answer, so thirty seconds would time out
+ * on exactly the proxies worth checking.
+ */
+const HEALTH_TIMEOUT_MS = 180_000;
 
 /**
  * The probe's own timeout — a third of the sync's, because it runs behind a
@@ -318,6 +327,59 @@ const modelInfoSchema = z.object({
 
 type ModelEntry = z.infer<typeof modelEntrySchema>;
 
+/**
+ * `GET /health` — one entry per *deployment*, split into two lists.
+ *
+ * A fifth envelope, and the only one that is not a table: the proxy answers
+ * `{healthy_endpoints, unhealthy_endpoints, healthy_count, unhealthy_count}`,
+ * and which list an entry is in *is* the state — there is no status field to
+ * read. Each entry is that deployment's `litellm_params` with the secrets
+ * removed (`ILLEGAL_DISPLAY_PARAMS` drops `api_key`, `messages`, the Vertex and
+ * AWS credentials and the raw exception object), so what survives is the
+ * routing string, the base URL and — for a failure — an `error` string and the
+ * `exception_status` LiteLLM copies off the upstream error.
+ *
+ * Everything except the two lists is optional on purpose. A proxy configured
+ * with `health_check_details: false` answers only `{"model": …}` per entry
+ * (`MINIMAL_DISPLAY_PARAMS`), which is a legitimate hardening choice on a widely
+ * exposed gateway: the deployment is still named, the state is still known, and
+ * only the error text and the endpoint go missing.
+ */
+const healthEntrySchema = z
+  .object({
+    model: z.string().nullish(),
+    model_id: z.string().nullish(),
+    api_base: z.string().nullish(),
+    custom_llm_provider: z.string().nullish(),
+    error: z.string().nullish(),
+    mode_error: z.string().nullish(),
+    exception_status: z.union([z.number(), z.string()]).nullish(),
+  })
+  .passthrough();
+
+const healthSchema = z.object({
+  healthy_endpoints: z.array(healthEntrySchema).default([]),
+  unhealthy_endpoints: z.array(healthEntrySchema).default([]),
+});
+
+type HealthEntry = z.infer<typeof healthEntrySchema>;
+
+/**
+ * `GET /health/readiness` — the proxy's own state, and the only LiteLLM route
+ * this client touches that needs no credential and costs nothing to call.
+ *
+ * Low-detail by default (`{"status": "healthy", "db": "connected"}`); a proxy
+ * with `allow_public_health_readiness_details` also answers its version. Both
+ * shapes parse.
+ */
+const readinessSchema = z
+  .object({
+    status: z.string().nullish(),
+    db: z.string().nullish(),
+    litellm_version: z.string().nullish(),
+  })
+  .passthrough();
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -551,6 +613,60 @@ function toModelSnapshot(model: string, group: readonly ModelEntry[]): GatewayMo
     maxOutputTokens: smallest(group.map((entry) => toWindow(entry.model_info?.max_output_tokens))),
     deployments: group.length,
     priceVaries: varies,
+  };
+}
+
+/**
+ * An upstream status off a failed health check, or null.
+ *
+ * `exception_status` is `getattr(exc, "status_code", 500)` on the proxy's side,
+ * so it is usually an int and occasionally a string a provider SDK carried
+ * through. Anything that is not a plausible HTTP status becomes null rather than
+ * a number nobody can read — a `429` here is the difference between "this
+ * deployment is out of quota" and "this deployment is gone".
+ */
+function toErrorStatus(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = typeof value === 'number' ? value : Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 100 || parsed > 599) return null;
+  return Math.trunc(parsed);
+}
+
+/**
+ * One `/health` entry → a stored row, or null when it names no deployment.
+ *
+ * The id is `model_id` where the proxy gave one and the routing string
+ * otherwise, and the fallback is load-bearing rather than defensive: two
+ * deployments of one alias are two rows *only* if they have distinct ids, so a
+ * proxy that answers without them collapses its own load-balanced pool into one
+ * row. That is a real loss of resolution and the reason `model_id` is tried
+ * first — but a single row saying "azure/gpt-4o is failing" still beats
+ * dropping the entry.
+ */
+function toHealthSnapshot(entry: HealthEntry, healthy: boolean): GatewayHealthSnapshot | null {
+  const backend = entry.model?.trim() ?? '';
+  if (backend === '') return null;
+
+  const id = entry.model_id?.trim();
+  const provider =
+    entry.custom_llm_provider?.trim() ??
+    (backend.includes('/') ? (backend.split('/')[0] ?? null) : null);
+
+  // `error` is the health check's own message; `mode_error` is the narrower
+  // "this deployment does not support the mode we probed it with", which is a
+  // configuration fault rather than an outage and still means the check failed.
+  const error = firstOf([entry.error?.trim(), entry.mode_error?.trim()]);
+
+  return {
+    id: (id === undefined || id === '' ? backend : id).slice(0, 200),
+    backend: backend.slice(0, 200),
+    provider: provider === null || provider === '' ? null : provider.slice(0, 60),
+    apiBase: entry.api_base?.trim().slice(0, 300) || null,
+    healthy,
+    // A healthy deployment's entry can still carry stray keys; an error on one
+    // would be nonsense, so the state decides whether the text is kept.
+    error: healthy ? null : (error?.slice(0, 500) ?? null),
+    errorStatus: healthy ? null : toErrorStatus(entry.exception_status),
   };
 }
 
@@ -928,6 +1044,71 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
+   * `GET /health` — the router's own view of every deployment behind it.
+   *
+   * The only route this client calls that *does something* rather than reading
+   * a table: unless the proxy runs `background_health_checks`, it issues a
+   * one-token test call to every configured deployment while answering, which
+   * is why the timeout here is minutes rather than seconds and why the sync
+   * takes it once a night and a backfill takes it not at all. On a proxy with
+   * background checks configured the same route answers the cached result
+   * instantly, which is the recommended configuration and is documented as
+   * such — but nothing in the response says which of the two happened, so this
+   * client cannot tell and does not pretend to.
+   *
+   * Optional like every management route. A refused `/health` costs the sync
+   * nothing: it is the one gateway fact that is purely operational, and no
+   * money, token or coverage number depends on it.
+   *
+   * Duplicate ids are collapsed rather than counted twice, and an *unhealthy*
+   * duplicate wins: a deployment reported in both lists (a check that flapped
+   * mid-sweep) is not healthy, and the row that would be silently dropped is
+   * exactly the one somebody needs to see.
+   */
+  async fetchHealth(): Promise<GatewayHealthSnapshot[]> {
+    const body = await this.getJson(new URL(`${this.root}/health`), true, HEALTH_TIMEOUT_MS);
+    if (body === null) return [];
+
+    const parsed = healthSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new Error(
+        `LiteLLM /health returned an unexpected shape: ${describeIssues(parsed.error.issues)}`,
+      );
+    }
+
+    const deployments = new Map<string, GatewayHealthSnapshot>();
+    let unnamed = 0;
+    const take = (entries: readonly HealthEntry[], healthy: boolean): void => {
+      for (const entry of entries) {
+        const row = toHealthSnapshot(entry, healthy);
+        if (row === null) {
+          unnamed += 1;
+          continue;
+        }
+        const existing = deployments.get(row.id);
+        if (existing === undefined || (existing.healthy && !row.healthy)) {
+          deployments.set(row.id, row);
+        }
+      }
+    };
+    take(parsed.data.healthy_endpoints, true);
+    take(parsed.data.unhealthy_endpoints, false);
+
+    const rows = [...deployments.values()];
+    log.info(
+      {
+        dash: {
+          deployments: rows.length,
+          unhealthy: rows.filter((row) => !row.healthy).length,
+          unnamed,
+        },
+      },
+      'litellm deployment health fetched',
+    );
+    return rows;
+  }
+
+  /**
    * Call every route the sync depends on once, for one day, and report what
    * each answered.
    *
@@ -960,6 +1141,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
     routes.push(await this.probeTeamList());
     routes.push(await this.probeTagList());
     routes.push(await this.probeModelInfo());
+    routes.push(await this.probeReadiness());
 
     log.info(
       { dash: { statuses: routes.map((route) => `${route.path} ${route.status}`) } },
@@ -1198,6 +1380,63 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
+   * `/health/readiness` — and deliberately **not** `/health`, which is the route
+   * the sync actually calls.
+   *
+   * Every other probe reads a table, so pressing the button costs a query.
+   * `/health` issues a live test call to every deployment, so probing it would
+   * bill the corporation a token per model per press — a probe has to be free
+   * to press or nobody presses it, and the reading it would produce is already
+   * taken nightly and stored. Readiness is the honest substitute: it is
+   * unauthenticated, it costs nothing, and it answers the question that sits
+   * *upstream* of every other route here — is the proxy up, and can it reach its
+   * own database. A proxy answering `503` here explains every other row on the
+   * panel at once.
+   *
+   * The one thing it cannot tell us is whether `/health` is permitted, so the
+   * purpose line says which card goes dark rather than implying it was checked.
+   */
+  private async probeReadiness(): Promise<GatewayProbeRoute> {
+    const attempt = await this.probeOnce(new URL(`${this.root}/health/readiness`));
+    const base = {
+      path: '/health/readiness',
+      purpose:
+        "The proxy's own liveness and database connection. Deployment health comes from /health, which is taken by the nightly sync and deliberately not probed here — it issues a live test call to every deployment.",
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = readinessSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+
+    const status = parsed.data.status?.trim() ?? 'unknown';
+    const db = parsed.data.db?.trim() ?? null;
+    const version = parsed.data.litellm_version?.trim() ?? null;
+    return {
+      ...base,
+      // A readiness route that answered at all is `ok`: it has no rows to be
+      // empty of, and a proxy that is not ready answers 503, which `probeOnce`
+      // has already classified as unreachable.
+      status: 'ok',
+      rows: null,
+      detail: [
+        status,
+        db === null ? null : `db ${db}`,
+        version === null ? null : `LiteLLM ${version}`,
+      ]
+        .filter((part) => part !== null)
+        .join(' · '),
+    };
+  }
+
+  /**
    * One GET, one attempt, classified. `body` is present only on a 2xx; every
    * other outcome carries the status that says why not.
    */
@@ -1336,8 +1575,12 @@ export class LiteLlmGatewayClient implements GatewayClient {
    * predicates over the same status code in two functions is how the 501 retry
    * bug got in.
    */
-  private async getJson(url: URL, optional: boolean): Promise<unknown | null> {
-    const response = await this.request(url);
+  private async getJson(
+    url: URL,
+    optional: boolean,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<unknown | null> {
+    const response = await this.request(url, timeoutMs);
     if (response.ok) return response.json();
 
     const body = await response.text().catch(() => '');
@@ -1352,7 +1595,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /** GET with bearer auth, a timeout, and retries on network errors and `isTransient` statuses. */
-  private async request(url: URL): Promise<Response> {
+  private async request(url: URL, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Response> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
@@ -1362,7 +1605,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
             Authorization: `Bearer ${this.apiKey}`,
             Accept: 'application/json',
           },
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         if (!isTransient(response.status)) return response;
         lastError = new Error(`status ${response.status}`);

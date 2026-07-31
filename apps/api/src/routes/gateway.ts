@@ -14,6 +14,7 @@ import {
   getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
+  getGatewayHealth,
   getGatewayModels,
   getGatewayUsage,
   probeGateway,
@@ -103,6 +104,19 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * moved would be re-reading a table that cannot have changed.
    */
   app.get('/api/gateway/models', async () => getGatewayModels());
+
+  /**
+   * Per-deployment health as of the last full sync.
+   *
+   * Current state, so no query parameters — and a *stored* reading rather than a
+   * live one, which is the opposite choice from `/api/gateway/probe` one route
+   * down. The reason is cost: `/health` on the proxy issues a test call to every
+   * deployment, so a route that forwarded it would let a browser refresh bill
+   * the corporation. The nightly sync pays that once and this hands over what it
+   * found, with the reading's own timestamp on it so a stale answer reads as
+   * stale rather than as current.
+   */
+  app.get('/api/gateway/health', async () => getGatewayHealth());
 
   /**
    * What those budgets read on each of the last `days` days.

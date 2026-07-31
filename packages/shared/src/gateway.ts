@@ -1100,6 +1100,239 @@ export interface GatewayBudgetHistory {
   observations: GatewayBudgetObservation[];
 }
 
+/* ------------------------------------------------------- deployment health */
+
+/**
+ * ─── Deployment health ───────────────────────────────────────────────────────
+ *
+ * Every other gateway fact in this file is keyed by something a *caller* can
+ * name — a model alias, a key, a team, a tag. This one is keyed by a
+ * **deployment**: the individual Azure Foundry / Azure OpenAI / Bedrock
+ * endpoint the router picked, which no usage payload carries and no card above
+ * can see.
+ *
+ * That gap is not cosmetic. LiteLLM load-balances several deployments behind
+ * one public alias and fails over silently between them, so an alias with three
+ * regions and one of them dead answers every request successfully, bills
+ * normally, and shows nothing at all on the reliability card — it is running on
+ * a third less capacity and the only surface that says so is `/health`. The one
+ * statement worth making from this data is therefore about the *alias*:
+ *
+ *  - **down** — every deployment behind it is failing. Nothing routed there can
+ *    succeed, and this is the only state the usage payload would eventually see
+ *    (as failures, tomorrow).
+ *  - **degraded** — some are failing and some are not. The alias still answers.
+ *    This is a *capacity* finding rather than an error one, it is invisible in
+ *    spend and in failures alike, and it is the reason this table exists.
+ *  - **up** — nothing is failing.
+ *
+ * Deployment health is current state, like budgets and the price catalogue: one
+ * row per deployment, replaced wholesale by every full sync, no history.
+ */
+
+/** One deployment as `GET /health` last reported it. */
+export interface GatewayDeployment {
+  /**
+   * LiteLLM's own deployment id (`model_info.id`), or the routing string when
+   * the proxy reported none — an id is what makes two deployments of one alias
+   * two rows rather than one.
+   */
+  id: string;
+  /** The routing string it answers on: `azure/gpt-4o-eu2`, `bedrock/anthropic…`. */
+  backend: string;
+  /**
+   * The public alias it serves, resolved through the price catalogue — null
+   * when nothing in the catalogue names it.
+   *
+   * Health reports deployments and the catalogue reports aliases, so this join
+   * is `resolveModelPrice` run backwards; a null is a deployment the router
+   * offers under a name the catalogue did not answer with, which is worth
+   * showing rather than dropping.
+   */
+  model: string | null;
+  provider: string | null;
+  /**
+   * The endpoint it fronts. Null when the proxy is configured with
+   * `health_check_details: false`, which strips URLs and error text from the
+   * response — a deliberate setting on a widely exposed proxy, so an absent
+   * base is not a fault.
+   */
+  apiBase: string | null;
+  healthy: boolean;
+  /** The proxy's error text. Null on a healthy deployment *and* on a stripped one. */
+  error: string | null;
+  /** The upstream status the failure carried (`exception_status`), where it had one. */
+  errorStatus: number | null;
+  /** When the sync last read `/health`. */
+  checkedAt: string;
+}
+
+/** Everything `GET /api/gateway/health` returns. */
+export interface GatewayHealth {
+  deployments: GatewayDeployment[];
+  /**
+   * When the stored reading was taken, or null when `/health` has never
+   * answered. Kept apart from an empty deployment list for the same reason
+   * `evaluatedAt` is on the notifications route: "the proxy routes nothing" and
+   * "we have never asked" are different answers.
+   */
+  checkedAt: string | null;
+}
+
+export const GATEWAY_MODEL_HEALTH_STATES = ['up', 'degraded', 'down'] as const;
+export type GatewayModelHealthState = (typeof GATEWAY_MODEL_HEALTH_STATES)[number];
+
+/** One public alias, with every deployment the router has behind it. */
+export interface GatewayModelHealth {
+  /** The alias, or null for the deployments the catalogue could not name. */
+  model: string | null;
+  state: GatewayModelHealthState;
+  deployments: number;
+  unhealthy: number;
+  /** Distinct providers behind the alias — more than one is a cross-cloud alias. */
+  providers: string[];
+  /** Distinct error texts, deduplicated: three regions failing identically is one fault. */
+  errors: string[];
+}
+
+export interface GatewayProviderHealth {
+  provider: string | null;
+  deployments: number;
+  unhealthy: number;
+}
+
+export interface GatewayHealthSummary {
+  checkedAt: string | null;
+  deployments: number;
+  unhealthy: number;
+  /** Every alias with at least one deployment, worst state first. */
+  models: GatewayModelHealth[];
+  /** `models` filtered — the two states worth a finding, kept out of the caller's way. */
+  down: GatewayModelHealth[];
+  degraded: GatewayModelHealth[];
+  /** One row per backend. A whole cloud failing is a different incident from one model. */
+  providers: GatewayProviderHealth[];
+  /** Deployments no catalogue row named — counted, never silently merged. */
+  unnamed: number;
+}
+
+/**
+ * The catalogue row a deployment belongs to, resolved backwards.
+ *
+ * `resolveModelPrice` goes alias → catalogue; this goes deployment → alias,
+ * which is the direction `/health` forces because it reports `litellm_params`
+ * and never the public name. Two attempts, narrowing, and a miss is null:
+ *
+ *  1. the routing string matches a catalogue row's `backend`, which is what a
+ *     proxy whose alias differs from its deployment reports;
+ *  2. it matches a row's own `model`, which is what a proxy that never renamed
+ *     anything reports — there the alias *is* the routing string.
+ *
+ * Deliberately no suffix matching. A near-match here would put a deployment
+ * under an alias it does not serve, and the whole value of the row is knowing
+ * which alias loses capacity when it fails.
+ *
+ * Takes the two columns it reads rather than a `GatewayModelPrice`, so the sync
+ * can hand it storage-shaped catalogue rows (prices in nano) without converting
+ * a price list to answer a question about names.
+ */
+export function resolveDeploymentModel(
+  catalogue: readonly { model: string; backend: string | null }[],
+  backend: string,
+): string | null {
+  const wanted = backend.trim();
+  if (wanted === '') return null;
+  return (
+    catalogue.find((entry) => entry.backend === wanted)?.model ??
+    catalogue.find((entry) => entry.model === wanted)?.model ??
+    null
+  );
+}
+
+/**
+ * Deployments → the per-alias reading the page actually shows.
+ *
+ * Pure, and the only place the up/degraded/down rule is written. The ordering
+ * is worst-first and then by blast radius (how many deployments are affected),
+ * because a four-region alias with two dead regions is a bigger problem than a
+ * single-deployment model that is merely degraded — which it cannot be, by
+ * construction: a lone deployment is either up or down.
+ */
+export function summarizeDeploymentHealth(
+  deployments: readonly GatewayDeployment[],
+  checkedAt: string | null,
+): GatewayHealthSummary {
+  // Keyed by the alias itself, null included: a Map takes null as a key, which
+  // is what keeps the unnamed deployments a bucket of their own rather than a
+  // sentinel string some alias could one day collide with.
+  const byModel = new Map<string | null, GatewayDeployment[]>();
+  for (const deployment of deployments) {
+    const key = deployment.model;
+    const bucket = byModel.get(key);
+    if (bucket === undefined) byModel.set(key, [deployment]);
+    else bucket.push(deployment);
+  }
+
+  const models: GatewayModelHealth[] = [...byModel.values()].map((group) => {
+    const unhealthy = group.filter((entry) => !entry.healthy).length;
+    const first = group[0];
+    return {
+      model: first?.model ?? null,
+      state: unhealthy === 0 ? 'up' : unhealthy === group.length ? 'down' : 'degraded',
+      deployments: group.length,
+      unhealthy,
+      providers: [
+        ...new Set(
+          group
+            .map((entry) => entry.provider)
+            .filter((provider): provider is string => provider !== null),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
+      errors: [
+        ...new Set(
+          group
+            .map((entry) => entry.error)
+            .filter((error): error is string => error !== null && error !== ''),
+        ),
+      ],
+    };
+  });
+
+  const rank: Record<GatewayModelHealthState, number> = { down: 0, degraded: 1, up: 2 };
+  models.sort((a, b) => {
+    if (rank[a.state] !== rank[b.state]) return rank[a.state] - rank[b.state];
+    if (a.unhealthy !== b.unhealthy) return b.unhealthy - a.unhealthy;
+    return (a.model ?? '').localeCompare(b.model ?? '');
+  });
+
+  const byProvider = new Map<string | null, GatewayProviderHealth>();
+  for (const deployment of deployments) {
+    const key = deployment.provider;
+    const row = byProvider.get(key) ?? {
+      provider: deployment.provider,
+      deployments: 0,
+      unhealthy: 0,
+    };
+    row.deployments += 1;
+    if (!deployment.healthy) row.unhealthy += 1;
+    byProvider.set(key, row);
+  }
+
+  return {
+    checkedAt,
+    deployments: deployments.length,
+    unhealthy: deployments.filter((entry) => !entry.healthy).length,
+    models,
+    down: models.filter((entry) => entry.state === 'down'),
+    degraded: models.filter((entry) => entry.state === 'degraded'),
+    providers: [...byProvider.values()].sort((a, b) => {
+      if (a.unhealthy !== b.unhealthy) return b.unhealthy - a.unhealthy;
+      return (a.provider ?? '').localeCompare(b.provider ?? '');
+    }),
+    unnamed: deployments.filter((entry) => entry.model === null).length,
+  };
+}
+
 /* ------------------------------------------------------------------ probe */
 
 /**

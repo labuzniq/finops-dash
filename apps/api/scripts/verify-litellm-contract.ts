@@ -30,10 +30,17 @@ import {
   budgetRemaining,
   budgetUtilization,
   parseBudgetDuration,
+  resolveDeploymentModel,
   resolveModelPrice,
+  summarizeDeploymentHealth,
   summarizeGatewayProbe,
 } from '@dash/shared';
-import type { GatewayBudget, GatewayModelPrice, GatewayProbeRoute } from '@dash/shared';
+import type {
+  GatewayBudget,
+  GatewayDeployment,
+  GatewayModelPrice,
+  GatewayProbeRoute,
+} from '@dash/shared';
 import { LiteLlmGatewayClient, eachDay } from '../src/gateway/litellm.js';
 import type { GatewayBreakdownSnapshot, GatewaySnapshot } from '../src/gateway/types.js';
 
@@ -1211,6 +1218,282 @@ check(
 // These are pure and the UI will run on them, but they interpret LiteLLM's own
 // duration grammar, so they belong next to the client that reads those fields.
 
+// =====================================================================
+// 6d · deployment health — /health
+// =====================================================================
+//
+// The fifth envelope, and the only one that is not a table: two lists, and
+// which list an entry is in *is* its state. Entries are that deployment's
+// `litellm_params` with the secrets stripped, so what arrives is a routing
+// string, maybe a base URL, maybe an id, and — on a failure — an error string
+// and the upstream status.
+
+console.log('\n6d · deployment health — /health');
+
+const healthBody = {
+  healthy_endpoints: [
+    {
+      model: 'azure/gpt-4o',
+      model_id: 'dep-payg',
+      api_base: 'https://nocturne-weu.openai.azure.com/',
+      // A healthy entry can carry stray keys; an error on one is nonsense.
+      error: 'left over from a previous sweep',
+    },
+    { model: 'bedrock/anthropic.claude-sonnet-4-v1:0', model_id: 'dep-bedrock', aws_region_name: 'eu-central-1' },
+  ],
+  unhealthy_endpoints: [
+    {
+      model: 'azure/gpt-4o',
+      model_id: 'dep-ptu',
+      api_base: 'https://nocturne-neu-ptu.openai.azure.com/',
+      error: 'litellm.RateLimitError: AzureException - exceeded the provisioned throughput',
+      exception_status: 429,
+    },
+    {
+      model: 'azure_ai/phi-4',
+      model_id: 'dep-phi',
+      custom_llm_provider: 'azure_ai',
+      // LiteLLM reports this one as a string on some provider SDKs.
+      exception_status: '503',
+      mode_error: 'model does not support the chat mode this check probed it with',
+    },
+    // No `model` at all — nothing identifies the deployment, so nothing can be
+    // stored about it.
+    { api_base: 'https://nowhere.example/', error: 'unnamed' },
+  ],
+  healthy_count: 2,
+  unhealthy_count: 3,
+};
+
+const deployments = await withProxy(
+  replier({ '/health': { status: 200, body: healthBody } }),
+  async (proxy) => client(proxy.baseUrl).fetchHealth(),
+);
+
+const healthRow = (id: string) => deployments.find((row) => row.id === id);
+
+check(
+  deployments.length === 4,
+  `every named deployment is one row, healthy or not (${deployments.length})`,
+);
+check(
+  healthRow('dep-payg')?.healthy === true && healthRow('dep-ptu')?.healthy === false,
+  'the list an entry arrived in is its state — there is no status field to read',
+);
+check(
+  healthRow('dep-payg')?.backend === 'azure/gpt-4o' &&
+    healthRow('dep-ptu')?.backend === 'azure/gpt-4o',
+  'two deployments of one alias share a backend and stay two rows',
+);
+check(
+  healthRow('dep-payg')?.provider === 'azure' && healthRow('dep-bedrock')?.provider === 'bedrock',
+  'the provider is inferred from the routing string when the entry does not name one',
+);
+check(
+  healthRow('dep-phi')?.provider === 'azure_ai',
+  'and taken from custom_llm_provider when it does',
+);
+check(
+  healthRow('dep-bedrock')?.apiBase === null,
+  'a Bedrock deployment carries no api_base, and null there is a fact rather than a gap',
+);
+check(
+  healthRow('dep-ptu')?.errorStatus === 429 && healthRow('dep-phi')?.errorStatus === 503,
+  'exception_status is read whether the proxy sends it as a number or a string',
+);
+check(
+  (healthRow('dep-ptu')?.error ?? '').includes('provisioned throughput'),
+  "the proxy's own error text is carried through verbatim",
+);
+check(
+  (healthRow('dep-phi')?.error ?? '').includes('chat mode'),
+  'a mode_error is a failure too, and is the message when there is no other',
+);
+check(
+  healthRow('dep-payg')?.error === null && healthRow('dep-payg')?.errorStatus === null,
+  'a healthy row carries no error, whatever stray keys the entry had on it',
+);
+check(
+  !deployments.some((row) => row.backend === ''),
+  'an entry naming no deployment is dropped rather than stored as a blank row',
+);
+
+// `health_check_details: false` — a legitimate hardening choice, not a fault.
+
+const minimal = await withProxy(
+  replier({
+    '/health': {
+      status: 200,
+      body: {
+        healthy_endpoints: [{ model: 'azure/gpt-4o' }],
+        unhealthy_endpoints: [{ model: 'bedrock/amazon.nova-pro-v1:0' }],
+      },
+    },
+  }),
+  async (proxy) => client(proxy.baseUrl).fetchHealth(),
+);
+check(
+  minimal.length === 2 && minimal.filter((row) => !row.healthy).length === 1,
+  'a details-stripped proxy still names every deployment and its state',
+);
+check(
+  minimal.every((row) => row.apiBase === null && row.error === null),
+  'and the URL and error text simply go missing, which is the setting doing its job',
+);
+check(
+  minimal[0]?.id === 'azure/gpt-4o',
+  'with no model_id the routing string is the id — one row per alias instead of per deployment',
+);
+
+// A deployment reported in both lists at once: a sweep that flapped. The
+// unhealthy reading is the one worth keeping.
+
+const flapping = await withProxy(
+  replier({
+    '/health': {
+      status: 200,
+      body: {
+        healthy_endpoints: [{ model: 'azure/gpt-4o', model_id: 'dep-a' }],
+        unhealthy_endpoints: [{ model: 'azure/gpt-4o', model_id: 'dep-a', error: 'timeout' }],
+      },
+    },
+  }),
+  async (proxy) => client(proxy.baseUrl).fetchHealth(),
+);
+check(
+  flapping.length === 1 && flapping[0]?.healthy === false,
+  'a deployment in both lists is one row, and it is the failing one',
+);
+
+// Optionality, and the one shape that must not be swallowed.
+
+for (const status of [401, 403, 404, 405, 501]) {
+  const absent = await withProxy(
+    replier({ '/health': { status, body: { detail: 'no' } } }),
+    async (proxy) => client(proxy.baseUrl).fetchHealth(),
+  );
+  check(absent.length === 0, `a ${status} from /health yields no deployments and no error`);
+}
+
+const malformedHealth = await withProxy(
+  replier({ '/health': { status: 200, body: { healthy_endpoints: 'not a list' } } }),
+  async (proxy) => {
+    try {
+      await client(proxy.baseUrl).fetchHealth();
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  },
+);
+check(
+  (malformedHealth ?? '').includes('unexpected shape'),
+  'a 2xx body this client cannot read throws rather than reporting an empty gateway',
+);
+
+// The alias join, run backwards — /health reports routing strings and never
+// public names.
+
+const healthCatalogue: { model: string; backend: string | null }[] = [
+  { model: 'gpt-4o', backend: 'azure/gpt-4o' },
+  { model: 'bedrock/anthropic.claude-sonnet-4-v1:0', backend: 'bedrock/anthropic.claude-sonnet-4-v1:0' },
+  { model: 'phi-4', backend: null },
+];
+check(
+  resolveDeploymentModel(healthCatalogue, 'azure/gpt-4o') === 'gpt-4o',
+  'a deployment resolves to the alias whose backend it is',
+);
+check(
+  resolveDeploymentModel(healthCatalogue, 'bedrock/anthropic.claude-sonnet-4-v1:0') ===
+    'bedrock/anthropic.claude-sonnet-4-v1:0',
+  'and to itself on a proxy that never renamed anything',
+);
+check(
+  resolveDeploymentModel(healthCatalogue, 'azure/gpt-4o-2024-11-20') === null,
+  'a near miss is null — filing a deployment under an alias it does not serve is worse than not naming it',
+);
+check(resolveDeploymentModel(healthCatalogue, '   ') === null, 'and an empty routing string resolves to nothing');
+
+// The alias-level reading, which is the whole point of the table.
+
+const madeDeployment = (over: Partial<GatewayDeployment>): GatewayDeployment => ({
+  id: 'x',
+  backend: 'azure/gpt-4o',
+  model: 'gpt-4o',
+  provider: 'azure',
+  apiBase: null,
+  healthy: true,
+  error: null,
+  errorStatus: null,
+  checkedAt: '2026-07-31T02:00:00.000Z',
+  ...over,
+});
+
+const summary = summarizeDeploymentHealth(
+  [
+    madeDeployment({ id: 'a1', model: 'gpt-4o' }),
+    madeDeployment({ id: 'a2', model: 'gpt-4o', healthy: false, error: 'quota' }),
+    madeDeployment({ id: 'b1', model: 'nova-pro', provider: 'bedrock', healthy: false, error: 'no route' }),
+    madeDeployment({ id: 'c1', model: 'phi-4', provider: 'azure_ai' }),
+    madeDeployment({ id: 'd1', model: null, backend: 'azure/gpt-35-turbo' }),
+  ],
+  '2026-07-31T02:00:00.000Z',
+);
+const alias = (name: string | null) => summary.models.find((row) => row.model === name);
+
+check(
+  alias('gpt-4o')?.state === 'degraded',
+  'an alias with one of two deployments failing is degraded — it still answers, on half the capacity',
+);
+check(
+  alias('nova-pro')?.state === 'down',
+  'an alias whose only deployment is failing has nowhere to fail over to',
+);
+check(alias('phi-4')?.state === 'up', 'and one with nothing failing is up');
+check(
+  summary.models[0]?.state === 'down' && summary.models.at(-1)?.state === 'up',
+  'the ranking is worst first',
+);
+check(
+  summary.down.length === 1 && summary.degraded.length === 1,
+  'the two states worth a finding are separated out, and up is not one of them',
+);
+check(
+  summary.unnamed === 1 && alias(null)?.deployments === 1,
+  'a deployment the catalogue could not name is its own bucket, counted rather than merged',
+);
+check(
+  summary.deployments === 5 && summary.unhealthy === 2,
+  'the totals count deployments, never aliases — the two are different numbers on any load-balanced proxy',
+);
+const azure = summary.providers.find((row) => row.provider === 'azure');
+check(
+  azure?.deployments === 3 && azure?.unhealthy === 1,
+  `a provider rollup counts deployments across aliases (${azure?.deployments} azure)`,
+);
+check(
+  summary.providers[0]?.unhealthy === 1 && summary.providers.every((row) => row.deployments > 0),
+  'providers rank by failures, so a whole cloud going dark sorts to the top',
+);
+
+const identical = summarizeDeploymentHealth(
+  [
+    madeDeployment({ id: 'r1', healthy: false, error: 'region unavailable' }),
+    madeDeployment({ id: 'r2', healthy: false, error: 'region unavailable' }),
+    madeDeployment({ id: 'r3', healthy: false, error: 'region unavailable' }),
+  ],
+  null,
+);
+check(
+  identical.models[0]?.errors.length === 1 && identical.models[0]?.state === 'down',
+  'three regions failing identically is one fault, reported once',
+);
+check(
+  summarizeDeploymentHealth([], null).checkedAt === null &&
+    summarizeDeploymentHealth([], null).models.length === 0,
+  'no deployments summarises to nothing rather than to a healthy gateway',
+);
+
 console.log('\n7 · budget arithmetic');
 
 check(parseBudgetDuration('30d')?.unit === 'd', 'a plain duration parses');
@@ -1325,6 +1608,10 @@ const healthy = await withProxy(
         ],
       },
     },
+    '/health/readiness': {
+      status: 200,
+      body: { status: 'healthy', db: 'connected', litellm_version: '1.77.3' },
+    },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -1332,11 +1619,15 @@ const healthy = await withProxy(
 const route = (path: string): GatewayProbeRoute | undefined =>
   healthy.routes.find((candidate) => candidate.path === path);
 
-check(healthy.calls.length === 7, `one call per route, no retries (${healthy.calls.length})`);
+check(healthy.calls.length === 8, `one call per route, no retries (${healthy.calls.length})`);
 check(
   healthy.calls.map((call) => call.path).join(' ') ===
-    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list /model/info',
+    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list /model/info /health/readiness',
   'routes are probed in dependency order, activity before management',
+);
+check(
+  !healthy.calls.some((call) => call.path === '/health'),
+  'the probe never calls /health — it would bill a test call per deployment per press',
 );
 check(
   healthy.calls[0]?.query.get('start_date') === DAY &&
@@ -1376,6 +1667,16 @@ check(
   `a proxy answering bare token strings is reported, not silently dropped (${route('/key/list')?.detail})`,
 );
 
+check(
+  (route('/health/readiness')?.detail ?? '').includes('db connected') &&
+    (route('/health/readiness')?.detail ?? '').includes('1.77.3'),
+  `readiness reports the proxy's own state and version (${route('/health/readiness')?.detail})`,
+);
+check(
+  route('/health/readiness')?.rows === null,
+  'and no row count, because readiness has nothing to be empty of',
+);
+
 const healthySummary = summarizeGatewayProbe(healthy.routes);
 check(healthySummary.usable, 'a fully answering proxy is usable');
 check(
@@ -1398,6 +1699,10 @@ const restricted = await withProxy(
     // fix from the refused routes above and must classify differently.
     '/tag/list': { status: 404, body: { detail: 'Not Found' } },
     '/model/info': { status: 403, body: { detail: 'Only proxy admins may view models' } },
+    // Readiness needs no credential at all, so a restricted key does not
+    // explain it away — a 503 here is the proxy itself, not this integration's
+    // permissions, which is exactly why it is the route worth probing.
+    '/health/readiness': { status: 503, body: { status: 'unhealthy', db: 'disconnected' } },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -1406,7 +1711,7 @@ const restrictedRoute = (path: string): GatewayProbeRoute | undefined =>
   restricted.routes.find((candidate) => candidate.path === path);
 
 check(
-  restricted.calls.length === 7,
+  restricted.calls.length === 8,
   `a refused or absent route is attempted once, never retried (${restricted.calls.length})`,
 );
 check(
@@ -1433,6 +1738,12 @@ check(
   'a 200 with no rows is "empty", which is not the same as broken',
 );
 
+check(
+  restrictedRoute('/health/readiness')?.status === 'unreachable' &&
+    restrictedRoute('/health/readiness')?.httpStatus === 503,
+  'a proxy that cannot reach its own database is unreachable, not denied — readiness needs no key',
+);
+
 const restrictedSummary = summarizeGatewayProbe(restricted.routes);
 check(
   restrictedSummary.usable,
@@ -1450,7 +1761,7 @@ check(
   // Five unanswered routes plus the empty-but-required user route: six gaps,
   // six statements. The count moves with the route table by design — a new
   // optional route that warned about nothing would be a route nobody misses.
-  restrictedSummary.warnings.length === 7,
+  restrictedSummary.warnings.length === 8,
   `one statement per gap, no more (${restrictedSummary.warnings.length})`,
 );
 

@@ -33,6 +33,7 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayHealthSnapshot,
   GatewayModelSnapshot,
   GatewaySnapshot,
 } from './types.js';
@@ -70,6 +71,13 @@ const PTU_DISCOUNT = 0.7;
 
 /** The alias LiteLLM's price map cannot resolve — it has a name and no price. */
 const UNPRICED_MODEL = 'azure_ai/phi-4';
+
+/**
+ * The one alias whose *only* deployment is failing its health check, so it has
+ * nowhere to fail over to. Deliberately a small-weight model: an outage on a
+ * fifth of the gateway would drown every other planted shape on the page.
+ */
+const DOWN_MODEL = 'bedrock/amazon.nova-pro-v1:0';
 
 const MODELS: readonly MockModel[] = [
   { id: 'azure/gpt-4o', provider: 'azure', inputPerMillion: 2.5, outputPerMillion: 10, weight: 0.24 },
@@ -840,6 +848,85 @@ export class MockGatewayClient implements GatewayClient {
   }
 
   /**
+   * Per-deployment health, with the three shapes that make the card say
+   * something the rest of the page structurally cannot:
+   *
+   *  - **`azure/gpt-4o` degraded.** The one alias with two deployments behind
+   *    it, and the PTU pool is refusing. The router fails every call over to
+   *    the pay-as-you-go deployment, so the alias keeps answering: its spend is
+   *    normal, its failure rate is normal, and it is running on half its
+   *    capacity at the dearer of its two prices. Nothing in `gateway_daily` can
+   *    see that, which is the entire argument for this table.
+   *  - **`bedrock/amazon.nova-pro-v1:0` down.** A single deployment failing, so
+   *    the alias has nowhere to fail over to. This is the state the usage
+   *    payload *would* eventually show — as failures, tomorrow.
+   *  - **A deployment the catalogue cannot name.** `azure/gpt-35-turbo` is
+   *    still configured on the router and no longer in the price list, so the
+   *    alias join misses and the row is reported as unnamed rather than
+   *    dropped or filed under a neighbour.
+   *
+   * Bedrock rows carry no `api_base` on purpose: those deployments are addressed
+   * by region rather than by URL, so a null there is a fact about Bedrock and
+   * not a proxy that stripped its details.
+   */
+  async fetchHealth(): Promise<GatewayHealthSnapshot[]> {
+    const baseOf = (provider: string, region: string): string | null =>
+      provider === 'bedrock'
+        ? null
+        : provider === 'azure'
+          ? `https://nocturne-${region}.openai.azure.com/`
+          : `https://nocturne-${region}.services.ai.azure.com/`;
+
+    const deployments: GatewayHealthSnapshot[] = MODELS.map((model) => ({
+      id: `dep-${model.id.replace(/[^a-z0-9]+/gi, '-')}-01`,
+      backend: model.id,
+      provider: model.provider,
+      apiBase: baseOf(model.provider, 'weu'),
+      healthy: model.id !== DOWN_MODEL,
+      error:
+        model.id === DOWN_MODEL
+          ? 'litellm.APIConnectionError: BedrockException - Could not connect to the endpoint URL: "https://bedrock-runtime.eu-central-1.amazonaws.com/model/amazon.nova-pro-v1:0/converse"'
+          : null,
+      errorStatus: model.id === DOWN_MODEL ? 503 : null,
+    }));
+
+    deployments.push(
+      // The second deployment of the multi-deployment alias — the discounted
+      // reserved-throughput pool, and the one that is refusing.
+      {
+        id: `dep-${MULTI_DEPLOYMENT_MODEL.replace(/[^a-z0-9]+/gi, '-')}-ptu`,
+        backend: MULTI_DEPLOYMENT_MODEL,
+        provider: 'azure',
+        apiBase: baseOf('azure', 'neu-ptu'),
+        healthy: false,
+        error:
+          'litellm.RateLimitError: AzureException - Requests to the ChatCompletions_Create Operation under Azure OpenAI API have exceeded the provisioned throughput for this deployment.',
+        errorStatus: 429,
+      },
+      {
+        id: 'dep-azure-gpt-35-turbo-01',
+        backend: 'azure/gpt-35-turbo',
+        provider: 'azure',
+        apiBase: baseOf('azure', 'weu-legacy'),
+        healthy: true,
+        error: null,
+        errorStatus: null,
+      },
+    );
+
+    log.info(
+      {
+        dash: {
+          deployments: deployments.length,
+          unhealthy: deployments.filter((row) => !row.healthy).length,
+        },
+      },
+      'mock gateway deployment health generated',
+    );
+    return deployments;
+  }
+
+  /**
    * What a probe of a healthy proxy looks like — every route answering, keyed
    * off this generator's own output for the probed day rather than off invented
    * numbers, so the connection panel shows the same key counts the breakdown
@@ -957,6 +1044,18 @@ export class MockGatewayClient implements GatewayClient {
         durationMs: 0,
         rows: deployments,
         detail: `${deployments} deployment(s), ${priced} priced`,
+        dimensions: [],
+      },
+      {
+        path: '/health/readiness',
+        purpose:
+          "The proxy's own liveness and database connection. Deployment health comes from /health, which is taken by the nightly sync and deliberately not probed here — it issues a live test call to every deployment.",
+        required: false,
+        status: 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: null,
+        detail: 'healthy · db connected · LiteLLM mock',
         dimensions: [],
       },
     ];
