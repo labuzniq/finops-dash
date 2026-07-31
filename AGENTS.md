@@ -510,6 +510,20 @@ the busiest endpoint and the worst one are rarely the same one; and the `UNKEYED
 takes **no** health verdict — `unkeyed`, a fifth state beside the latency card's four, and deliberately
 not matched against health rows that merely also carry no `api_base`, since two unrelated absences are
 not a join. It is read on a press and feeds no digest finding, for the latency card's reason.
+It is also the one live read that is **kept**: a full sync sweeps it for the window's last day and
+appends the result to `gateway_slow_response_daily` (one row per day per alias per key, upserted;
+a backfill, a refusal, `disable_spend_logs` and a swallowed failure all record nothing, because an
+unread night must not land as a night nothing hung), served by
+`GET /api/gateway/slow-responses/history?days=` and read through `summarizeSlowResponseHistory` in
+`@dash/shared`. Storing it is legal here and not on the two sibling sweeps for one reason: this route
+answers counts of disjoint request-log rows beside their own denominator, and counts add across nights
+where an average and a denominator-less total do not. The derivation adds no threshold — the badge is
+the live card's two gates over the pooled counts — only a **trend**, the observed nights split in half
+and each half pooled rather than averaged (the nights' denominators differ by orders of magnitude, so a
+mean of nightly shares lets a quiet Sunday outvote a Wednesday), in percentage points and withheld under
+`SLOW_RESPONSE_TREND_MIN_DAYS`. Its window ends **yesterday**, unlike the two other history routes,
+because today can never carry a reading and a window ending on it would report a gap on the newest night
+forever. Nothing renders it yet and no finding travels from it.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
@@ -590,7 +604,11 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   makes it the only live read whose badge may use a significance test, and that denominator is not the
   ledger's request count, so a hang share may never be rendered as a share of gateway traffic. Its key
   is the `api_base` alone with no fallback to a model string, so every deployment without a URL is one
-  `UNKEYED_DEPLOYMENT` bucket per alias.
+  `UNKEYED_DEPLOYMENT` bucket per alias. It is the one live read that may be **stored**
+  (`gateway_slow_response_daily`, one night per alias per key), because disjoint request-log counts add
+  across nights while an average and a denominator-less total do not — and it is a *sample* like the
+  budget and health recordings: a night with no row is a night nobody read, never a night nothing hung,
+  so nothing derived from it may interpolate one and a total read off it is a floor.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to

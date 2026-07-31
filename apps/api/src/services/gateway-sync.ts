@@ -1,6 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { resolveDeploymentModel } from '@dash/shared';
 import type { RefreshJob } from '@dash/shared';
+import { SLOW_RESPONSE_MODEL_CAP } from './gateway.js';
 import { db } from '../db/client.js';
 import {
   gatewayBreakdownDaily,
@@ -10,6 +11,7 @@ import {
   gatewayDeploymentHealth,
   gatewayDeploymentHealthHistory,
   gatewayModel,
+  gatewaySlowResponseDaily,
 } from '../db/schema.js';
 import type {
   GatewayBreakdownInsert,
@@ -19,12 +21,14 @@ import type {
   GatewayDeploymentHealthHistoryInsert,
   GatewayDeploymentHealthInsert,
   GatewayModelInsert,
+  GatewaySlowResponseDailyInsert,
 } from '../db/schema.js';
 import { createGatewayClient } from '../gateway/index.js';
 import type {
   GatewayBudgetSnapshot,
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
+  GatewaySlowResponseRecord,
   GatewaySnapshot,
 } from '../gateway/index.js';
 import { moduleLogger } from '../log.js';
@@ -167,6 +171,7 @@ async function persist(
   budgets: GatewayBudgetSnapshot[] | null,
   models: GatewayModelSnapshot[] | null,
   health: GatewayHealthSnapshot[] | null,
+  slowResponses: GatewaySlowResponseDailyInsert[] | null,
   observedOn: string,
   observedAt: Date,
 ): Promise<void> {
@@ -270,6 +275,33 @@ async function persist(
           });
       }
     }
+    // The hang counter is the one *live* read that is kept, and it is written
+    // like the two history tables rather than like the three snapshots: keyed on
+    // the day it covers, upserted, so a second run this afternoon replaces that
+    // day's reading instead of doubling counts that are meant to be added. Null
+    // covers a backfill, a refusal, a proxy with `disable_spend_logs` and a
+    // swallowed failure alike — all four are nights nobody read, and none of
+    // them may leave a row saying nothing hung.
+    if (slowResponses !== null && slowResponses.length > 0) {
+      const slowRows = slowResponses.map((row) => ({ ...row, observedAt }));
+      for (const rows of chunk(slowRows, CHUNK_SIZE)) {
+        await tx
+          .insert(gatewaySlowResponseDaily)
+          .values(rows)
+          .onConflictDoUpdate({
+            target: [
+              gatewaySlowResponseDaily.date,
+              gatewaySlowResponseDaily.model,
+              gatewaySlowResponseDaily.deploymentKey,
+            ],
+            set: {
+              totalCount: sql`excluded.total_count`,
+              slowCount: sql`excluded.slow_count`,
+              observedAt: sql`excluded.observed_at`,
+            },
+          });
+      }
+    }
     if (budgets !== null) {
       await tx.delete(gatewayBudget);
       for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
@@ -320,11 +352,92 @@ async function persist(
         modelRows: modelRows.length,
         healthRows: healthRows.length,
         unhealthy: healthRows.filter((row) => !row.healthy).length,
+        slowResponseRows: slowResponses?.length ?? 0,
         observedOn,
       },
     },
     'gateway usage persisted',
   );
+}
+
+/**
+ * Sweep `/model/metrics/slow_responses` for one day, and never let it fail the
+ * sync.
+ *
+ * The first *live* read to be stored, and the only one of the three per-alias
+ * sweeps whose payload survives being kept: it answers counts of disjoint
+ * request-log rows beside the number of rows it counted them out of, and counts
+ * add. The exception sweep carries no denominator and `/model/metrics` answers
+ * an average with its counts already discarded, so neither can be accumulated
+ * into anything a reader could act on.
+ *
+ * The day swept is the *last day of the window* rather than today: today is
+ * still accruing, exactly as it is for usage, and filing a partial day would
+ * make every trend read as a collapse on its newest bar. That also makes the
+ * counts line up with the `gateway_daily` row written in the same run.
+ *
+ * The alias list comes from the snapshot already in memory rather than from a
+ * second query, ranked by that day's own spend and capped like the live route:
+ * the proxy's SQL filters on one `model_group` at a time with no wildcard, so a
+ * sweep is a round trip per alias over the largest table LiteLLM has.
+ *
+ * Failures are swallowed for the same reason `/health`'s are, and the argument
+ * is stronger here: this reads `LiteLLM_SpendLogs`, which can be switched off
+ * entirely (`disable_spend_logs`), pruned on its own schedule, or simply slow
+ * enough on a busy proxy to time out. None of that is a reason to fail a job
+ * that has already fetched ninety days of usage. A day nobody read stays
+ * unrecorded rather than being filed as a night on which nothing hung.
+ *
+ * A ranged sync records nothing at all, and unlike `/health` the reason is not
+ * cost but truth: a backfill repairs *aggregate* days, and the request log
+ * behind this route has its own retention — asking it about six days in May
+ * would answer with whatever survived pruning and file it as the reading for
+ * those days.
+ */
+async function readSlowResponses(
+  client: {
+    fetchModelSlowResponses: (
+      from: string,
+      to: string,
+      models: readonly string[],
+    ) => Promise<{ rows: GatewaySlowResponseRecord[]; available: boolean }>;
+  },
+  ranged: boolean,
+  snapshot: GatewaySnapshot,
+  day: string,
+): Promise<GatewaySlowResponseDailyInsert[] | null> {
+  if (ranged) return null;
+
+  const spendByModel = new Map<string, bigint>();
+  for (const row of snapshot.breakdowns) {
+    if (row.dimension !== 'model' || row.date !== day) continue;
+    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
+  }
+  const models = [...spendByModel.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
+    .map(([model]) => model)
+    .slice(0, SLOW_RESPONSE_MODEL_CAP);
+  if (models.length === 0) return null;
+
+  try {
+    const page = await client.fetchModelSlowResponses(day, day, models);
+    // `available: false` is a refusal or a proxy with the request log switched
+    // off, and it must not land as a day of zero hangs — the whole point of the
+    // table is that an unread night stays unread.
+    if (!page.available) return null;
+    return page.rows
+      .filter((row) => Number.isFinite(row.total) && row.total > 0)
+      .map((row) => ({
+        date: day,
+        model: row.model,
+        deploymentKey: row.key,
+        totalCount: row.total,
+        slowCount: row.slow,
+      }));
+  } catch (error) {
+    log.error({ err: error }, 'sweeping gateway slow responses failed — usage sync unaffected');
+    return null;
+  }
 }
 
 /**
@@ -459,11 +572,14 @@ export async function startGatewaySync(
       // two requests, current state, and a backfill has no business touching it.
       const models = ranged ? null : await client.fetchModels();
       const health = await readDeploymentHealth(client, ranged);
+      // Swept for the window's last day — the day usage has just settled for,
+      // never today, which is still accruing.
+      const slowResponses = await readSlowResponses(client, ranged, snapshot, to);
       // The observation is stamped with the day the *reading* was taken, which
       // is today — not with the last day of the usage window. A budget counter
       // describes the period in flight right now, and filing it under yesterday
       // would make the history disagree with the snapshot it came from.
-      await persist(snapshot, budgets, models, health, utcDay(0), new Date());
+      await persist(snapshot, budgets, models, health, slowResponses, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
       await notifyFindings(ranged);
       return snapshot.dates.length;

@@ -303,3 +303,359 @@ export function summarizeGatewaySlowResponses(
     fetchedAt: payload.fetchedAt,
   };
 }
+
+/* ------------------------------------------------------------------------- *
+ * The stored roll-up: what the sweep said, kept.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One night's reading of one deployment key under one alias.
+ *
+ * The route is live and the window it answers is whatever it was asked for; a
+ * *stored* reading is always one UTC day, because the nightly sync asks about
+ * exactly the day it has just finished pulling usage for. That is what makes
+ * these rows addable across days — they are disjoint counts of request-log rows,
+ * the one quantity in this integration that may be summed in both directions.
+ */
+export interface GatewaySlowResponseObservation {
+  /** The UTC day the counts cover — not the day the sweep ran. */
+  date: string;
+  /** The alias the read was scoped to: the query parameter, not the row. */
+  model: string;
+  /** `slowResponseDeploymentKey`'s output; `UNKEYED_DEPLOYMENT` for a deployment with no base. */
+  key: string;
+  total: number;
+  slow: number;
+  /** When the sweep that produced this row ran. */
+  observedAt: string;
+}
+
+/** Everything `GET /api/gateway/slow-responses/history` returns. */
+export interface GatewaySlowResponseHistory {
+  from: string;
+  to: string;
+  /**
+   * The first day any reading was ever filed, answered outside the window for
+   * the same reason the health history answers it: without it, "nothing has hung
+   * in thirty days" and "we started recording on Tuesday" are the same empty
+   * list, and only the first of them is a finding.
+   */
+  recordingSince: string | null;
+  observations: GatewaySlowResponseObservation[];
+}
+
+/**
+ * Observed days needed before the window may be split into two halves and
+ * compared.
+ *
+ * Six, so each half is three nights. Fewer than that and the split is one busy
+ * afternoon against another: this sample is nightly and a single day's traffic
+ * mix moves the pooled share more than any trend does. It is a count of
+ * *observed* days rather than calendar ones, because a scheduler that missed
+ * four nights has not accumulated evidence it did not gather.
+ */
+export const SLOW_RESPONSE_TREND_MIN_DAYS = 6;
+
+/** Gateway-wide, for one day that carries readings. */
+export interface GatewaySlowResponseHistoryDay {
+  date: string;
+  total: number;
+  slow: number;
+  /** Slow over total for the day. Null when nothing was grouped. */
+  share: number | null;
+  /** How many deployment keys reported this day — the day's coverage, not the gateway's size. */
+  keys: number;
+  /** How many aliases were swept this day. The cap and a quiet alias both lower it. */
+  models: number;
+}
+
+/** One deployment key across every day it was observed. */
+export interface GatewaySlowResponseHistoryKey {
+  key: string;
+  /** The aliases whose traffic routed here, ascending. */
+  models: string[];
+  total: number;
+  slow: number;
+  share: number | null;
+  /** This key's share over the window-wide share. Null when either is unusable. */
+  ratioToGateway: number | null;
+  /**
+   * Both gates over the pooled counts — the same test the live card applies to
+   * a window, restated over the stored days. The history adds no threshold of
+   * its own.
+   */
+  elevated: boolean;
+  /** slow − total × window share. Signed, and sums to zero across every key. */
+  excessSlow: number;
+  /** Days carrying a reading of this key. Evidence, never a duration. */
+  daysObserved: number;
+  /** Of those, how many recorded at least one hang. */
+  daysWithHangs: number;
+  firstDate: string;
+  lastDate: string;
+  /** The observed day with the highest share, needing at least one hang to qualify. */
+  worstDay: { date: string; share: number; slow: number; total: number } | null;
+}
+
+/**
+ * The window split in two halves of observed days and pooled.
+ *
+ * Pooled counts rather than a mean of daily shares, because the shares are of
+ * wildly different denominators — a quiet Sunday's 2-of-8 would otherwise weigh
+ * as much as a Wednesday's 40-of-90,000. Reported in percentage points for the
+ * reason every rate on this dashboard is: a share going 0.4% to 0.6% is +0.2
+ * points, and "+50%" is a different and much louder claim.
+ */
+export interface GatewaySlowResponseTrend {
+  earlier: { from: string; to: string; days: number; total: number; slow: number; share: number };
+  recent: { from: string; to: string; days: number; total: number; slow: number; share: number };
+  deltaPoints: number;
+}
+
+export interface GatewaySlowResponseHistorySummary {
+  from: string;
+  to: string;
+  recordingSince: string | null;
+  /** Days carrying at least one reading, ascending. The sample, not the calendar. */
+  observedDays: string[];
+  /**
+   * Calendar days inside the window that carry no reading at all, counted from
+   * `recordingSince` forward — a day before recording started is not a gap.
+   * Never filled in: an unread night is unknown, not a night nothing hung.
+   */
+  unobservedDays: number;
+  days: GatewaySlowResponseHistoryDay[];
+  /** Most hangs first, then by share — the ranking a reader acts on. */
+  keys: GatewaySlowResponseHistoryKey[];
+  total: number;
+  slow: number;
+  /** Window-wide share, and the denominator every ratio here is taken against. */
+  share: number | null;
+  trend: GatewaySlowResponseTrend | null;
+}
+
+/** `2026-07-31`, `2026-07-28` → 3. Both UTC midnights, so DST never shifts it. */
+function daysBetweenIso(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Stored readings → what each deployment key did across the window.
+ *
+ * Pure, and the counterpart to `summarizeGatewaySlowResponses` in the same way
+ * `summarizeDeploymentHistory` is to `summarizeDeploymentHealth`: that one
+ * states the rule over one window the proxy answered, this one states what a
+ * *sequence* of nightly windows may be read to mean. Four rules carry it, and
+ * three are inherited rather than new:
+ *
+ *  - counts add, across the sweep and across days, because they are disjoint
+ *    request-log rows — which is the only reason this table exists where the
+ *    exception and latency sweeps have none;
+ *  - every share is of the route's own denominator, never of gateway traffic;
+ *  - the badge is the live card's two gates over the pooled counts, unchanged:
+ *    a stored window is more evidence, not a different question;
+ *  - a day with no reading is unknown. It is left out of the day series, counted
+ *    in `unobservedDays`, and never zero-filled — a night the sweep was refused
+ *    and a night nothing hung would otherwise draw identically.
+ */
+export function summarizeSlowResponseHistory(
+  history: GatewaySlowResponseHistory,
+): GatewaySlowResponseHistorySummary {
+  const byDay = new Map<string, { total: number; slow: number; keys: Set<string>; models: Set<string> }>();
+  const byKey = new Map<
+    string,
+    {
+      key: string;
+      models: Set<string>;
+      total: number;
+      slow: number;
+      days: Map<string, { total: number; slow: number }>;
+    }
+  >();
+
+  for (const observation of history.observations) {
+    if (!Number.isFinite(observation.total) || observation.total <= 0) continue;
+
+    const day = byDay.get(observation.date);
+    if (day === undefined) {
+      byDay.set(observation.date, {
+        total: observation.total,
+        slow: observation.slow,
+        keys: new Set([observation.key]),
+        models: new Set([observation.model]),
+      });
+    } else {
+      day.total += observation.total;
+      day.slow += observation.slow;
+      day.keys.add(observation.key);
+      day.models.add(observation.model);
+    }
+
+    const key = byKey.get(observation.key);
+    if (key === undefined) {
+      byKey.set(observation.key, {
+        key: observation.key,
+        models: new Set([observation.model]),
+        total: observation.total,
+        slow: observation.slow,
+        days: new Map([[observation.date, { total: observation.total, slow: observation.slow }]]),
+      });
+    } else {
+      key.models.add(observation.model);
+      key.total += observation.total;
+      key.slow += observation.slow;
+      // Two aliases routing to one endpoint on the same night are two disjoint
+      // counts of that endpoint's traffic, so the day's reading is their sum —
+      // the same addition `summarizeGatewaySlowResponses` performs across a
+      // sweep, performed here across a sweep *and* a calendar.
+      const existing = key.days.get(observation.date);
+      if (existing === undefined) {
+        key.days.set(observation.date, { total: observation.total, slow: observation.slow });
+      } else {
+        existing.total += observation.total;
+        existing.slow += observation.slow;
+      }
+    }
+  }
+
+  const days: GatewaySlowResponseHistoryDay[] = [...byDay.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, day]) => ({
+      date,
+      total: day.total,
+      slow: day.slow,
+      share: day.total > 0 ? day.slow / day.total : null,
+      keys: day.keys.size,
+      models: day.models.size,
+    }));
+  const observedDays = days.map((day) => day.date);
+
+  const total = days.reduce((sum, day) => sum + day.total, 0);
+  const slow = days.reduce((sum, day) => sum + day.slow, 0);
+  const windowShare = total > 0 ? slow / total : null;
+
+  const keys: GatewaySlowResponseHistoryKey[] = [...byKey.values()]
+    .map((row) => {
+      const share = row.total > 0 ? row.slow / row.total : null;
+      const ratio =
+        share === null || windowShare === null || windowShare <= 0 ? null : share / windowShare;
+      const significant =
+        windowShare !== null &&
+        wilsonScoreLowerBound(row.slow, row.total, SLOW_RESPONSE_CONFIDENCE_Z) > windowShare;
+      const dayEntries = [...row.days.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      const dates = dayEntries.map(([date]) => date);
+      let worstDay: GatewaySlowResponseHistoryKey['worstDay'] = null;
+      let daysWithHangs = 0;
+      for (const [date, day] of dayEntries) {
+        if (day.slow <= 0) continue;
+        daysWithHangs += 1;
+        const dayShare = day.slow / day.total;
+        if (worstDay === null || dayShare > worstDay.share) {
+          worstDay = { date, share: dayShare, slow: day.slow, total: day.total };
+        }
+      }
+      return {
+        key: row.key,
+        models: [...row.models].sort(),
+        total: row.total,
+        slow: row.slow,
+        share,
+        ratioToGateway: ratio,
+        elevated:
+          significant &&
+          row.slow >= SLOW_RESPONSE_MIN_COUNT &&
+          ratio !== null &&
+          ratio >= SLOW_RESPONSE_ELEVATED_RATIO,
+        excessSlow: windowShare === null ? 0 : row.slow - row.total * windowShare,
+        daysObserved: dates.length,
+        daysWithHangs,
+        firstDate: dates[0] ?? '',
+        lastDate: dates[dates.length - 1] ?? '',
+        worstDay,
+      };
+    })
+    .sort((a, b) => b.slow - a.slow || (b.share ?? 0) - (a.share ?? 0) || a.key.localeCompare(b.key));
+
+  // Gaps are counted from the first day anything was ever recorded, so the
+  // stretch before this dashboard was watching is not reported as missing data.
+  const start =
+    history.recordingSince !== null && history.recordingSince > history.from
+      ? history.recordingSince
+      : history.from;
+  const span = start > history.to ? 0 : daysBetweenIso(start, history.to) + 1;
+  const observedInSpan = observedDays.filter((date) => date >= start && date <= history.to).length;
+
+  return {
+    from: history.from,
+    to: history.to,
+    recordingSince: history.recordingSince,
+    observedDays,
+    unobservedDays: Math.max(0, span - observedInSpan),
+    days,
+    keys,
+    total,
+    slow,
+    share: windowShare,
+    trend: buildTrend(days),
+  };
+}
+
+/**
+ * Split the observed days down the middle and pool each half.
+ *
+ * The split is on *observed* days rather than on the calendar, so a fortnight
+ * the scheduler was down shifts the boundary instead of emptying a half. An odd
+ * number of days gives the extra one to the recent half, because the question
+ * the card asks is about now.
+ */
+function buildTrend(days: GatewaySlowResponseHistoryDay[]): GatewaySlowResponseTrend | null {
+  if (days.length < SLOW_RESPONSE_TREND_MIN_DAYS) return null;
+  const cut = Math.floor(days.length / 2);
+  const earlierDays = days.slice(0, cut);
+  const recentDays = days.slice(cut);
+
+  const pool = (window: GatewaySlowResponseHistoryDay[]) => {
+    const total = window.reduce((sum, day) => sum + day.total, 0);
+    const slow = window.reduce((sum, day) => sum + day.slow, 0);
+    return { total, slow, share: total > 0 ? slow / total : 0 };
+  };
+
+  const earlier = pool(earlierDays);
+  const recent = pool(recentDays);
+  if (earlier.total <= 0 || recent.total <= 0) return null;
+
+  const first = earlierDays[0];
+  const lastEarlier = earlierDays[earlierDays.length - 1];
+  const firstRecent = recentDays[0];
+  const last = recentDays[recentDays.length - 1];
+  if (
+    first === undefined ||
+    lastEarlier === undefined ||
+    firstRecent === undefined ||
+    last === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    earlier: {
+      from: first.date,
+      to: lastEarlier.date,
+      days: earlierDays.length,
+      total: earlier.total,
+      slow: earlier.slow,
+      share: earlier.share,
+    },
+    recent: {
+      from: firstRecent.date,
+      to: last.date,
+      days: recentDays.length,
+      total: recent.total,
+      slow: recent.slow,
+      share: recent.share,
+    },
+    deltaPoints: (recent.share - earlier.share) * 100,
+  };
+}

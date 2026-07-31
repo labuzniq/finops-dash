@@ -27,6 +27,7 @@ import {
   getGatewayHealth,
   getGatewayLatency,
   getGatewayModels,
+  getGatewaySlowResponseHistory,
   getGatewaySlowResponses,
   getGatewaySpendLogs,
   getGatewayUsage,
@@ -361,6 +362,30 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
       }
       throw error;
     }
+  });
+
+  /**
+   * What the nightly sweep counted on each of the last `days` days.
+   *
+   * The stored twin of the route above, and the only history any of the four
+   * live reads has: the sweep answers counts of disjoint request-log rows beside
+   * their own denominator, and counts add — across the aliases of one sweep and
+   * across nights. An average (`/model/metrics`) and a table with no denominator
+   * (`/model/metrics/exceptions`) cannot be accumulated into anything a reader
+   * could act on, which is why neither has one of these.
+   *
+   * Nothing is filled in for a night the sweep did not run, was refused, or
+   * found the request log switched off: an unread night is unknown, never a
+   * night on which nothing hung. Same window rules as the two other history
+   * routes — 60 days by default, 365 at most, a payload cap rather than a
+   * retention one, since these rows are ours.
+   */
+  app.get('/api/gateway/slow-responses/history', async (request, reply) => {
+    const parsed = historyQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    return getGatewaySlowResponseHistory(parsed.data.days);
   });
 
   /**

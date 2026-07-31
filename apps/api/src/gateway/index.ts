@@ -28,4 +28,5 @@ export type {
   GatewayBudgetSnapshot,
   GatewayHealthSnapshot,
   GatewayModelSnapshot,
+  GatewaySlowResponseRecord,
 } from './types.js';

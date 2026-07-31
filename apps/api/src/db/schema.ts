@@ -711,6 +711,63 @@ export const gatewayMonthLine = pgTable(
   (table) => [primaryKey({ columns: [table.month, table.revision, table.dimension, table.key] })],
 );
 
+/**
+ * How many calls hung, kept — one row per deployment key per alias per UTC day.
+ *
+ * The first of the four *live* reads to get a table, and the only one of the
+ * three per-alias sweeps whose payload supports one cleanly: exceptions carry no
+ * denominator and `/model/metrics` answers an average with its counts already
+ * thrown away, while `/model/metrics/slow_responses` answers a count beside the
+ * number of requests it counted them out of. Counts of disjoint request-log rows
+ * are the one thing in this integration that may be added across a sweep and
+ * across days, which is what makes a stored roll-up mean anything at all.
+ *
+ * It exists for the reason every history table here exists: the live read
+ * answers "how many hung in the window on screen" and can never answer "has this
+ * endpoint been hanging since Tuesday", which is the difference between an
+ * afternoon's trouble and a fault somebody owns. It is also the boundary a
+ * finding has to cross before it can leave the dashboard — `gateway_notify`
+ * assesses tables, not browser derivations.
+ *
+ * Grain is (date, model, key) rather than (date, key), deliberately: the proxy
+ * groups on `api_base` and is queried one alias at a time, so one endpoint
+ * serving four aliases answers four times with four *disjoint* counts of the
+ * same deployment's traffic. Storing them separately keeps the finest thing the
+ * route said and lets a reader sum to the key, which is the roll-up
+ * `summarizeGatewaySlowResponses` already performs. `key` is
+ * `slowResponseDeploymentKey`'s output, so an unaddressed deployment arrives
+ * under `UNKEYED_DEPLOYMENT` — one bucket per alias, never a deployment.
+ *
+ * Written by full syncs only, one day (the window's last, which is yesterday),
+ * upserted on the day so a second run the same afternoon replaces the reading
+ * rather than doubling it. A backfill records nothing: this route reads the
+ * *request log*, which is pruned on its own schedule and may be off entirely, so
+ * a repair of six days in May would be asking a table that no longer holds them.
+ * A day with no rows is therefore a day nobody read — never a day nothing hung.
+ */
+export const gatewaySlowResponseDaily = pgTable(
+  'gateway_slow_response_daily',
+  {
+    /** UTC day the counts cover — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `api_base` cut at `/openai/`, or `UNKEYED_DEPLOYMENT` for a deployment with none. */
+    deploymentKey: varchar('deployment_key', { length: 300 }).notNull(),
+    /** Request-log rows the proxy grouped. Cache hits excluded upstream, never the ledger's count. */
+    totalCount: bigint('total_count', { mode: 'number' }).notNull(),
+    /** Of those, how many reached the proxy's own `alerting_threshold` — a count with no duration on it. */
+    slowCount: bigint('slow_count', { mode: 'number' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deploymentKey] }),
+    // Every read is a window across every key, so date leads.
+    index('gateway_slow_response_daily_date_idx').on(table.date),
+  ],
+);
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -861,6 +918,8 @@ export type GatewayDeploymentHealthInsert = typeof gatewayDeploymentHealth.$infe
 export type GatewayDeploymentHealthHistoryRow = typeof gatewayDeploymentHealthHistory.$inferSelect;
 export type GatewayDeploymentHealthHistoryInsert =
   typeof gatewayDeploymentHealthHistory.$inferInsert;
+export type GatewaySlowResponseDailyRow = typeof gatewaySlowResponseDaily.$inferSelect;
+export type GatewaySlowResponseDailyInsert = typeof gatewaySlowResponseDaily.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

@@ -24,6 +24,8 @@ import type {
   GatewayModels,
   GatewayProbe,
   GatewayProbeRoute,
+  GatewaySlowResponseHistory,
+  GatewaySlowResponseObservation,
   GatewaySlowResponses,
   GatewaySpendLog,
   GatewaySpendLogs,
@@ -41,6 +43,7 @@ import {
   gatewayDeploymentHealth,
   gatewayDeploymentHealthHistory,
   gatewayModel,
+  gatewaySlowResponseDaily,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayBudgetRow, GatewayDailyRow } from '../db/schema.js';
 import { nanoToDollars } from '../lib/nano.js';
@@ -747,6 +750,70 @@ export async function getGatewaySlowResponses(
     available: page.available,
     fetchedAt,
   };
+}
+
+/**
+ * What the nightly sweep counted on each of the last `days` days.
+ *
+ * The stored twin of the live read above, and the only one of the four live
+ * reads that has one. The live route answers "how many hung in the window on
+ * screen"; a hang that has been happening since Tuesday and one that started
+ * this morning are the same number there, and only the first is a fault
+ * somebody owns.
+ *
+ * Same shape and the same rule as the two other history routes: one row per
+ * deployment key per alias per day the sync swept, and nothing filled in for a
+ * day it did not. The rows are ours rather than the proxy's, so the window cap
+ * is a payload argument rather than a retention one — keys × aliases × days, and
+ * a large router is a few hundred rows a night.
+ *
+ * `recordingSince` is answered outside the window for the third time and for the
+ * third identical reason: an empty list means "nothing hung" or "we started
+ * recording on Tuesday", and the two are different answers.
+ */
+export async function getGatewaySlowResponseHistory(
+  days: number,
+): Promise<GatewaySlowResponseHistory> {
+  // Ends yesterday, unlike the two other history routes, and for a reason that
+  // is about what is *stored* rather than about the clock: the sweep covers the
+  // day usage has settled for, so today can never carry a reading. Ending the
+  // window today would report a gap on the newest night on every visit forever.
+  const toDate = new Date();
+  toDate.setUTCDate(toDate.getUTCDate() - 1);
+  const to = toDate.toISOString().slice(0, 10);
+  const fromDate = new Date(`${to}T00:00:00.000Z`);
+  fromDate.setUTCDate(fromDate.getUTCDate() - (days - 1));
+  const from = fromDate.toISOString().slice(0, 10);
+
+  const [rows, earliest] = await Promise.all([
+    db
+      .select()
+      .from(gatewaySlowResponseDaily)
+      .where(
+        and(gte(gatewaySlowResponseDaily.date, from), lte(gatewaySlowResponseDaily.date, to)),
+      )
+      .orderBy(
+        asc(gatewaySlowResponseDaily.date),
+        asc(gatewaySlowResponseDaily.deploymentKey),
+        asc(gatewaySlowResponseDaily.model),
+      ),
+    db
+      .select({ date: gatewaySlowResponseDaily.date })
+      .from(gatewaySlowResponseDaily)
+      .orderBy(asc(gatewaySlowResponseDaily.date))
+      .limit(1),
+  ]);
+
+  const observations: GatewaySlowResponseObservation[] = rows.map((row) => ({
+    date: row.date,
+    model: row.model,
+    key: row.deploymentKey,
+    total: row.totalCount,
+    slow: row.slowCount,
+    observedAt: row.observedAt.toISOString(),
+  }));
+
+  return { from, to, recordingSince: earliest[0]?.date ?? null, observations };
 }
 
 /**

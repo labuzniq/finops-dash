@@ -700,6 +700,57 @@ saw. `STANDING_OUTAGE_READINGS` (3) is the one threshold it adds — one failing
 reading is the snapshot's own finding and says nothing new, two can be a single
 evening spanning a night, and three is the first count that cannot be.
 
+A **full** sync also sweeps `/model/metrics/slow_responses` for **one day** — the
+window's last, which is yesterday — and appends what it counted to
+`gateway_slow_response_daily`. It is the first of the four *live* reads to be
+stored, and the only one of the three per-alias sweeps whose payload survives
+being kept: the exception route carries no denominator and `/model/metrics`
+answers an average with its counts already discarded, while this one answers a
+count of disjoint request-log rows beside the number of rows it counted them out
+of. Counts add, across the aliases of one sweep and across nights; an average and
+a denominator-less total do not.
+
+Six rules, and only the first two are new:
+
+- **One day, and it is yesterday.** Today is still accruing, exactly as it is
+  for usage, so filing it would make every trend read as a collapse on its newest
+  bar. Sweeping the day the usage window just settled for also means the counts
+  sit beside the `gateway_daily` row written in the same run.
+- **The alias list comes from the snapshot in memory**, ranked by that day's own
+  spend and capped at `SLOW_RESPONSE_MODEL_CAP` like the live route, because the
+  proxy's SQL filters on one `model_group` at a time and a sweep is a round trip
+  per alias over the largest table LiteLLM has.
+- **Grain is (date, alias, key)**, upserted on all three. Finer than the roll-up
+  anything renders, deliberately: the route groups on `api_base` and is queried
+  per alias, so one endpoint serving four aliases answers four times with four
+  disjoint counts of it. Keeping them apart is what lets a reader sum to the key
+  *and* see which traffic routed there.
+- **A backfill records nothing**, and unlike `/health` the reason is not cost but
+  truth: this route reads the request log, which has its own retention and can be
+  switched off, so asking it about six days in May would answer with whatever
+  survived pruning and file that as the reading for those days.
+- **A refusal, `disable_spend_logs` and a swallowed failure all record nothing
+  either.** `available: false` may never land as a night on which nothing hung —
+  the entire value of the table is that an unread night stays unread.
+- **A failure never fails the job**, for `/health`'s reason and more strongly:
+  this is the proxy's largest table, and a sweep that timed out is not a reason
+  to discard ninety days of usage that already landed.
+
+`GET /api/gateway/slow-responses/history?days=` serves it and
+`summarizeSlowResponseHistory` in `@dash/shared` reads it. The window **ends
+yesterday** rather than today — unlike the two other history routes, and because
+of what is stored rather than because of the clock: today can never carry a
+reading, so ending the window on it would report a gap on the newest night on
+every visit forever. The derivation adds no threshold of its own: the badge is
+the live card's two gates restated over the pooled counts (more evidence, the
+same question), shares are of the route's own denominator, and a night with no
+reading is left out of the series and counted in `unobservedDays` rather than
+zero-filled. Its one new statement is a **trend** — the observed nights split in
+half and each half *pooled*, because the nights have wildly different
+denominators and a mean of nightly shares would let a quiet Sunday outvote a
+Wednesday — reported in percentage points and withheld under
+`SLOW_RESPONSE_TREND_MIN_DAYS` (6) observed nights.
+
 Both management routes are optional in the same sense the team and tag activity
 routes are: an analytics-only credential is a perfectly reasonable thing to
 point this integration at, it will be refused key management, and `fetchBudgets`
@@ -885,7 +936,12 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   so a hang share may never be rendered as a share of gateway traffic. Its
   grouping key is the `api_base` alone, with no fallback to a model string, so
   every deployment without a URL is one bucket per alias and is named as such
-  rather than left blank.
+  rather than left blank. It is also the one live read that may be **kept**:
+  `gateway_slow_response_daily` holds one night per row per (alias, key) because
+  disjoint request-log counts add across nights, where an average and a
+  denominator-less total do not. A night with no row is a night nobody read —
+  never a night nothing hung — so nothing derived from the table may interpolate
+  one, and a period total read off it is a floor.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
@@ -1151,6 +1207,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/exceptions?from=&to=` | `{ from, to, models, skippedModels, deployments, available, fetchedAt }` — why the failed calls in a window failed, per deployment, fetched **live** from `/model/metrics/exceptions` and stored nowhere. One proxy call per alias (the route has no wildcard), aliases taken from the window's own `model` usage ranked by spend and capped at `EXCEPTION_MODEL_CAP` (12) with the rest reported as `skippedModels`. Window capped at `EXCEPTION_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. `available: false` means the route was refused or is absent; an empty answer means no errors were *recorded*, which on a proxy running `disable_error_logs` is a different claim from none happening. |
 | `GET` | `/api/gateway/latency?from=&to=` | `{ from, to, models, skippedModels, series, apiBases, available, fetchedAt }` — how slowly each deployment answered, per day, fetched **live** from `/model/metrics` and stored nowhere. One proxy call per alias like the exception sweep, aliases taken from the window's own `model` usage ranked by spend and capped at `LATENCY_MODEL_CAP` (12). Window capped at `LATENCY_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. Values are **seconds per completion token**, never durations; keys are `api_base`-shaped, so the alias is carried beside them. `available: false` means refused, absent, or a proxy running `disable_spend_logs` — never "the gateway was fast". |
 | `GET` | `/api/gateway/slow-responses?from=&to=` | `{ from, to, models, skippedModels, rows, available, fetchedAt }` — how many calls **hung**, per endpoint, fetched **live** from `/model/metrics/slow_responses` and stored nowhere. The only wall-clock reading the proxy aggregates: a count of requests that ran past the proxy's own `alerting_threshold` (which the response does not carry, so neither does this route) beside the requests it counted them out of. One proxy call per alias like both other sweeps, capped at `SLOW_RESPONSE_MODEL_CAP` (12); window capped at `SLOW_RESPONSE_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. Keys are the `api_base` **alone**, so every deployment without a URL arrives as one `UNKEYED_DEPLOYMENT` bucket. `available: false` means refused, absent, or `disable_spend_logs` — never "nothing hung".
+| `GET` | `/api/gateway/slow-responses/history?days=` | `{ from, to, recordingSince, observations }` — what the nightly sweep counted on each of the last `days` days (default 60, max 365), one row per (day, alias, endpoint key). The stored twin of the route above and the only history any of the four live reads has, because counts of disjoint request-log rows are the one thing here that may be added across nights. The window **ends yesterday**: the sweep covers the day usage settled for, so today can never carry a reading. A day with no row is a night nobody read — a refusal, `disable_spend_logs`, a backfill or a missed run — and never a night nothing hung. `recordingSince` is answered outside the window so an empty list can be told apart from a recording that started on Tuesday. |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -3113,6 +3170,32 @@ arrives as one unattributable bucket, and the sweep's denominator is *short* of
 the ledger's requests for the same days. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-responses-view.ts`.
 
+`apps/api/scripts/verify-gateway-slow-response-history.ts` covers the **stored**
+roll-up, which is the same counts asked a different question. The **pure** half
+drives `summarizeSlowResponseHistory` over constructed readings: two aliases
+swept the same night are one day of the series with their counts added and the
+night reporting one key and two aliases, a night with a reading and no hangs is
+*observed* rather than a gap, the worst night is the highest share rather than
+the highest count, and the signed excess still sums to zero across the keys. Both
+badge gates are driven from all four sides over pooled counts on a fixture whose
+baseline keys carry the traffic — the trap iterations 42, 43 and 45 each hit with
+a median and a share. The unobserved-day arithmetic is checked in three
+directions (gaps counted forward from `recordingSince`, a window that mostly
+predates the recording reporting none, a recording starting after the window
+reporting none), and the trend in five: withheld under
+`SLOW_RESPONSE_TREND_MIN_DAYS`, split into adjacent halves of observed nights
+with the odd one going to the recent half, measured in percentage points, and —
+on a fixture built so the two disagree in *sign* — pooled rather than averaged
+across nights. The **mock** half simulates twelve nightly syncs by asking
+`fetchModelSlowResponses` for one day at a time exactly as `readSlowResponses`
+does, over a run of nights chosen to contain the planted regional incident: the
+nights add back up to what one sweep of the same window reports, the refusing PTU
+pool is still the only badged key over the accumulated window, and the incident
+nights read materially worse than the ordinary ones — which is the finding the
+table exists for, since a month-long window averages them into the provider's
+ordinary rate. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-response-history.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -3465,13 +3548,25 @@ Governance is now rendered end to end across all four scopes
   carry real durations (`/spend/logs`) is the head of the window rather than a
   draw from it.
 
-- **Alerting on hangs, and a hang trend.** The card is built; the layer under it
-  still stores nothing, so a hang episode cannot travel to a webhook and cannot
-  be compared with last week. Both need the same thing the exception and latency
-  layers need — a stored per-key roll-up per day — and this is the one of the
-  three whose payload could support it cleanly, since it carries a count and its
-  own denominator rather than an average. Until then the card is a read somebody
-  takes, and the digest deliberately does not carry it.
+- **Alerting on hangs.** The stored roll-up now exists:
+  `gateway_slow_response_daily` holds one night per (alias, endpoint key), the
+  full sync appends yesterday's sweep to it, and
+  `GET /api/gateway/slow-responses/history` serves it through
+  `summarizeSlowResponseHistory` with the same two gates and a pooled
+  half-over-half trend. That crosses the boundary the exception and latency
+  layers are still on the wrong side of — there is now a *table* for
+  `services/gateway-notify.ts` to assess after a sync.
+
+  What is not built on top of it is the two things that would use it: nothing
+  renders the history (the card still reads the live route for the window on
+  screen), and no finding travels. The second is the one with a real question
+  under it rather than a missing file: an episode key would have to be
+  `slow-responses:model:<endpoint>` to obey the one-per-episode rule, and the
+  first thing a hang alert raises is whether a corporate gateway's hang rate is
+  stable enough night to night that a change in it is a finding — or whether it
+  moves with the workload, so a team shipping a long-context job would page
+  somebody for working as designed. Both need a real proxy, and the trend the
+  history already computes is the evidence that would answer it.
 
   What structurally cannot come from this route however it is stored: a
   duration, a percentile, a comparison against another proxy's counts, a share
