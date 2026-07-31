@@ -1197,6 +1197,7 @@ What it shows, and why each one is there:
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
+| How slowly the backends answered | The page's only card about **time**, read live on a button press, and the only one whose unit has to be spelled out: seconds per completion token, averaged per request, so nothing on it is a request duration, a percentile or an SLA figure — the one re-reading is its reciprocal, tokens per second. A per-day median across the keys that reported (a median, never a sum: rates do not add) with a thin day drawn dim rather than short, and the deployment keys ranked slowest first with each row's ratio to the gateway median, its fastest and slowest day, and the gate that stopped a badge where one did not land. Every row is joined to tonight's health reading — and because this route keys a row by its `api_base` alone, a base fronting deployments the reading disagrees about reads **mixed** rather than being attributed to either |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
 | Deployment health over time | The same nightly readings kept as a sequence — the one thing the snapshot above structurally cannot say: which deployments have been refusing for nights rather than for one evening. A strip per deployment with three states (answering, failing, **no reading filed**), the gateway-wide failing count per night, standing faults first, then anything failing now, then intermittence — every figure a count of **readings**, never a duration or an availability percentage. A recording too short to hold a standing run says so instead of reporting a clean sheet |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
@@ -1213,7 +1214,7 @@ What it shows, and why each one is there:
 | Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-seven decisions worth keeping:
+Twenty-eight decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1679,7 +1680,7 @@ Twenty-seven decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because nineteen cards each flagging their own faults means every
+  their findings in one list, because twenty cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -2026,6 +2027,54 @@ Twenty-seven decisions worth keeping:
   that bills normally — is already the health card's `degraded` finding, and the
   digest never carries two findings about one key. What this card adds is the
   reason under that finding, which is why the two are read together.
+
+- **The latency card is a rate beside a count, and states its unit rather than
+  converting it.** It sits directly under the exception card, which is the third
+  question about the same traffic: how many calls failed, why they failed, and
+  how slowly the ones that succeeded came back. A deployment answering
+  everything at a crawl fails nothing and bills normally, so it is invisible on
+  both cards above it.
+
+  **Seconds per completion token, and never a duration.** The proxy answers
+  `AVG(seconds / completion_tokens)` over requests, so the card carries no
+  percentile, no request duration and no SLA figure. Milliseconds per token is
+  the same number with the decimal point moved; tokens per second is its
+  reciprocal; multiplying by a token count would be a claim about completion
+  length that this payload does not carry, and nothing on the card does it.
+
+  **A median across keys, never a sum, and a thin day is dim rather than
+  short.** Rates do not add, so the day's reading is a median of the keys that
+  reported *that day* and the ones that did not are left out rather than filled
+  in with the gateway figure. The strip carries height for the rate and opacity
+  for how many keys reported, because a day where two of nine keys answered is a
+  thin reading and drawing it at full strength would read as a fast one.
+
+  **The badge is a materiality claim and says which gate stopped it.** The
+  proxy averaged the request counts away, so no significance test is computable
+  at all — `LATENCY_ELEVATED_RATIO` gated on `LATENCY_MIN_DAYS` is the whole
+  test, and every unbadged row states whether it was the ratio or the evidence
+  that rejected it, so a row that looks clean is never silently
+  under-observed.
+
+  **The health join has a fourth state, and this route forces it.** The
+  exception key carries the backend model *and* the base; this one is the
+  `api_base` alone whenever there is one, so several deployments behind a single
+  endpoint collapse onto one key upstream. Where the reading disagrees among
+  them the row reads **mixed** — attributing a slow reading to one of them would
+  be picking, and the collapse cannot be undone from the payload. `unread` stays
+  silence, exactly as it is on the exception card.
+
+  **Three silences again**: not read yet, refused (`disable_spend_logs`, since
+  this route reads the request log rather than the aggregates), and
+  answered-with-nothing — which the query's own `HAVING SUM(completion_tokens) >
+  0` and its exclusion of cache hits make an ordinary state for a window served
+  from cache or spent on embeddings, and which is not the same claim as instant.
+
+  **It feeds no finding to the attention digest**, for the button's reason
+  rather than the exception card's: a source that is unread until somebody
+  presses it would either report a blind spot on every visit or make the digest
+  depend on whether anybody clicked. What it adds is evidence under an existing
+  finding — a pool that is refusing *and* slow.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -2829,6 +2878,32 @@ the ledger's failures for the window, which is the disagreement the card shows
 rather than reconciles. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exceptions-view.ts`.
 
+`apps/api/scripts/verify-gateway-latency-view.ts` covers what the *page* does
+with the latency readings, and its centre of gravity is the join. The **pure**
+half keeps the three silences apart (unread, refused, measured-nothing — and the
+last one is the query's own `HAVING SUM(completion_tokens) > 0` and its exclusion
+of cache hits rather than a fast gateway), pins the window as the tail of the
+trimmed spine under the route's own cap, checks the roll-up the card draws (rows
+slowest first, the gateway figure a median of key means, the daily reading a
+median across the keys that reported *that day* with an absent key never filled
+in with the gateway number, and coverage carried per day so a thin reading is
+dim rather than short), and drives the badge from both sides — a key over the
+ratio on enough days is badged, the *slowest* key of all is not because it was
+seen twice, and `latencyBadgeReason` names which gate stopped it so a row that
+looks clean is not silently under-evidenced. The join gets four cases because
+this key forces a fourth state: `failing`, `healthy`, `unread` for a deployment
+the reading does not name (including the details-stripped case where `api_base`
+is null), and **`mixed`** where one `api_base` fronts deployments the reading
+disagrees about — with the neighbouring case that a base whose deployments are
+*all* failing is `failing`, so `mixed` stays disagreement rather than
+multiplicity. The **mock** half drives `fetchModelLatency` and `fetchHealth`
+together and checks the claim the card exists to make: the reserved-throughput
+pool is measurably slower than the sibling behind the same alias, badged, and
+named by the health reading with its own quota error — the same deployment on a
+third independent payload — while the sibling is not failing, which is why the
+alias reads as ordinary everywhere else. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-latency-view.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -3135,26 +3210,32 @@ Governance is now rendered end to end across all four scopes
   a badge whose numbers come from a different table is exactly the disagreement
   the digest rule exists to prevent.
 
-- **A view on the latency aggregate.** The API reads `/model/metrics` end to
-  end — `GET /api/gateway/latency` sweeps the window's aliases and
-  `summarizeGatewayLatency` rolls the readings up per deployment key and per day
-  — and nothing renders it yet. The card it is waiting for belongs directly
-  under the request sample, because the two answer the same question at
-  different resolutions and the honest reading needs both: this layer covers
-  every request in the window and knows nothing about individual calls, while
-  the sample carries real durations for the head of it. The shape is already
-  forced by the layer — a read on a press rather than on mount (a sweep is a
-  round trip per alias, the same argument the exception card makes), a window
-  taken from the tail of the trimmed spine, three silences kept apart, and a
-  unit that is stated rather than converted: seconds per completion token, or
-  its reciprocal, and never a request duration.
+- **Alerting on how slow something is, and a latency trend.** The latency layer
+  is now read end to end — `GET /api/gateway/latency` sweeps the window's
+  aliases, and the `How slowly the backends answered` card renders the per-day
+  median, the deployment keys ranked slowest first and the join to tonight's
+  health reading. What remains is bounded by the layer rather than pending.
 
-  What such a card must *not* do is feed the attention digest, for the reason
-  the exception card does not: the deployment its badge would name is already
-  the health card's `degraded` or the reliability card's elevated key, and the
-  digest never carries two findings about one subject. What it adds is the
-  evidence under an existing finding — a pool that is refusing *and* slow — not
-  a new one.
+  Nothing here is stored, so a finding cannot *leave the dashboard*: there is no
+  table for `services/gateway-notify.ts` to assess after a sync, which is the
+  boundary both existing alert sources sit on the other side of. Storing a
+  nightly roll-up would cross it — one row per deployment per day, the same
+  shape as the health history — and the first question it raises needs a real
+  proxy: whether a corporate gateway's per-token rate is stable enough that a
+  change in it is a finding, or whether it moves with the workload mix (a team
+  shipping a classifier that answers in one token drags the average without
+  anything having got slower), which is open question 20.
+
+  There is no latency *trend* either, and it is the same limitation the
+  exception card has: the route answers a window, so a per-key series across
+  months would be one read per window. The per-day strip the card draws is what
+  the single read supports.
+
+  What structurally cannot come from this route: a percentile, a request
+  duration, an SLA figure, or a comparison between two gateways. The proxy
+  averaged the per-request ratios before answering, and the sample that does
+  carry real durations (`/spend/logs`) is the head of the window rather than a
+  draw from it.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

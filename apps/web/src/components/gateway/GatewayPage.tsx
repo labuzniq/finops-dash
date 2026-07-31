@@ -52,6 +52,7 @@ import {
   ledgerFailuresIn,
 } from '../../lib/metrics/gatewayExceptions.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
+import { deriveGatewayLatency, latencyWindow } from '../../lib/metrics/gatewayLatency.js';
 import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
 import {
   deriveSpendLogs,
@@ -69,6 +70,7 @@ import {
   useGatewayDeploymentHistory,
   useGatewayExceptions,
   useGatewayHealth,
+  useGatewayLatency,
   useGatewayModels,
   useGatewaySealHistory,
   useGatewaySeals,
@@ -100,6 +102,7 @@ import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayExceptionCard } from './GatewayExceptionCard.js';
+import { GatewayLatencyCard } from './GatewayLatencyCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -611,6 +614,22 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [exceptionsQuery.data, summary.daily, exceptionRead, healthQuery.data],
   );
 
+  // How slowly the backends answered — the page's third live read and its only
+  // card about time. Same window rule as the exception sweep (the tail of the
+  // trimmed spine, capped by the route's own month) and the same press-to-read
+  // rule, for the same two reasons: a round trip per alias, over the request
+  // log rather than the daily rows.
+  const latencyRead = useMemo(() => latencyWindow(summary.daily), [summary.daily]);
+  const latencyQuery = useGatewayLatency(latencyRead);
+  // The one parameter the module refuses to fetch for itself: tonight's health
+  // reading. It is the only other deployment-keyed source, so it is the only
+  // thing these rows can be joined to — and this route's key is coarser than
+  // the exception one, so the join has a `mixed` state the other did not need.
+  const latency = useMemo(
+    () => deriveGatewayLatency(latencyQuery.data ?? null, { health: healthQuery.data ?? null }),
+    [latencyQuery.data, healthQuery.data],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -955,6 +974,24 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               loading={exceptionsQuery.isFetching}
               error={exceptionsQuery.error instanceof Error ? exceptionsQuery.error : null}
               enabled={configured && exceptionRead !== null}
+            />
+          </div>
+
+          {/*
+            Directly under the reason card, and the third question about the
+            same failures: how many, why, and — here — how slowly the ones that
+            *succeeded* came back. A deployment that answers everything at a
+            crawl fails nothing and bills normally, so it is invisible on every
+            card above; and this is the page's only rate, which is why the unit
+            is spelled out on the card rather than assumed.
+          */}
+          <div id="gateway-latency">
+            <GatewayLatencyCard
+              view={latency}
+              onRead={() => void latencyQuery.refetch()}
+              loading={latencyQuery.isFetching}
+              error={latencyQuery.error instanceof Error ? latencyQuery.error : null}
+              enabled={configured && latencyRead !== null}
             />
           </div>
 

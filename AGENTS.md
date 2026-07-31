@@ -463,6 +463,22 @@ per key and per day with exactly one threshold of its own — `LATENCY_ELEVATED_
 the reliability badge: every key here is measured in the same unit, so "slower than the rest of this
 gateway" is supported, while the proxy averaged the requests away, so significance is not. The daily
 reading is a median across the keys that reported, never a sum, because rates do not add.
+`lib/metrics/gatewayLatency.ts` and `GatewayLatencyCard` are what read it, directly under the
+exception card and never in place of the reliability one — the three are the same traffic asked how
+many failed, why, and how slowly the rest came back, and a deployment that merely crawls fails
+nothing and bills normally. The module adds no rule about the gateway (the shared roll-up is the
+whole statement) and five about the *reading*: the unit is stated rather than converted (milliseconds
+per token is the same rate, `tokensPerSecond` its reciprocal, and nothing multiplies it by a token
+count); the window is the tail of the trimmed spine under the route's own cap and it is fetched on a
+press, since a sweep is a round trip per alias over the proxy's largest table; a day carries how many
+keys reported it, drawn as opacity rather than height, because an absent key is unread and never
+filled in with the gateway median; an alias the cap left out is **unmeasured rather than fast**; and
+each row joins to the nightly `/health` reading through `latencyDeploymentKey`, which is coarser than
+the exception key and therefore needs a fourth state — **`mixed`**, where one `api_base` fronts
+deployments the reading disagrees about, so the slow number belongs to neither of them, against
+`unread` for a deployment the reading does not name at all. It feeds no digest finding, for the
+button's reason rather than the exception card's: a source unread until somebody presses it would
+report a blind spot on every visit.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`

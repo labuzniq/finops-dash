@@ -8,6 +8,7 @@ import type {
   GatewayDeploymentHistory,
   GatewayExceptions,
   GatewayHealth,
+  GatewayLatency,
   GatewayModels,
   GatewayNotifications,
   GatewayProbe,
@@ -371,6 +372,21 @@ export function fetchGatewaySpendLogs(
 export function fetchGatewayExceptions(from: string, to: string): Promise<GatewayExceptions> {
   const query = new URLSearchParams({ from, to });
   return request<GatewayExceptions>(`/gateway/exceptions?${query.toString()}`);
+}
+
+/**
+ * How slowly each deployment answered over a window — the only time the proxy
+ * exports, and the only gateway read whose unit is a rate.
+ *
+ * Live like the request sample and the exception sweep, and stored nowhere: it
+ * aggregates `LiteLLM_SpendLogs`, so `disable_spend_logs` empties it and it is
+ * pruned on the request log's schedule. The route has no wildcard either, so
+ * the API sweeps one alias at a time and reports what its cap left out — which
+ * is why this is a manual read too.
+ */
+export function fetchGatewayLatency(from: string, to: string): Promise<GatewayLatency> {
+  const query = new URLSearchParams({ from, to });
+  return request<GatewayLatency>(`/gateway/latency?${query.toString()}`);
 }
 
 /**

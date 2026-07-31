@@ -7,6 +7,7 @@ import type {
   GatewayDeploymentHistory,
   GatewayExceptions,
   GatewayHealth,
+  GatewayLatency,
   GatewayModels,
   GatewayNotifications,
   GatewayProbe,
@@ -22,6 +23,7 @@ import {
   fetchGatewayDeploymentHistory,
   fetchGatewayExceptions,
   fetchGatewayHealth,
+  fetchGatewayLatency,
   fetchGatewayModels,
   fetchGatewayNotifications,
   fetchGatewayProbe,
@@ -306,6 +308,26 @@ export function useGatewayExceptions(window: { from: string; to: string } | null
   return useQuery<GatewayExceptions>({
     queryKey: ['gateway', 'exceptions', window?.from ?? 'none', window?.to ?? 'none'],
     queryFn: () => fetchGatewayExceptions(window?.from ?? '', window?.to ?? ''),
+    enabled: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+    gcTime: 10 * 60_000,
+  });
+}
+
+/**
+ * How slowly the backends answered a window, read on demand.
+ *
+ * The fourth gateway query that does not run on mount, and it inherits both of
+ * the reasons: the route filters on one `model_group` at a time with no
+ * wildcard, so a read is a round trip per alias, and it aggregates the request
+ * log rather than the daily rows, which is the proxy's largest table.
+ * `refetch()` is the trigger and the answer is cached under the window.
+ */
+export function useGatewayLatency(window: { from: string; to: string } | null) {
+  return useQuery<GatewayLatency>({
+    queryKey: ['gateway', 'latency', window?.from ?? 'none', window?.to ?? 'none'],
+    queryFn: () => fetchGatewayLatency(window?.from ?? '', window?.to ?? ''),
     enabled: false,
     staleTime: 5 * 60_000,
     retry: false,
