@@ -1405,6 +1405,7 @@ What it shows, and why each one is there:
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
+| What broke over time | The same nightly sweeps kept, and the second of the four live reads to have a history — legal here because error-log rows are disjoint, so counts add across nights. It needs one thing no other history here does: a **receipt** per night the sweep ran, since this route answers rows only where something faulted and a clean gateway files the same nothing a refused sweep does. A night with a receipt and no rows is **clean**, a night with neither is **unread**, and the strips draw the two differently. Every share is of what was *recorded* — there is no denominator, so no rate, no badge and no significance test anywhere on the card — and the one statement it adds is a **mix shift** in percentage points, half-over-half and pooled: a class taking a bigger slice of the same errors is a change in what is breaking, where a rise in the count is indistinguishable from a rise in traffic. Withheld under `EXCEPTION_TREND_MIN_DAYS` swept nights, because "nothing moved" would be a fact about the age of the recording |
 | How slowly the backends answered | The page's only card about **time**, read live on a button press, and the only one whose unit has to be spelled out: seconds per completion token, averaged per request, so nothing on it is a request duration, a percentile or an SLA figure — the one re-reading is its reciprocal, tokens per second. A per-day median across the keys that reported (a median, never a sum: rates do not add) with a thin day drawn dim rather than short, and the deployment keys ranked slowest first with each row's ratio to the gateway median, its fastest and slowest day, and the gate that stopped a badge where one did not land. Every row is joined to tonight's health reading — and because this route keys a row by its `api_base` alone, a base fronting deployments the reading disagrees about reads **mixed** rather than being attributed to either |
 | How many calls hung | The last of the four questions about one window of traffic, read live on a button press: how many requests ran past **the proxy's own alerting threshold** — a number the response does not carry, so no figure on the card carries a duration and two proxies' counts are not comparable. Every share is taken against the route's **own** denominator (request-log rows, cache hits excluded upstream), with the ledger's count for the same days beside it as a disagreement between two tables and never as a divisor. Endpoints rank by hangs, each with its rate, its ratio to the gateway, the aliases that routed to it, the gate that stopped a badge where one did not land, and tonight's health verdict — except the `api_base`-less bucket, which takes **no** verdict: it is not an endpoint, so there is nothing to look it up by |
 | Hangs over time | The same nightly sweeps kept — the only one of the four live reads that has a history, and the only one that may have one, because counts of disjoint request-log rows are the one thing here that adds across nights. The window's pooled hang rate with a **half-over-half trend in percentage points** (pooled, never a mean of nightly shares: the denominators differ by orders of magnitude), a per-night strip where height is the rate and *opacity* is how many endpoints reported it, and a strip per endpoint with three states (clean, hangs, **no sweep filed**). Every claim is the shared roll-up's — the badge is the live card's own two gates over the pooled counts — and a recording too short to split says so instead of drawing a flat direction |
@@ -1890,7 +1891,7 @@ Thirty decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because twenty-two cards each flagging their own faults means every
+  their findings in one list, because twenty-three cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -2372,6 +2373,47 @@ Thirty decisions worth keeping:
   not the button: the finding it would raise needs a threshold on a count against
   a line this dashboard cannot see, which is the open question the stored trend
   exists to answer once a real proxy is behind it.
+
+- **The exception history is the same sweep asked what usually breaks.**
+  `lib/metrics/gatewayExceptionHistory.ts` and `GatewayExceptionHistoryCard` read
+  `gateway_exception_daily` and `gateway_exception_sweep` through
+  `summarizeExceptionHistory`, directly under the live exception card. It exists
+  for the hang history's reason restated over a different quantity: the live read
+  answers whatever window it is asked for, so "42% of what we recorded was rate
+  limits" is a good answer with no way to know whether last week was 8% or 60%.
+
+  Like every other history card it adds **no rule about the gateway** — the
+  shared summary is passed through verbatim, asserted as deep equality in the
+  harness rather than as a convention — and three about the *drawing*, two of
+  which the two sibling cards already have and one of which is this layer's own.
+
+  **The spine is clamped forward to `recordingSince`,** which here is taken from
+  the *receipts* rather than from the rows: the first night we looked is the
+  honest start of the recording, and it may well be a night on which nothing
+  failed.
+
+  **A night with no sweep is a hole, and a swept night that found nothing is
+  drawn.** This is the one drawing rule the receipt table exists for. Every other
+  history layer here can read "no rows" as "nothing was happening", because its
+  route answers a row per object with traffic; this route answers rows only where
+  something faulted, so a clean gateway and a refused sweep leave the identical
+  empty list behind. The gateway strip and every class strip therefore carry three
+  states, and a clean night is a **finding** rather than an absence — it is drawn,
+  counted, and reported in its own stat.
+
+  **Under `EXCEPTION_TREND_MIN_DAYS` swept nights the mix shift is withheld and
+  the card says why** — and the withheld sentence is several sentences, because
+  the silences differ: too few nights to split, a half that recorded nothing (a
+  mix cannot be compared against no mix), a class the split did not see, and a
+  class *new* in the recent half are four different readings. There is no badge
+  anywhere on the card to explain, since a layer with no denominator has nothing
+  to be significant against, so the withheld direction is the only silence a
+  reader meets.
+
+  It **feeds no finding to the digest**, for the live card's reason and one more
+  of its own: a standing fault names the deployment tonight's health reading is
+  already reporting, and the only quantity that could carry an alert here — a
+  rise in the count — moves with traffic.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -3343,6 +3385,25 @@ the refusing PTU pool the only badged endpoint, and the worst night one of the
 two the mock plants a regional incident on. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-response-history-view.ts`.
 
+`apps/api/scripts/verify-gateway-exception-history-view.ts` covers what the
+*card* adds over the recording, and only that — `verify-gateway-exception-history.ts`
+already pins the stored sweep and the shared summarizer. 48 checks in two halves.
+The pure half constructs the histories a dev database does not have: the three
+silences (in flight, nothing ever swept, and a run of swept-but-clean nights,
+which is the one this layer can *report*); the summary passing through as deep
+equality; the spine clamped forward and refusing to stretch backwards; a
+four-night run reading recorded / clean / recorded / unread in the gateway strip
+and in a class's own strip; every class's cells summing to its window count;
+`tooShort` on both sides of `EXCEPTION_TREND_MIN_DAYS` and against a window swept
+five nights of nine; four distinct withheld-or-stated sentences; and the health
+join in all three states, with `unread` never reading as healthy. The mock half
+sweeps twelve nights one at a time exactly as `readExceptions` does, filing a
+receipt per night, and proves the planted 17th/18th regional incident is the
+window's worst night, reads as a **backend**-class night rather than as more of
+everything, and that the nights and the classes both sum back to the window total.
+Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exception-history-view.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -3659,17 +3720,22 @@ Governance is now rendered end to end across all four scopes
   still on the wrong side of — there is now a *table* for
   `services/gateway-notify.ts` to assess after a sync.
 
-  What is not built is the **view** on those nights, and then the finding that
-  travels. The view is the smaller of the two and follows the health-history and
-  hang-history shape: a spine clamped forward to `recordingSince`, a night with
-  no sweep drawn as a hole and a swept-but-clean night drawn as a zero, and the
-  mix shift stated in points. The alert is the real question, and it is the one
-  the mix shift exists to answer: whether a corporate gateway's error mix is
-  stable enough night to night that a move in it is a finding, or whether it
-  follows the workload closely enough that a team shipping a new prompt would
-  page somebody. The stored trend is the evidence, and it needs a real proxy.
-  Note what would *not* be alertable either way: a rise in the count. The layer
-  has no denominator, so more exceptions is indistinguishable from more traffic.
+  The **view** on those nights is now built too: `What broke over time`
+  (`lib/metrics/gatewayExceptionHistory.ts`) draws the recording under the live
+  card — a spine clamped forward to `recordingSince`, a night with no sweep as a
+  hole against a swept-but-clean night as a drawn zero, one strip per class, and
+  the mix shift in points with the withheld case saying which silence it is.
+
+  What remains is the finding that *travels*, and it is the real question rather
+  than a missing feature — the one the mix shift exists to answer: whether a
+  corporate gateway's error mix is stable enough night to night that a move in it
+  is worth waking somebody, or whether it follows the workload closely enough
+  that a team shipping a new prompt would page the on-call. The stored trend is
+  the evidence and it needs a real proxy behind it. Note what would *not* be
+  alertable either way: a rise in the count. The layer has no denominator, so more
+  exceptions is indistinguishable from more traffic — and a standing fault would
+  name the deployment tonight's health snapshot is already reporting, which is the
+  rule that keeps the health *history* out of the digest as well.
 
   Two smaller things the live card deliberately leaves out and the stored one
   does not change: there is no per-class daily strip on it (the route answers a

@@ -5,6 +5,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDeploymentHistory,
+  GatewayExceptionHistory,
   GatewayExceptions,
   GatewayHealth,
   GatewayLatency,
@@ -23,6 +24,7 @@ import {
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayDeploymentHistory,
+  fetchGatewayExceptionHistory,
   fetchGatewayExceptions,
   fetchGatewayHealth,
   fetchGatewayLatency,
@@ -316,6 +318,25 @@ export function useGatewayExceptions(window: { from: string; to: string } | null
     staleTime: 5 * 60_000,
     retry: false,
     gcTime: 10 * 60_000,
+  });
+}
+
+/**
+ * What those sweeps recorded on each of the last `days` nights.
+ *
+ * The counterpart of the read above and its opposite in every practical way:
+ * that one is a round trip per alias into the proxy's error log and is fetched
+ * on a press, this one is a table of ours and runs on mount like the three other
+ * history queries. Cached under the day count rather than under dates — the
+ * window is relative to today, the payload is classes × nights, and the gateway
+ * sync prefix invalidates it because the sync is the only thing that appends to
+ * it.
+ */
+export function useGatewayExceptionHistory(days: number, enabled: boolean) {
+  return useQuery<GatewayExceptionHistory>({
+    queryKey: ['gateway', 'exception-history', days],
+    queryFn: () => fetchGatewayExceptionHistory(days),
+    enabled,
   });
 }
 

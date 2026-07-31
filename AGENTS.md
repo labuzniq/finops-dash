@@ -461,6 +461,16 @@ the stored `exception_type` rather than frozen into the row, the opposite of
 `gateway_deployment_health_history.model` and for a reason that is about the value: a resolved alias
 depends on that night's catalogue, a class is a static mapping from a Python class name, so deriving
 it means a taxonomy fix re-files the history instead of stranding it under `other`.
+`lib/metrics/gatewayExceptionHistory.ts` and `GatewayExceptionHistoryCard` render it directly under
+the live card, and like the two other history views they add no rule about the gateway — the shared
+summarizer is the whole statement — only three about the drawing: the spine is clamped forward to
+`recordingSince` (taken from the *receipts*, so the recording starts on the first night we looked
+whatever it found), a night with no sweep is a **hole** in the gateway strip and in every class strip
+while a swept-but-clean night is drawn and counted as the finding it is, and a recording shorter than
+`EXCEPTION_TREND_MIN_DAYS` says so — the withheld shift being the card's only silence, since a layer
+with no denominator has no badge to explain. No finding travels from it either: the fault it would
+name is the one tonight's health snapshot is already reporting, and the only quantity it could raise
+one on — a rise in the count — moves with traffic.
 `GET /api/gateway/latency?from=&to=` is the third live read and the sibling of that one:
 `/model/metrics` over the same `LiteLLM_SpendLogs` the request sample draws from, only aggregated
 by the proxy over *every* row in the window rather than the head of it. An **eighth envelope**, and

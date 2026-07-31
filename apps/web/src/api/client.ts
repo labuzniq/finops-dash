@@ -6,6 +6,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDeploymentHistory,
+  GatewayExceptionHistory,
   GatewayExceptions,
   GatewayHealth,
   GatewayLatency,
@@ -374,6 +375,24 @@ export function fetchGatewaySpendLogs(
 export function fetchGatewayExceptions(from: string, to: string): Promise<GatewayExceptions> {
   const query = new URLSearchParams({ from, to });
   return request<GatewayExceptions>(`/gateway/exceptions?${query.toString()}`);
+}
+
+/**
+ * What the nightly exception sweeps recorded on each of the last `days` nights.
+ *
+ * The stored twin of the read above, and read on mount rather than on a press
+ * because it is a table of ours rather than a round trip per alias. It answers
+ * two lists: the exceptions, and the nights the sweep ran at all — the second is
+ * load-bearing, since this route reports rows only where something faulted, so a
+ * clean night and a refused sweep are the same empty list without a receipt.
+ *
+ * Its window ends *yesterday*, like the hang history and unlike the budget and
+ * health ones: the sweep covers the day usage has settled for, so today can never
+ * carry a reading and a window ending on it would report a gap on the newest
+ * night forever.
+ */
+export function fetchGatewayExceptionHistory(days: number): Promise<GatewayExceptionHistory> {
+  return request<GatewayExceptionHistory>(`/gateway/exceptions/history?days=${days}`);
 }
 
 /**

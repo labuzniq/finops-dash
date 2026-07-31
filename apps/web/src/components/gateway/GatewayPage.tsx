@@ -51,6 +51,11 @@ import {
   exceptionWindow,
   ledgerFailuresIn,
 } from '../../lib/metrics/gatewayExceptions.js';
+import {
+  EXCEPTION_HISTORY_DAYS,
+  deriveExceptionHistory,
+  hasExceptionHistory,
+} from '../../lib/metrics/gatewayExceptionHistory.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveGatewayLatency, latencyWindow } from '../../lib/metrics/gatewayLatency.js';
 import {
@@ -77,6 +82,7 @@ import {
   useGatewayComparisonData,
   useGatewayCoverage,
   useGatewayDeploymentHistory,
+  useGatewayExceptionHistory,
   useGatewayExceptions,
   useGatewayHealth,
   useGatewayLatency,
@@ -113,6 +119,7 @@ import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayExceptionCard } from './GatewayExceptionCard.js';
+import { GatewayExceptionHistoryCard } from './GatewayExceptionHistoryCard.js';
 import { GatewayLatencyCard } from './GatewayLatencyCard.js';
 import { GatewaySlowResponseCard } from './GatewaySlowResponseCard.js';
 import { GatewaySlowResponseHistoryCard } from './GatewaySlowResponseHistoryCard.js';
@@ -667,6 +674,23 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   // own window rather than the range picker's, like the two other history cards,
   // because these are our nightly readings rather than days of gateway usage —
   // and unlike the live read above it, it runs on mount: it is a table of ours.
+  // The exception sweeps kept, and the second of the four live reads that has a
+  // history. It needs one thing the hang history does not — a receipt per night
+  // the sweep ran — because this route answers rows only where something faulted,
+  // so a clean gateway and a refused sweep file the same nothing. Its own window
+  // rather than the range picker's, like the three other history cards, and it
+  // runs on mount because it is a table of ours rather than a round trip per
+  // alias. The health snapshot rides along for the same deployment join the live
+  // card makes.
+  const exceptionHistoryQuery = useGatewayExceptionHistory(EXCEPTION_HISTORY_DAYS, configured);
+  const exceptionHistory = useMemo(
+    () =>
+      deriveExceptionHistory(exceptionHistoryQuery.data ?? null, {
+        health: healthQuery.data ?? null,
+      }),
+    [exceptionHistoryQuery.data, healthQuery.data],
+  );
+
   const slowHistoryQuery = useGatewaySlowResponseHistory(SLOW_RESPONSE_HISTORY_DAYS, configured);
   const slowHistory = useMemo(
     () => deriveSlowResponseHistory(slowHistoryQuery.data ?? null),
@@ -1018,6 +1042,20 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               error={exceptionsQuery.error instanceof Error ? exceptionsQuery.error : null}
               enabled={configured && exceptionRead !== null}
             />
+          </div>
+
+          {/*
+            Directly under the live sweep, because it is the same sweep with the
+            question a single window cannot answer asked of it: "this is what
+            broke" is only ever readable next to "and this is what usually
+            breaks". It stands itself down until a night has been swept — there
+            is no backfill for this table, so an empty one means the recording
+            has not started rather than that nothing has ever failed.
+          */}
+          <div id="gateway-exception-history">
+            {hasExceptionHistory(exceptionHistory) && (
+              <GatewayExceptionHistoryCard view={exceptionHistory} />
+            )}
           </div>
 
           {/*
