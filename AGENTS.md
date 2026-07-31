@@ -168,8 +168,30 @@ suppressing sub-cent settles from the list while still counting them in `unattri
 the dimension's lines do not account for, reported and never spread, for the same reason the statement's
 `unallocated` row is.
 Everything above is
-*usage*; `gateway_budget` is the one gateway table that is
-not. It is a snapshot of the proxy's
+*usage*; `gateway_model` and `gateway_budget` are the two gateway tables that are
+not. `gateway_model` is the proxy's configured **price list** from
+`/model/info` — one row per public model alias, replaced wholesale by the full
+sync and served by `GET /api/gateway/models`. It is a fourth management envelope
+(`{"data": […]}`, one entry per *deployment*, three nested objects each), and
+three of its rules are load-bearing: prices are stored as nano-dollars per
+**million** tokens because LiteLLM quotes `2.5e-06` per token and nine
+fractional digits would round a cheap model to nothing; every price is nullable
+and never zero-filled, since a model billed per second and one the price map
+cannot resolve both have no per-token rate while an explicit `0` is a
+deliberately free model; and several deployments answering to one alias collapse
+to one row that reports the **cheapest** of them and sets `priceVaries`, because
+the daily aggregates carry no deployment id to split by — that number is a floor
+and anything rendering it has to say so. `resolveModelPrice` in `@dash/shared`
+is the join to the `model` usage dimension (alias, then backend, then the
+deployment after the provider prefix — LiteLLM's own third pass), and a miss is
+null rather than a near-match, because catalogue *coverage* is the number a
+reader leads with. The catalogue never replaces `spend`: a list rate times a
+token count is an estimate that ignores discounts and per-key overrides, shown
+beside the bill and never in place of it. What it is for is the one thing no
+usage payload can answer — the daily row carries a single `spend` covering
+input, output and both cache operations together, which is exactly why
+`gatewayCache.ts` reports tokens and refuses dollars.
+`gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
 by the same sync and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means
@@ -266,6 +288,12 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
   limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
   must never be zero-filled, and the same rule carries into `gateway_budget_history`.
+- **A catalogue price is a list rate, never the bill, and sometimes a floor.**
+  `gateway_model` says what the proxy is configured to charge; `spend` says what
+  it charged. Every price column is nullable and never zero-filled (per-second
+  billing and an unresolvable model both mean "no per-token rate", while `0`
+  means free on purpose), and a row with `price_varies` reports the cheapest of
+  several deployments — a lower bound, not a rate.
 - **Whether a budget counter resets is a property of its scope.** Keys and teams are reset by the
   proxy, tags are not (BerriAI/litellm#27481), so a tag's `spend` is cumulative since creation whatever
   its `budget_duration` says. Read it through `budgetCounterResets(scope)`: nothing may divide that

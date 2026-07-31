@@ -33,6 +33,7 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayModelSnapshot,
   GatewaySnapshot,
 } from './types.js';
 
@@ -58,6 +59,17 @@ interface MockModel {
    */
   failureBias?: number;
 }
+
+/**
+ * The alias with more than one deployment behind it, and what the cheaper of
+ * the two charges. Reserved throughput is bought at a discount, which is
+ * precisely why a collapsed catalogue row has to report a floor.
+ */
+const MULTI_DEPLOYMENT_MODEL = 'azure/gpt-4o';
+const PTU_DISCOUNT = 0.7;
+
+/** The alias LiteLLM's price map cannot resolve — it has a name and no price. */
+const UNPRICED_MODEL = 'azure_ai/phi-4';
 
 const MODELS: readonly MockModel[] = [
   { id: 'azure/gpt-4o', provider: 'azure', inputPerMillion: 2.5, outputPerMillion: 10, weight: 0.24 },
@@ -772,6 +784,54 @@ export class MockGatewayClient implements GatewayClient {
   }
 
   /**
+   * The configured price list, straight off the same `MODELS` table the usage
+   * is generated from — which is the point: every key of the `model` dimension
+   * resolves, so the catalogue's *coverage* reads 100% here and any shortfall a
+   * derivation reports against this source is a bug in the derivation.
+   *
+   * A real proxy will not be so tidy, so two shapes are planted rather than
+   * idealised away:
+   *
+   *  - `azure/gpt-4o` is served by two deployments (a PTU pool and a
+   *    pay-as-you-go fallback) at different prices, so exactly one row reports
+   *    `priceVaries` and its price is a floor.
+   *  - `azure_ai/phi-4` is an on-prem-style deployment LiteLLM's price map has
+   *    never heard of: it carries a name, a backend and no per-token cost at
+   *    all. Nulls there are the honest answer, and anything that zero-fills them
+   *    prices its traffic at free.
+   */
+  async fetchModels(): Promise<GatewayModelSnapshot[]> {
+    const models = MODELS.map((model) => {
+      const unpriced = model.id === UNPRICED_MODEL;
+      const varies = model.id === MULTI_DEPLOYMENT_MODEL;
+      const perMillion = (dollars: number): bigint | null =>
+        unpriced ? null : dollarsToNano(varies ? dollars * PTU_DISCOUNT : dollars);
+
+      return {
+        model: model.id,
+        backend: model.id,
+        provider: model.provider,
+        mode: 'chat',
+        inputPerMillionNano: perMillion(model.inputPerMillion),
+        outputPerMillionNano: perMillion(model.outputPerMillion),
+        // The convention `lib/metrics/gatewayCache.ts` derives its break-even
+        // from, now carried as a price rather than assumed: reads at 0.1x plain
+        // input, writes at 1.25x. Absent on the models whose backends do not
+        // bill cache operations separately at all.
+        cacheReadPerMillionNano: unpriced ? null : dollarsToNano(model.inputPerMillion * 0.1),
+        cacheWritePerMillionNano: unpriced ? null : dollarsToNano(model.inputPerMillion * 1.25),
+        maxInputTokens: unpriced ? null : 128_000,
+        maxOutputTokens: unpriced ? null : 16_384,
+        deployments: varies ? 2 : 1,
+        priceVaries: varies,
+      } satisfies GatewayModelSnapshot;
+    });
+
+    log.info({ dash: { models: models.length } }, 'mock gateway model catalogue generated');
+    return models;
+  }
+
+  /**
    * What a probe of a healthy proxy looks like — every route answering, keyed
    * off this generator's own output for the probed day rather than off invented
    * numbers, so the connection panel shows the same key counts the breakdown
@@ -804,6 +864,10 @@ export class MockGatewayClient implements GatewayClient {
     const spend = Number(usage.daily.reduce((sum, row) => sum + row.spendNano, 0n)) / 1e9;
     const scoped = (scope: GatewayBudgetScope): number =>
       budgets.filter((budget) => budget.scope === scope).length;
+
+    const catalogue = await this.fetchModels();
+    const deployments = catalogue.reduce((sum, entry) => sum + entry.deployments, 0);
+    const priced = catalogue.filter((entry) => entry.inputPerMillionNano !== null).length;
 
     return [
       {
@@ -873,6 +937,18 @@ export class MockGatewayClient implements GatewayClient {
         durationMs: 0,
         rows: scoped('tag'),
         detail: `${scoped('tag')} tag(s), all configured`,
+        dimensions: [],
+      },
+      {
+        path: '/model/info',
+        purpose:
+          'Per-model list prices, context windows and modality are unavailable — spend, tokens and every usage view are unaffected, but nothing can price a token count.',
+        required: false,
+        status: 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: deployments,
+        detail: `${deployments} deployment(s), ${priced} priced`,
         dimensions: [],
       },
     ];

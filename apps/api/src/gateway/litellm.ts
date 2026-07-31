@@ -48,6 +48,7 @@ import type {
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
+  GatewayModelSnapshot,
   GatewaySnapshot,
 } from './types.js';
 
@@ -257,6 +258,66 @@ function isGoverned(row: z.infer<typeof tagRowSchema>): boolean {
     typeof row.spend === 'number';
 }
 
+/**
+ * `/model/info` — the fourth management envelope, and the only one that is
+ * neither a bare array nor a paginated page: a single `{"data": [...]}` object
+ * holding every routable deployment, however many there are.
+ *
+ * The shape is LiteLLM's `Deployment` model, so each entry is three nested
+ * objects rather than a flat row:
+ *
+ *  - `model_name` — the **public alias**, what a caller puts in `"model"`.
+ *  - `litellm_params.model` — the backend the alias routes to. The api key and
+ *    base are stripped by the proxy before it answers (`remove_sensitive_info…`),
+ *    so what is left is safe to store.
+ *  - `model_info` — the config's own block, with LiteLLM's price map merged
+ *    *underneath* it (`_get_proxy_model_info`: config values win, the map fills
+ *    the gaps). Which is why a proxy with a hand-priced model answers the
+ *    override here and not the list price.
+ *
+ * Prices are per token and can be absent in two different ways that must not be
+ * conflated: a model priced per second (`input_cost_per_second`, Bedrock
+ * provisioned throughput) has no per-token key at all, while an explicit `0` is
+ * a free model — LiteLLM skips budget checks entirely for one, which is a
+ * configuration choice rather than missing data.
+ */
+const modelEntrySchema = z.object({
+  model_name: z.string().nullish(),
+  litellm_params: z
+    .object({
+      model: z.string().nullish(),
+      custom_llm_provider: z.string().nullish(),
+    })
+    .passthrough()
+    .nullish(),
+  model_info: z
+    .object({
+      id: z.string().nullish(),
+      mode: z.string().nullish(),
+      litellm_provider: z.string().nullish(),
+      input_cost_per_token: nullableNumber,
+      output_cost_per_token: nullableNumber,
+      cache_read_input_token_cost: nullableNumber,
+      cache_creation_input_token_cost: nullableNumber,
+      max_input_tokens: nullableNumber,
+      max_output_tokens: nullableNumber,
+    })
+    .passthrough()
+    .nullish(),
+});
+
+/**
+ * `{"data": [...]}`. The single-model form (`?litellm_model_id=`) answers a bare
+ * object under the same key, which this integration never asks for — it wants
+ * the whole list — but the union costs nothing and stops a proxy quirk from
+ * failing a sync.
+ */
+const modelInfoSchema = z.object({
+  data: z.union([z.array(modelEntrySchema), modelEntrySchema]).default([]),
+});
+
+type ModelEntry = z.infer<typeof modelEntrySchema>;
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -368,6 +429,129 @@ function dollarsToNano(dollars: number): bigint {
 function optionalDollarsToNano(dollars: number | null | undefined): bigint | null {
   if (dollars === null || dollars === undefined || !Number.isFinite(dollars)) return null;
   return dollarsToNano(dollars);
+}
+
+/**
+ * A per-*token* price → nano-dollars per *million* tokens.
+ *
+ * The scale change happens here rather than at the edge because it is the whole
+ * reason the catalogue is storable as an integer: `2.5e-06` per token pinned to
+ * nine fractional digits is `2500` nano and a $0.05/M model is `50` — three
+ * significant figures away from rounding to nothing. Times a million it is
+ * `2_500_000_000` and the cheapest model on any list still has room.
+ *
+ * Null in, null out, and a negative price is not a fact either. Zero *is* one:
+ * a model configured at 0 is free on purpose.
+ */
+function perTokenToNanoPerMillion(cost: number | null | undefined): bigint | null {
+  if (cost === null || cost === undefined || !Number.isFinite(cost) || cost < 0) return null;
+  return dollarsToNano(cost * 1_000_000);
+}
+
+/** A context-window size, or null. Same shape as `toLimit` — 0 tokens is not a window. */
+function toWindow(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || !Number.isFinite(value) || value <= 0) return null;
+  return Math.round(value);
+}
+
+/**
+ * The public alias an entry belongs under, or null when it has no usable name.
+ *
+ * A wildcard row (`*`, `azure/*`) is a *routing* rule rather than a model: it
+ * prices nothing, and no usage key will ever equal it. Admitting it would put a
+ * priceless row into the denominator the catalogue's coverage is measured
+ * against — the same reason `/tag/list`'s dynamic tags are dropped.
+ */
+function modelKeyOf(entry: ModelEntry): string | null {
+  const alias = entry.model_name?.trim() ?? '';
+  const backend = entry.litellm_params?.model?.trim() ?? '';
+  const key = alias !== '' ? alias : backend;
+  if (key === '' || key === '*' || key.endsWith('/*')) return null;
+  return key.slice(0, 200);
+}
+
+/** The four per-token price fields, read off one deployment in storage units. */
+function pricesOf(entry: ModelEntry): (bigint | null)[] {
+  const info = entry.model_info ?? null;
+  return [
+    perTokenToNanoPerMillion(info?.input_cost_per_token),
+    perTokenToNanoPerMillion(info?.output_cost_per_token),
+    perTokenToNanoPerMillion(info?.cache_read_input_token_cost),
+    perTokenToNanoPerMillion(info?.cache_creation_input_token_cost),
+  ];
+}
+
+/** The cheapest non-null value, or null when no deployment carried one. */
+function cheapest(values: readonly (bigint | null)[]): bigint | null {
+  let best: bigint | null = null;
+  for (const value of values) {
+    if (value === null) continue;
+    if (best === null || value < best) best = value;
+  }
+  return best;
+}
+
+/** The smallest non-null, for counts rather than money. */
+function smallest(values: readonly (number | null)[]): number | null {
+  let best: number | null = null;
+  for (const value of values) {
+    if (value === null) continue;
+    if (best === null || value < best) best = value;
+  }
+  return best;
+}
+
+/** The first non-empty string, for the descriptive fields where there is nothing to minimise. */
+function firstOf(values: readonly (string | null | undefined)[]): string | null {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') return value;
+  }
+  return null;
+}
+
+/**
+ * Every deployment answering to one public alias, collapsed into one catalogue
+ * row.
+ *
+ * `priceVaries` is deliberately strict: two deployments *disagree* not only when
+ * they quote different numbers but when one quotes a price and the other quotes
+ * none. A PTU deployment billed per second sitting behind the same alias as a
+ * pay-as-you-go one is exactly that case, and it is the one where a single rate
+ * misleads most — traffic split across them costs something between the quoted
+ * price and nothing at all.
+ */
+function toModelSnapshot(model: string, group: readonly ModelEntry[]): GatewayModelSnapshot {
+  const priced = group.map(pricesOf);
+  const varies = [0, 1, 2, 3].some((field) => {
+    const values = priced.map((row) => row[field] ?? null);
+    return values.some((value) => value !== values[0]);
+  });
+
+  const backend = firstOf(group.map((entry) => entry.litellm_params?.model?.trim()));
+  const provider =
+    firstOf(group.map((entry) => entry.model_info?.litellm_provider?.trim())) ??
+    firstOf(group.map((entry) => entry.litellm_params?.custom_llm_provider?.trim())) ??
+    // Last resort, and the same rule the `provider` usage dimension is keyed by:
+    // LiteLLM writes the routing string as `<provider>/<deployment>`.
+    (backend !== null && backend.includes('/') ? (backend.split('/')[0] ?? null) : null);
+
+  return {
+    model,
+    backend: backend === null ? null : backend.slice(0, 200),
+    provider: provider === null || provider === '' ? null : provider.slice(0, 60),
+    mode: firstOf(group.map((entry) => entry.model_info?.mode?.trim()))?.slice(0, 40) ?? null,
+    inputPerMillionNano: cheapest(priced.map((row) => row[0] ?? null)),
+    outputPerMillionNano: cheapest(priced.map((row) => row[1] ?? null)),
+    cacheReadPerMillionNano: cheapest(priced.map((row) => row[2] ?? null)),
+    cacheWritePerMillionNano: cheapest(priced.map((row) => row[3] ?? null)),
+    // Context windows collapse to the smallest for a different reason than
+    // prices do: it is the one every deployment behind the alias honours, so a
+    // prompt that fits it routes anywhere.
+    maxInputTokens: smallest(group.map((entry) => toWindow(entry.model_info?.max_input_tokens))),
+    maxOutputTokens: smallest(group.map((entry) => toWindow(entry.model_info?.max_output_tokens))),
+    deployments: group.length,
+    priceVaries: varies,
+  };
 }
 
 /**
@@ -684,6 +868,66 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
+   * `GET /model/info` — the proxy's configured price list.
+   *
+   * One row per *public alias*, not per deployment. LiteLLM load-balances any
+   * number of deployments behind one `model_name` (two regions, a PTU pool and
+   * a pay-as-you-go fallback), and the daily aggregates carry no deployment id
+   * to split them by, so a per-deployment table could never be joined to usage.
+   * Collapsing is therefore forced rather than chosen — and where the collapsed
+   * deployments disagree on price, the row reports the **cheapest** and says it
+   * varies, because a floor with a flag on it is a number a card can be honest
+   * about and an average of two price lists is not.
+   *
+   * Optional, like every management route: an analytics-only credential is
+   * refused it and the usage sync must not care.
+   */
+  async fetchModels(): Promise<GatewayModelSnapshot[]> {
+    const body = await this.getJson(new URL(`${this.root}/model/info`), true);
+    if (body === null) return [];
+
+    const parsed = modelInfoSchema.safeParse(body);
+    if (!parsed.success) {
+      throw new Error(
+        `LiteLLM /model/info returned an unexpected shape: ${parsed.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+          .join('; ')}`,
+      );
+    }
+
+    const entries = Array.isArray(parsed.data.data) ? parsed.data.data : [parsed.data.data];
+    const grouped = new Map<string, ModelEntry[]>();
+    let wildcards = 0;
+
+    for (const entry of entries) {
+      const key = modelKeyOf(entry);
+      if (key === null) {
+        wildcards += 1;
+        continue;
+      }
+      const bucket = grouped.get(key);
+      if (bucket === undefined) grouped.set(key, [entry]);
+      else bucket.push(entry);
+    }
+
+    const models = [...grouped.entries()].map(([model, group]) => toModelSnapshot(model, group));
+
+    log.info(
+      {
+        dash: {
+          deployments: entries.length,
+          models: models.length,
+          varying: models.filter((entry) => entry.priceVaries).length,
+          wildcards,
+        },
+      },
+      'litellm model catalogue fetched',
+    );
+    return models;
+  }
+
+  /**
    * Call every route the sync depends on once, for one day, and report what
    * each answered.
    *
@@ -715,6 +959,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
     routes.push(await this.probeKeyList());
     routes.push(await this.probeTeamList());
     routes.push(await this.probeTagList());
+    routes.push(await this.probeModelInfo());
 
     log.info(
       { dash: { statuses: routes.map((route) => `${route.path} ${route.status}`) } },
@@ -901,6 +1146,54 @@ export class LiteLlmGatewayClient implements GatewayClient {
           : governed === rows
             ? `${rows} tag(s), all configured`
             : `${rows} tag(s), ${governed} configured — the rest were only seen in spend data and carry no budget`,
+    };
+  }
+
+  /**
+   * `/model/info`, where a `200` carrying rows is still not proof the catalogue
+   * is usable: the route answers every routable deployment whether or not the
+   * proxy knows what any of them cost. A model LiteLLM's price map has never
+   * heard of (an on-prem deployment, a preview SKU) comes back with a name, a
+   * backend and no price at all, and a catalogue of those prices nothing.
+   *
+   * So the count that decides `empty` is the *priced* one, exactly as
+   * `/tag/list` judges itself on governed rather than returned rows.
+   */
+  private async probeModelInfo(): Promise<GatewayProbeRoute> {
+    const attempt = await this.probeOnce(new URL(`${this.root}/model/info`));
+    const base = {
+      path: '/model/info',
+      purpose:
+        'Per-model list prices, context windows and modality are unavailable — spend, tokens and every usage view are unaffected, but nothing can price a token count.',
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = modelInfoSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+
+    const entries = Array.isArray(parsed.data.data) ? parsed.data.data : [parsed.data.data];
+    const named = entries.filter((entry) => modelKeyOf(entry) !== null);
+    const priced = named.filter((entry) => pricesOf(entry).some((price) => price !== null)).length;
+    const rows = entries.length;
+
+    return {
+      ...base,
+      status: priced === 0 ? 'empty' : 'ok',
+      rows,
+      detail:
+        rows === 0
+          ? null
+          : priced === named.length
+            ? `${rows} deployment(s), all priced`
+            : `${rows} deployment(s), ${priced} priced — the rest carry no per-token cost the proxy could resolve`,
     };
   }
 

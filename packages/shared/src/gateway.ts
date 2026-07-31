@@ -158,6 +158,118 @@ export function costPerRequest(metrics: Readonly<GatewayMetrics>): number | null
 }
 
 /**
+ * ─── The model catalogue ─────────────────────────────────────────────────────
+ *
+ * The third kind of gateway fact, after usage and governance: what the proxy is
+ * *configured to charge*. `GET /model/info` answers one entry per routable model
+ * with the price list LiteLLM prices requests against, the context window and
+ * the modality — none of which appear anywhere in the daily aggregates.
+ *
+ * It is a price *list*, and it is worth being clear about what that does and
+ * does not license:
+ *
+ *  - It never replaces `spend`. The proxy's own charge is the billed number, and
+ *    a catalogue rate multiplied by a token count is an estimate that ignores
+ *    negotiated discounts, provisioned throughput and any per-key override. The
+ *    same rule as `gateway_budget`'s counter, one layer up: what the gateway
+ *    recorded wins over anything we can recompute.
+ *  - It is what lets a *token* count be turned into dollars where the aggregate
+ *    cannot. The daily row carries one `spend` covering input, output and both
+ *    cache operations together, so no card can say what a cache read saved or
+ *    what an output token costs — that is the gap this closes, approximately and
+ *    labelled as such.
+ *  - Null is the answer wherever the proxy has no price. A model billed per
+ *    *second* (Bedrock provisioned throughput) carries no per-token cost at all,
+ *    and `input_cost_per_token: 0` is a deliberate free model that LiteLLM skips
+ *    budget checks for. Zero-filling would collapse "we do not know" into "it is
+ *    free" — the same null-vs-zero rule the budget snapshot lives by.
+ */
+
+/**
+ * One routable model as the proxy currently has it configured.
+ *
+ * Keyed by `model` — the **public alias** clients send in `"model": "…"`, which
+ * is also what the `model` usage dimension is keyed by. `backend` is the
+ * `litellm_params.model` behind it (`azure/gpt-4o`, `bedrock/anthropic…`), kept
+ * because the two are different strings on any proxy that renames its
+ * deployments, and a join has to be able to try both.
+ *
+ * Prices are dollars per **million** tokens, converted once here from LiteLLM's
+ * per-token floats: a per-token price is 1e-6-shaped and unreadable, and every
+ * other rate on the gateway page is already per million.
+ */
+export interface GatewayModelPrice {
+  /** Public model name — the alias callers pass, and the `model` dimension's key. */
+  model: string;
+  /** `litellm_params.model`: the provider-prefixed deployment behind the alias. */
+  backend: string | null;
+  /** `azure`, `azure_ai`, `bedrock` — the `provider` dimension's key. */
+  provider: string | null;
+  /** `chat`, `embedding`, `rerank`, … — null when the proxy did not say. */
+  mode: string | null;
+  inputPerMillion: number | null;
+  outputPerMillion: number | null;
+  /** Reading a cached prompt token, where the backend prices it separately. */
+  cacheReadPerMillion: number | null;
+  /** Writing one into the cache — dearer than plain input on every backend. */
+  cacheWritePerMillion: number | null;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  /** How many router deployments answer to this alias. Always ≥ 1. */
+  deployments: number;
+  /**
+   * Those deployments do not all charge the same. The alias is one row because
+   * the daily aggregate has no deployment id to split it by, so the price
+   * reported is the **cheapest** of them and is a floor rather than a rate. Any
+   * surface reading it has to say so, exactly as the MCP-attributed split does.
+   */
+  priceVaries: boolean;
+}
+
+/** Everything `GET /api/gateway/models` returns. */
+export interface GatewayModels {
+  models: GatewayModelPrice[];
+}
+
+/**
+ * The catalogue entry for a key of the `model` usage dimension, or null.
+ *
+ * Three attempts, narrowing, because the string the aggregates report is not
+ * guaranteed to be the string the catalogue is keyed by:
+ *
+ *  1. the public alias, which is what a correctly configured proxy records;
+ *  2. the backend routing string, which is what it records when the caller
+ *     passed a fully qualified model rather than an alias;
+ *  3. the deployment after the provider prefix, which is what
+ *     `_get_proxy_model_info`'s own third pass falls back to.
+ *
+ * A miss returns null rather than a guess. Coverage — how much of the gateway's
+ * spend sits on models the catalogue could price — is then a real number a card
+ * can lead with, in the same way `gatewayAdoption` leads with attribution
+ * coverage, and a fuzzy match would quietly destroy it.
+ */
+export function resolveModelPrice(
+  catalogue: readonly GatewayModelPrice[],
+  key: string,
+): GatewayModelPrice | null {
+  const wanted = key.trim();
+  if (wanted === '') return null;
+
+  const byAlias = catalogue.find((entry) => entry.model === wanted);
+  if (byAlias !== undefined) return byAlias;
+
+  const byBackend = catalogue.find((entry) => entry.backend === wanted);
+  if (byBackend !== undefined) return byBackend;
+
+  const tail = wanted.slice(wanted.indexOf('/') + 1);
+  if (tail === wanted) return null;
+  return (
+    catalogue.find((entry) => entry.model === tail || entry.backend?.endsWith(`/${tail}`) === true) ??
+    null
+  );
+}
+
+/**
  * ─── Budgets and limits ──────────────────────────────────────────────────────
  *
  * Everything above is *usage*: what the gateway did, per day, forever. A budget

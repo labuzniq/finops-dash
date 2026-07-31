@@ -21,7 +21,8 @@
  * premise of a backfill is that it writes the days it fetched and nothing else.
  * That is asserted against Postgres by deleting a run of days, backfilling
  * exactly that run, and requiring every other day's stored spend to be
- * byte-identical afterwards — plus a sentinel row in `gateway_budget`, which a
+ * byte-identical afterwards — plus sentinel rows in `gateway_budget` and
+ * `gateway_model`, which a
  * full sync replaces wholesale and a ranged one must leave standing.
  *
  * The database section is skipped (loudly) when the gateway has never synced
@@ -30,7 +31,13 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { GATEWAY_RETENTION_DAYS } from '@dash/shared';
 import { db } from '../src/db/client.js';
-import { gatewayBreakdownDaily, gatewayBudget, gatewayDaily, refreshJobs } from '../src/db/schema.js';
+import {
+  gatewayBreakdownDaily,
+  gatewayBudget,
+  gatewayDaily,
+  gatewayModel,
+  refreshJobs,
+} from '../src/db/schema.js';
 import { createGatewayClient } from '../src/gateway/index.js';
 import {
   GatewaySyncRangeError,
@@ -217,6 +224,26 @@ if (client === null) {
       blocked: false,
     });
 
+    // The catalogue is the second snapshot table and is scoped by the same
+    // rule, so it needs the same sentinel: a repair of five days in May must
+    // not replace what the proxy charges today.
+    const MODEL_SENTINEL = 'verify-range-sync/sentinel-model';
+    await db.delete(gatewayModel).where(eq(gatewayModel.model, MODEL_SENTINEL));
+    await db.insert(gatewayModel).values({
+      model: MODEL_SENTINEL,
+      backend: null,
+      provider: null,
+      mode: null,
+      inputPerMillionNano: null,
+      outputPerMillionNano: null,
+      cacheReadPerMillionNano: null,
+      cacheWritePerMillionNano: null,
+      maxInputTokens: null,
+      maxOutputTokens: null,
+      deployments: 1,
+      priceVaries: false,
+    });
+
     await db.delete(gatewayDaily).where(inArray(gatewayDaily.date, targets));
     await db.delete(gatewayBreakdownDaily).where(inArray(gatewayBreakdownDaily.date, targets));
 
@@ -261,6 +288,13 @@ if (client === null) {
       .where(and(eq(gatewayBudget.scope, 'api_key'), eq(gatewayBudget.key, SENTINEL)));
     check(sentinel !== undefined, 'a ranged sync wiped the budget snapshot');
     await db.delete(gatewayBudget).where(eq(gatewayBudget.key, SENTINEL));
+
+    const [modelSentinel] = await db
+      .select()
+      .from(gatewayModel)
+      .where(eq(gatewayModel.model, MODEL_SENTINEL));
+    check(modelSentinel !== undefined, 'a ranged sync wiped the model catalogue');
+    await db.delete(gatewayModel).where(eq(gatewayModel.model, MODEL_SENTINEL));
 
     // Breakdown rows are deleted and re-inserted per date like the daily ones;
     // a backfilled day with no breakdown at all would leave every card on the

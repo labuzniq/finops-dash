@@ -74,6 +74,34 @@ export interface GatewayBudgetSnapshot {
   blocked: boolean;
 }
 
+/**
+ * One routable model as `GET /model/info` reports it, in storage units.
+ *
+ * Prices are nano-dollars per *million* tokens rather than per token: LiteLLM
+ * quotes `2.5e-06` per token, and nine fractional digits of a per-token price
+ * would round every cheap model to the same handful of nanos. Per million, the
+ * same integer scale carries $0.01/M without losing a digit.
+ *
+ * Every price is nullable and never zero-filled, for the same reason a budget
+ * limit is: a model priced per second has no per-token cost at all, while an
+ * explicit `0` is a free model the proxy deliberately skips budget checks for.
+ */
+export interface GatewayModelSnapshot {
+  model: string;
+  backend: string | null;
+  provider: string | null;
+  mode: string | null;
+  /** USD × 1e9 per 1,000,000 tokens. */
+  inputPerMillionNano: bigint | null;
+  outputPerMillionNano: bigint | null;
+  cacheReadPerMillionNano: bigint | null;
+  cacheWritePerMillionNano: bigint | null;
+  maxInputTokens: number | null;
+  maxOutputTokens: number | null;
+  deployments: number;
+  priceVaries: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -86,6 +114,14 @@ export interface GatewayClient {
    * be able to fail a usage sync.
    */
   fetchBudgets(): Promise<GatewayBudgetSnapshot[]>;
+  /**
+   * The proxy's configured price list, one entry per routable model.
+   *
+   * Optional exactly like `fetchBudgets`: `/model/info` is a management route,
+   * an analytics-only credential is refused it, and a catalogue is a garnish on
+   * a usage sync rather than a precondition for one. `[]` is a supported answer.
+   */
+  fetchModels(): Promise<GatewayModelSnapshot[]>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

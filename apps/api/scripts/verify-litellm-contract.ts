@@ -30,9 +30,10 @@ import {
   budgetRemaining,
   budgetUtilization,
   parseBudgetDuration,
+  resolveModelPrice,
   summarizeGatewayProbe,
 } from '@dash/shared';
-import type { GatewayBudget, GatewayProbeRoute } from '@dash/shared';
+import type { GatewayBudget, GatewayModelPrice, GatewayProbeRoute } from '@dash/shared';
 import { LiteLlmGatewayClient, eachDay } from '../src/gateway/litellm.js';
 import type { GatewayBreakdownSnapshot, GatewaySnapshot } from '../src/gateway/types.js';
 
@@ -931,6 +932,279 @@ check(
 );
 
 // =====================================================================
+// 6c · The model catalogue — GET /model/info
+// =====================================================================
+//
+// A fourth envelope: `{"data": [...]}`, one entry per *deployment*, three
+// nested objects each. What this section pins is everything that would be a
+// silent wrong number rather than a crash — the per-token → per-million scale,
+// the null-vs-zero rule inherited from budgets, and the collapse of several
+// deployments onto one public alias, which is forced (the daily aggregates
+// carry no deployment id) and therefore has to report a floor.
+
+console.log('\n6c · the model catalogue — /model/info');
+
+const deployment = (over: Record<string, unknown> = {}) => ({
+  model_name: 'gpt-4o',
+  litellm_params: { model: 'azure/gpt-4o-eastus', api_key: 'sk-should-never-reach-us' },
+  model_info: {
+    id: 'abc123',
+    mode: 'chat',
+    litellm_provider: 'azure',
+    input_cost_per_token: 2.5e-6,
+    output_cost_per_token: 1e-5,
+    cache_read_input_token_cost: 1.25e-6,
+    cache_creation_input_token_cost: 3.125e-6,
+    max_input_tokens: 128_000,
+    max_output_tokens: 16_384,
+  },
+  ...over,
+});
+
+const catalogue = await withProxy(
+  (captured) =>
+    captured.path === '/model/info'
+      ? {
+          status: 200,
+          body: {
+            data: [
+              deployment(),
+              // Second deployment of the same alias, cheaper — reserved capacity
+              // bought at a discount, with a smaller context window.
+              deployment({
+                litellm_params: { model: 'azure/gpt-4o-swedencentral' },
+                model_info: {
+                  mode: 'chat',
+                  litellm_provider: 'azure',
+                  input_cost_per_token: 1.75e-6,
+                  output_cost_per_token: 7e-6,
+                  max_input_tokens: 64_000,
+                  max_output_tokens: 16_384,
+                },
+              }),
+              // A model billed per second (Bedrock provisioned throughput): no
+              // per-token price exists at all.
+              deployment({
+                model_name: 'claude-reserved',
+                litellm_params: { model: 'bedrock/1-month-commitment/anthropic.claude-v2' },
+                model_info: {
+                  mode: 'chat',
+                  litellm_provider: 'bedrock',
+                  input_cost_per_second: 0.0455,
+                  max_input_tokens: 100_000,
+                },
+              }),
+              // Deliberately free — LiteLLM skips budget checks for these, so 0
+              // is a configuration choice and must not read as "unknown".
+              deployment({
+                model_name: 'on-prem-llama',
+                litellm_params: { model: 'ollama/llama3' },
+                model_info: {
+                  mode: 'chat',
+                  input_cost_per_token: 0,
+                  output_cost_per_token: 0,
+                },
+              }),
+              // Exponent notation on a very cheap model, the same wire hazard
+              // the activity routes carry.
+              deployment({
+                model_name: 'embed-small',
+                litellm_params: { model: 'azure/text-embedding-3-small' },
+                model_info: { mode: 'embedding', input_cost_per_token: 2e-8 },
+              }),
+              // Routing rules, not models: they price nothing and no usage key
+              // can ever equal them.
+              deployment({ model_name: '*', litellm_params: { model: 'azure/*' } }),
+              deployment({ model_name: 'azure/*', litellm_params: { model: 'azure/*' } }),
+            ],
+          },
+        }
+      : { status: 404, body: {} },
+  async (proxy) => ({ models: await client(proxy.baseUrl).fetchModels(), calls: proxy.calls }),
+);
+
+const modelOf = (name: string) => catalogue.models.find((entry) => entry.model === name);
+
+check(
+  catalogue.calls.length === 1 && catalogue.calls[0]?.path === '/model/info',
+  'the catalogue is one unpaginated request — /model/info answers every deployment at once',
+);
+check(catalogue.models.length === 4, `seven deployments collapse to four models (${catalogue.models.length})`);
+check(
+  modelOf('*') === undefined && modelOf('azure/*') === undefined,
+  'a wildcard row is a routing rule, not a model, and never enters the catalogue',
+);
+check(
+  modelOf('gpt-4o')?.deployments === 2,
+  'two deployments behind one public alias are one row, because the daily aggregates cannot split them',
+);
+check(
+  modelOf('gpt-4o')?.inputPerMillionNano === 1_750_000_000n,
+  'a per-token price becomes nano-dollars per million, and the collapsed row reports the cheapest deployment',
+);
+check(
+  modelOf('gpt-4o')?.priceVaries === true,
+  'a row whose deployments disagree on price says so — the number it carries is a floor',
+);
+check(
+  modelOf('gpt-4o')?.maxInputTokens === 64_000,
+  'the context window collapses to the smallest, which is the one every deployment behind the alias honours',
+);
+check(
+  modelOf('gpt-4o')?.backend === 'azure/gpt-4o-eastus' &&
+    modelOf('gpt-4o')?.model === 'gpt-4o',
+  'the public alias and the backend routing string are both kept — they are different strings and a join has to try both',
+);
+check(
+  modelOf('gpt-4o')?.cacheReadPerMillionNano === 1_250_000_000n &&
+    modelOf('gpt-4o')?.cacheWritePerMillionNano === 3_125_000_000n,
+  'the two cache prices survive — they are the only per-token rates the daily aggregate can never imply',
+);
+check(
+  modelOf('claude-reserved')?.inputPerMillionNano === null &&
+    modelOf('claude-reserved')?.outputPerMillionNano === null,
+  'a model billed per second carries no per-token price, and is null rather than free',
+);
+check(
+  modelOf('claude-reserved')?.priceVaries === false,
+  'one deployment cannot disagree with itself, however little the proxy knows about it',
+);
+check(
+  modelOf('on-prem-llama')?.inputPerMillionNano === 0n,
+  'an explicit zero is a free model, which is the opposite state from an absent price',
+);
+check(
+  modelOf('embed-small')?.inputPerMillionNano === 20_000_000n,
+  'exponent notation survives the scale change (2e-8/token is $0.02/M)',
+);
+check(
+  modelOf('embed-small')?.mode === 'embedding',
+  'modality is carried, so a catalogue reader can tell a chat rate from an embedding one',
+);
+check(
+  modelOf('gpt-4o')?.provider === 'azure' && modelOf('claude-reserved')?.provider === 'bedrock',
+  'the provider is the same key the `provider` usage dimension carries',
+);
+
+// A deployment whose provider LiteLLM did not name — the prefix of the routing
+// string is what the proxy itself falls back to.
+const inferred = await withProxy(
+  (captured) =>
+    captured.path === '/model/info'
+      ? {
+          status: 200,
+          body: {
+            data: [
+              {
+                model_name: 'nova',
+                litellm_params: { model: 'bedrock/amazon.nova-pro-v1:0' },
+                model_info: { input_cost_per_token: 8e-7 },
+              },
+            ],
+          },
+        }
+      : { status: 404, body: {} },
+  (proxy) => client(proxy.baseUrl).fetchModels(),
+);
+check(
+  inferred[0]?.provider === 'bedrock',
+  'an unnamed provider is read off the routing string, exactly as LiteLLM does',
+);
+
+// A disagreement is not only about numbers: a priced deployment beside an
+// unpriced one is the case where a single rate misleads most.
+const mixed = await withProxy(
+  (captured) =>
+    captured.path === '/model/info'
+      ? {
+          status: 200,
+          body: {
+            data: [
+              { model_name: 'shared', litellm_params: { model: 'azure/a' }, model_info: { input_cost_per_token: 1e-6 } },
+              { model_name: 'shared', litellm_params: { model: 'azure/b' }, model_info: {} },
+            ],
+          },
+        }
+      : { status: 404, body: {} },
+  (proxy) => client(proxy.baseUrl).fetchModels(),
+);
+check(
+  mixed[0]?.priceVaries === true && mixed[0]?.inputPerMillionNano === 1_000_000_000n,
+  'a priced deployment beside an unpriced one is a disagreement, not a price',
+);
+
+const catalogueAbsent = await withProxy(
+  (captured) => (captured.path === '/model/info' ? { status: 404, body: {} } : { status: 200, body: [] }),
+  (proxy) => client(proxy.baseUrl).fetchModels(),
+);
+check(
+  catalogueAbsent.length === 0,
+  'an older proxy without /model/info answers an empty catalogue rather than failing a usage sync',
+);
+
+const catalogueDenied = await withProxy(
+  (captured) => (captured.path === '/model/info' ? { status: 403, body: {} } : { status: 200, body: [] }),
+  (proxy) => client(proxy.baseUrl).fetchModels(),
+);
+check(
+  catalogueDenied.length === 0,
+  'an analytics-only credential refused /model/info loses the catalogue and nothing else',
+);
+
+const catalogueMalformed = await withProxy(
+  (captured) =>
+    captured.path === '/model/info'
+      ? { status: 200, body: { data: [{ model_name: 'x', model_info: { input_cost_per_token: 'free' } }] } }
+      : { status: 404, body: {} },
+  (proxy) =>
+    client(proxy.baseUrl)
+      .fetchModels()
+      .then(() => 'resolved')
+      .catch((error: unknown) => String(error)),
+);
+check(
+  typeof catalogueMalformed === 'string' && catalogueMalformed.includes('unexpected shape'),
+  'a price of the wrong type throws rather than storing a catalogue with a hole in it',
+);
+
+// The pure join, which is the whole point of storing the alias and the backend.
+const priceList: GatewayModelPrice[] = catalogue.models.map((entry) => ({
+  model: entry.model,
+  backend: entry.backend,
+  provider: entry.provider,
+  mode: entry.mode,
+  inputPerMillion: entry.inputPerMillionNano === null ? null : Number(entry.inputPerMillionNano) / 1e9,
+  outputPerMillion: entry.outputPerMillionNano === null ? null : Number(entry.outputPerMillionNano) / 1e9,
+  cacheReadPerMillion: null,
+  cacheWritePerMillion: null,
+  maxInputTokens: entry.maxInputTokens,
+  maxOutputTokens: entry.maxOutputTokens,
+  deployments: entry.deployments,
+  priceVaries: entry.priceVaries,
+}));
+
+check(
+  resolveModelPrice(priceList, 'gpt-4o')?.model === 'gpt-4o',
+  'a usage key that is the public alias resolves directly',
+);
+check(
+  resolveModelPrice(priceList, 'azure/gpt-4o-eastus')?.model === 'gpt-4o',
+  'a usage key recorded as the fully qualified backend still resolves',
+);
+check(
+  resolveModelPrice(priceList, 'azure/gpt-4o')?.model === 'gpt-4o',
+  "a key carrying a provider prefix falls back to the deployment name, as LiteLLM's own third pass does",
+);
+check(
+  resolveModelPrice(priceList, 'gpt-4o-mini') === null,
+  'a plausible-looking near-miss resolves to nothing rather than to the wrong price',
+);
+check(
+  resolveModelPrice(priceList, 'unknown/model') === null && resolveModelPrice(priceList, '  ') === null,
+  'a miss is null, so catalogue coverage stays a number a card can lead with',
+);
+
+// =====================================================================
 // 7 · Budget arithmetic in @dash/shared
 // =====================================================================
 //
@@ -1039,6 +1313,18 @@ const healthy = await withProxy(
       status: 200,
       body: [{ name: 'coding-assistant', spend: 1, litellm_budget_table: { max_budget: 10 } }],
     },
+    '/model/info': {
+      status: 200,
+      body: {
+        data: [
+          {
+            model_name: 'azure/gpt-4o',
+            litellm_params: { model: 'azure/gpt-4o' },
+            model_info: { input_cost_per_token: 2.5e-6, output_cost_per_token: 1e-5 },
+          },
+        ],
+      },
+    },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -1046,10 +1332,10 @@ const healthy = await withProxy(
 const route = (path: string): GatewayProbeRoute | undefined =>
   healthy.routes.find((candidate) => candidate.path === path);
 
-check(healthy.calls.length === 6, `one call per route, no retries (${healthy.calls.length})`);
+check(healthy.calls.length === 7, `one call per route, no retries (${healthy.calls.length})`);
 check(
   healthy.calls.map((call) => call.path).join(' ') ===
-    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list',
+    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list /model/info',
   'routes are probed in dependency order, activity before management',
 );
 check(
@@ -1111,6 +1397,7 @@ const restricted = await withProxy(
     // Older proxy: tag management does not exist at all, which is a different
     // fix from the refused routes above and must classify differently.
     '/tag/list': { status: 404, body: { detail: 'Not Found' } },
+    '/model/info': { status: 403, body: { detail: 'Only proxy admins may view models' } },
   }),
   async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
 );
@@ -1119,7 +1406,7 @@ const restrictedRoute = (path: string): GatewayProbeRoute | undefined =>
   restricted.routes.find((candidate) => candidate.path === path);
 
 check(
-  restricted.calls.length === 6,
+  restricted.calls.length === 7,
   `a refused or absent route is attempted once, never retried (${restricted.calls.length})`,
 );
 check(
@@ -1163,7 +1450,7 @@ check(
   // Five unanswered routes plus the empty-but-required user route: six gaps,
   // six statements. The count moves with the route table by design — a new
   // optional route that warned about nothing would be a route nobody misses.
-  restrictedSummary.warnings.length === 6,
+  restrictedSummary.warnings.length === 7,
   `one statement per gap, no more (${restrictedSummary.warnings.length})`,
 );
 
@@ -1208,7 +1495,7 @@ const blankDimensions = await withProxy(
   async (proxy) => client(proxy.baseUrl).probe(DAY),
 );
 const blankSummary = summarizeGatewayProbe(blankDimensions);
-// Only /user answers here, so the other four routes 404 and warn as absent —
+// Only /user answers here, so the other five routes 404 and warn as absent —
 // the dimension-shaped warnings are the ones this case is about.
 const blankDimensionWarnings = blankSummary.warnings.filter((warning) =>
   warning.includes('answered, but carried no'),

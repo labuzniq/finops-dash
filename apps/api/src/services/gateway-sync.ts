@@ -6,15 +6,21 @@ import {
   gatewayBudget,
   gatewayBudgetHistory,
   gatewayDaily,
+  gatewayModel,
 } from '../db/schema.js';
 import type {
   GatewayBreakdownInsert,
   GatewayBudgetHistoryInsert,
   GatewayBudgetInsert,
   GatewayDailyInsert,
+  GatewayModelInsert,
 } from '../db/schema.js';
 import { createGatewayClient } from '../gateway/index.js';
-import type { GatewayBudgetSnapshot, GatewaySnapshot } from '../gateway/index.js';
+import type {
+  GatewayBudgetSnapshot,
+  GatewayModelSnapshot,
+  GatewaySnapshot,
+} from '../gateway/index.js';
 import { moduleLogger } from '../log.js';
 import { sealClosedMonths } from './gateway-seal.js';
 import { startJob } from './refresh.js';
@@ -152,12 +158,14 @@ export function resolveGatewaySyncWindow(
 async function persist(
   snapshot: GatewaySnapshot,
   budgets: GatewayBudgetSnapshot[] | null,
+  models: GatewayModelSnapshot[] | null,
   observedOn: string,
   observedAt: Date,
 ): Promise<void> {
   const dailyRows: GatewayDailyInsert[] = snapshot.daily.map((day) => ({ ...day }));
   const breakdownRows: GatewayBreakdownInsert[] = snapshot.breakdowns.map((row) => ({ ...row }));
   const budgetRows: GatewayBudgetInsert[] = (budgets ?? []).map((budget) => ({ ...budget }));
+  const modelRows: GatewayModelInsert[] = (models ?? []).map((model) => ({ ...model }));
   const historyRows: GatewayBudgetHistoryInsert[] = (budgets ?? []).map((budget) => ({
     ...budget,
     date: observedOn,
@@ -183,6 +191,18 @@ async function persist(
     // a cap that nothing enforces any more. Emptied deliberately when the
     // proxy offers no management routes — the UI reads "no budgets visible",
     // which is true, rather than an ever-staler copy of the last ones seen.
+    // The price list is the same kind of write as the budget snapshot and is
+    // scoped by the same rule: a full sync replaces it entire, a ranged one
+    // leaves it alone. A catalogue is current configuration, so a model the
+    // router no longer offers must lose its row rather than keep pricing
+    // traffic that can no longer happen — and a repair of six days in May has
+    // nothing to say about what the proxy charges today.
+    if (models !== null) {
+      await tx.delete(gatewayModel);
+      for (const rows of chunk(modelRows, CHUNK_SIZE)) {
+        await tx.insert(gatewayModel).values(rows);
+      }
+    }
     if (budgets !== null) {
       await tx.delete(gatewayBudget);
       for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
@@ -230,6 +250,7 @@ async function persist(
         dailyRows: dailyRows.length,
         breakdownRows: breakdownRows.length,
         budgetRows: budgetRows.length,
+        modelRows: modelRows.length,
         observedOn,
       },
     },
@@ -301,11 +322,14 @@ export async function startGatewaySync(
       // in May, and re-reading it there would only widen what a repair can
       // break.
       const budgets = ranged ? null : await client.fetchBudgets();
+      // The price list rides along for the same reason and under the same rule:
+      // two requests, current state, and a backfill has no business touching it.
+      const models = ranged ? null : await client.fetchModels();
       // The observation is stamped with the day the *reading* was taken, which
       // is today — not with the last day of the usage window. A budget counter
       // describes the period in flight right now, and filing it under yesterday
       // would make the history disagree with the snapshot it came from.
-      await persist(snapshot, budgets, utcDay(0), new Date());
+      await persist(snapshot, budgets, models, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
       return snapshot.dates.length;
     },

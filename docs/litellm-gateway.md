@@ -136,6 +136,69 @@ differ by up to a day and a half, and `budgetPeriodStart` in `@dash/shared`
 walks `mo` on the calendar for exactly that reason (a `1mo` budget resetting on
 1 March began on 1 February, 28 days earlier).
 
+### The model catalogue endpoint (prices)
+
+Usage says what the gateway *did*, budgets say what it is *allowed* to do, and
+the catalogue says what it is *configured to charge*:
+
+```
+GET /model/info      → { "data": [ { model_name, litellm_params, model_info } ] }
+Authorization: Bearer sk-…
+```
+
+One entry per **deployment**, three nested objects each, and none of the three is
+flat:
+
+- **`model_name` is the public alias** — the string a caller puts in `"model"`,
+  and the same string the `model` usage dimension is keyed by *when the proxy is
+  configured with aliases*. `litellm_params.model` is the backend behind it
+  (`azure/gpt-4o-eastus`, `bedrock/anthropic.claude-…`), which is what a caller
+  who passed a fully qualified model gets recorded as instead. Both are stored,
+  because a join has to be able to try both — `resolveModelPrice` in
+  `@dash/shared` tries the alias, then the backend, then the deployment after
+  the provider prefix, which is LiteLLM's own third pass in
+  `_get_proxy_model_info`. A miss is `null` and never a near-match: coverage is
+  the number a card leads with, and a fuzzy join would quietly destroy it.
+- **`model_info` is the config's own block with LiteLLM's price map merged
+  underneath it.** The proxy reads `model_prices_and_context_window.json` and
+  fills in only the keys the config did not set, so a hand-priced model answers
+  the override and everything else answers the list price.
+  `input_cost_per_token`, `output_cost_per_token`,
+  `cache_read_input_token_cost`, `cache_creation_input_token_cost`,
+  `max_input_tokens`, `max_output_tokens`, `mode`, `litellm_provider`.
+- **Prices are per token and absent in two different ways.** A model billed per
+  *second* (`input_cost_per_second` — Bedrock provisioned throughput and the
+  commitment SKUs) carries no per-token cost at all, and so does one the price
+  map cannot resolve. Both are "we cannot price this", which is the opposite of
+  an explicit `0`: a model configured at zero is deliberately free, and LiteLLM
+  skips budget checks for it entirely. Nothing here is zero-filled, exactly as
+  in `gateway_budget`.
+- **Several deployments answer to one alias**, and they need not charge the
+  same — reserved capacity is bought at a discount, and a fallback deployment in
+  another region may not be. The daily aggregates carry no deployment id, so the
+  table cannot be split by one: the row is collapsed per alias, reports the
+  **cheapest** deployment's price, and sets `price_varies`. That number is a
+  floor rather than a rate, and any surface reading it has to say so. A priced
+  deployment sitting beside an unpriced one counts as a disagreement too, since
+  that is the case where a single rate misleads most.
+- **Wildcard rows are dropped.** `*` and `azure/*` are routing rules; they price
+  nothing and no usage key can equal them. Admitting them would put priceless
+  rows into the denominator coverage is measured against — the same reason
+  `/tag/list`'s dynamic tags are dropped.
+
+Prices are stored as nano-dollars per **million** tokens rather than per token:
+LiteLLM quotes `2.5e-06`, and at the nine fractional digits the repo's nano scale
+accepts, a per-token price rounds a $0.05/M model to three significant figures.
+
+What the catalogue is *not* is a second opinion about the bill. The proxy's own
+`spend` is the billed number, and a list rate times a token count is an estimate
+that ignores negotiated discounts, provisioned throughput and per-key overrides —
+the same rule as the budget counter, one layer up. What it *is* good for is the
+one thing no usage payload can answer: the daily row carries a single `spend`
+covering input, output and both cache operations together, which is precisely
+why `lib/metrics/gatewayCache.ts` reports tokens and refuses dollars. Four rates
+per model are what lifts that refusal.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -184,6 +247,15 @@ schedule: it is two small requests, and a cap read hours apart from the spend it
 is shown next to would be a worse lie than a slightly stale one. The table is a
 snapshot, not a series — a rotated key or a deleted team has no row to keep, and
 leaving one standing would show an owner a cap that nothing enforces any more.
+The same job also pulls the **model catalogue** and replaces `gateway_model`
+entire, under the same rule and for the same reason: it is current
+configuration, a model withdrawn from the router has no price any more, and a
+backfill of six days in May has nothing to say about what the proxy charges
+today. `/model/info` is independently optional like the other management routes,
+and there is no history table beside it — a price change is rare, and the one
+that matters is the one in force when the spend was billed, which the spend
+already carries.
+
 Both management routes are optional in the same sense the team and tag activity
 routes are: an analytics-only credential is a perfectly reasonable thing to
 point this integration at, it will be refused key management, and `fetchBudgets`
@@ -269,6 +341,20 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   zero-filled. It is the one place in the gateway contract where absence is
   unknown-shaped rather than zero-shaped, and it is why the budget columns are
   nullable while every usage counter is `NOT NULL`.
+- **A catalogue price is a list rate, never the bill.** `gateway_model` says
+  what the proxy is configured to charge; `gateway_daily.spend` says what it
+  charged. Re-pricing tokens from the catalogue is an estimate that ignores
+  negotiated discounts, provisioned throughput and per-key overrides, so it may
+  be shown *beside* the billed number and never in place of it — the same rule
+  the budget counter carries, one layer up. Every price is nullable and never
+  zero-filled, because a model billed per second and a model LiteLLM cannot
+  price both have no per-token rate, while an explicit `0` is a deliberately
+  free model.
+- **A price on a multi-deployment alias is a floor.** Several deployments can
+  answer to one public model name at different rates, and the daily aggregates
+  carry no deployment id to split them by. The stored row reports the cheapest
+  and sets `price_varies`; anything reading it has to word it as a lower bound,
+  exactly as the MCP-attributed split does.
 - **A budget's `spend` is the proxy's counter, never our sum.** It covers the
   period in flight, which resets on the key's own schedule — possibly mid-day,
   possibly on a duration nothing else in the dashboard uses. Re-deriving it from
@@ -425,6 +511,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and the enforced counter per key, team and configured tag, grouped in `GATEWAY_BUDGET_SCOPES` order and each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
 | `GET` | `/api/gateway/budgets/history?days=` | What those same budgets read on each of the last `days` days (default 60, max 365) — the dashboard's own recording, since the proxy serves current state only. Nothing is filled in for a day no sync ran. `recordingSince` is answered *outside* the window, because "never over its cap" and "we started watching yesterday" are otherwise the same answer. |
+| `GET` | `/api/gateway/models` | `{ models }` — the proxy's configured price list as of the last full sync: per-model input/output/cache rates in dollars per million tokens, context window, modality and provider. Cheapest input first, with the unpriced models last. No parameters: state, not a range, and deliberately not folded into `/api/gateway`, which is a date range. |
 | `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
 | `GET` | `/api/gateway/months` | `{ seals }` — every calendar month that has been sealed, newest first, with the totals as recorded. Headers only; no parameters. |
 | `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `?revision=` quotes a *replaced* statement by number; omitted, it answers with the current one. `404` when the month was never sealed (or has no such revision), carrying the `check` that says why (still running, or missing days to backfill). |
@@ -440,7 +527,11 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 `GET /api/gateway/probe`, behind **Test connection** on the `Data sources`
 page (`apps/web/src/components/sources/GatewayProbePanel.tsx`). It calls every
 route the sync depends on — the three activity routes for a single day, then
-`/key/list`, `/team/list` and `/tag/list` — and reports what each one answered.
+`/key/list`, `/team/list`, `/tag/list` and `/model/info` — and reports what each
+one answered. `/model/info` judges itself on *priced* rows rather than returned
+ones, for the same reason `/tag/list` judges itself on governed ones: a proxy can
+answer every deployment it routes to and know the price of none of them, and a
+catalogue of those prices nothing.
 `/tag/list` is the one route where `empty` is counted on the *governed* rows
 rather than on the response: a proxy that answers forty dynamic tags and no
 configured one has nothing to put on the budget card, which is the same
@@ -1406,6 +1497,23 @@ budgets nothing, and a mistyped *nested* cap throwing. The shared rule is pinned
 alongside them: `budgetCounterResets` is true for `api_key` and `team` and false
 for `tag`, and nothing else.
 
+`/model/info` gets a section of its own for the same reason: a fourth envelope,
+`{"data": […]}`, one entry per deployment rather than per model. What it pins is
+everything that would be a silently wrong *number* rather than a crash — a
+per-token price landing as nano-dollars per million, exponent notation surviving
+the scale change (`2e-8`/token is `$0.02/M`), the two cache rates carried (they
+are the only per-token prices the daily aggregate can never imply), a
+per-second-billed model coming back null rather than free while an explicit `0`
+stays zero, two deployments of one alias collapsing to one row that reports the
+cheapest price and flags `priceVaries`, a priced deployment beside an unpriced
+one counting as a disagreement, the context window collapsing to the smallest
+(the one every deployment behind the alias honours), an unnamed provider read
+off the routing string as LiteLLM itself does, wildcard rows dropped, a refused
+or absent route costing the catalogue and nothing else, and a mistyped price
+throwing. The pure join is checked in the same section: the alias resolves, the
+fully qualified backend resolves, a provider-prefixed key falls back to the
+deployment name, and a plausible near-miss resolves to nothing.
+
 A section then checks the pure budget arithmetic in `@dash/shared`,
 because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
 `1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
@@ -1422,6 +1530,26 @@ body and a contract-violating one both landing as `malformed` rather than
 strings reported rather than silently dropped, and the two summary rules — an
 analytics-only credential that can still sync, and an empty `mcp_server` count
 that is not a fault.
+
+`apps/api/scripts/verify-gateway-catalog.ts` covers the two things a fake proxy
+cannot answer about the catalogue. The first is the **join**: a price list is
+only worth storing if it can be read next to the usage it prices, and the two
+are keyed independently — the catalogue by what the proxy is configured with,
+the `model` dimension by what callers actually sent. So the load-bearing number
+is coverage, which on the mock must be exactly 1 because both sides come from
+one table; anything short of that is a bug in the join rather than in the data.
+The second is what the catalogue **licenses**: re-pricing a window's tokens from
+the four rates must reproduce the proxy's own bill *to the cent* on a
+single-deployment model, and must land **under** it on the multi-deployment one —
+which is the entire content of `priceVaries`, measured rather than asserted (the
+mock's discounted alias re-prices at 0.716× its bill). The rest is the round trip:
+a null price still null after Postgres, a stored price back to the cent, the
+unpriced rows sorted last but still visible, and a planted retired model cleared
+by the next full sync, since the catalogue is replaced wholesale. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-catalog.ts`.
+`verify-gateway-range-sync.ts` carries the matching negative: a sentinel row in
+`gateway_model`, like the one in `gateway_budget`, that a backfill must leave
+standing.
 
 It cannot confirm that a real proxy *sends* these shapes — that is still an open
 question below. It is, though, the harness for answering it: drop a captured
@@ -1480,6 +1608,20 @@ job's error string.
    spend labels, which makes them a good chargeback dimension and a poor
    governance one — the opposite of what a small, curated set would mean.
 
+10. Is the `model` usage dimension keyed by the **public alias** or by the
+    backend routing string? `resolveModelPrice` tries the alias, then the
+    backend, then the deployment after the provider prefix, so either answer
+    works — but which one it is decides whether two aliases pointing at one
+    deployment show up as two rows of the breakdown or one, and it is the single
+    number that makes catalogue coverage worth reading. The mock cannot answer
+    it: both sides come from one table there, so coverage always reads 100%.
+11. Do several deployments sit behind one alias on the corporate proxy, and do
+    they charge the same? `price_varies` turns the stored rate into a floor
+    wherever they do not, and a gateway fronting a PTU pool with a
+    pay-as-you-go fallback is exactly the case where the difference is large. If
+    the answer is "one deployment each", the catalogue's prices are rates and the
+    floor caveat can come off the card.
+
 ## Not yet built
 
 Governance is now rendered end to end across all three scopes
@@ -1506,6 +1648,18 @@ Governance is now rendered end to end across all three scopes
   dashboard. Sending it somewhere (mail, Slack, a webhook) needs a scheduler
   hook, a delivery target and a de-duplication story, none of which the console
   has today.
+- **Pricing what the catalogue now makes priceable.** `gateway_model` is
+  fetched, stored and served, and nothing on the page reads it yet. The two
+  cards it was built for are the cache card (which reports tokens and
+  deliberately refuses dollars, because the daily row carries one `spend`
+  covering input, output and both cache operations together — four rates per
+  model is what lifts that refusal) and a catalogue view of its own: list rates
+  side by side with the *effective* rate the same model actually billed, which
+  is how a mis-priced deployment or an unrecorded discount becomes visible. Both
+  are derivations over data that is already in the database; neither exists yet.
+  Whatever reads it has to carry the two labels the table imposes — an estimate
+  beside the bill, never in place of it, and a floor rather than a rate wherever
+  `price_varies` is set.
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.

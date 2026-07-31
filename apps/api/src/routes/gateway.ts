@@ -13,6 +13,7 @@ import {
   getGatewayBudgetHistory,
   getGatewayBudgets,
   getGatewayCoverage,
+  getGatewayModels,
   getGatewayUsage,
   probeGateway,
 } from '../services/gateway.js';
@@ -85,6 +86,17 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * not allowed to list keys and teams.
    */
   app.get('/api/gateway/budgets', async () => getGatewayBudgets());
+
+  /**
+   * The proxy's configured price list as of the last full sync — per-model list
+   * rates, context windows and modality.
+   *
+   * Current state, so no query parameters, same as budgets. It is deliberately
+   * *not* folded into `GET /api/gateway`: that payload is a date range and this
+   * is not, and a card that re-fetched a price list every time the range picker
+   * moved would be re-reading a table that cannot have changed.
+   */
+  app.get('/api/gateway/models', async () => getGatewayModels());
 
   /**
    * What those budgets read on each of the last `days` days.

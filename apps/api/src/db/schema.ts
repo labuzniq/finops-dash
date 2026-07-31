@@ -412,6 +412,51 @@ export const gatewayBudgetHistory = pgTable(
 );
 
 /**
+ * The proxy's configured price list — one row per routable public model name.
+ *
+ * The third kind of gateway fact and the second snapshot table: `gateway_daily`
+ * is what the gateway *did*, `gateway_budget` is what it will *refuse*, and this
+ * is what it is set up to *charge*. Replaced wholesale by every full sync, for
+ * the same reason budgets are — a model withdrawn from the router has no price
+ * any more, and a stale row would price traffic that can no longer happen.
+ *
+ * Money is nano-dollars per **million** tokens, not per token: LiteLLM quotes
+ * `2.5e-06` per token, and at nine fractional digits a per-token scale rounds a
+ * $0.05/M model down to three significant figures.
+ *
+ * Every price is nullable and none is ever zero-filled. Two genuinely different
+ * things produce an absent price — a model billed per second, and one LiteLLM's
+ * cost map cannot resolve at all — and both are "we cannot price this", which is
+ * the opposite of an explicit `0` (a free model the proxy skips budget checks
+ * for). Same rule as `gateway_budget`, one layer up.
+ */
+export const gatewayModel = pgTable('gateway_model', {
+  /** The public alias callers pass — also the `model` usage dimension's key. */
+  model: varchar('model', { length: 200 }).primaryKey(),
+  /** `litellm_params.model`: the provider-prefixed deployment behind the alias. */
+  backend: varchar('backend', { length: 200 }),
+  provider: varchar('provider', { length: 60 }),
+  /** `chat`, `embedding`, `rerank`, … */
+  mode: varchar('mode', { length: 40 }),
+  /** USD × 1e9 per 1,000,000 tokens. */
+  inputPerMillionNano: bigint('input_per_million_nano', { mode: 'bigint' }),
+  outputPerMillionNano: bigint('output_per_million_nano', { mode: 'bigint' }),
+  cacheReadPerMillionNano: bigint('cache_read_per_million_nano', { mode: 'bigint' }),
+  cacheWritePerMillionNano: bigint('cache_write_per_million_nano', { mode: 'bigint' }),
+  maxInputTokens: bigint('max_input_tokens', { mode: 'number' }),
+  maxOutputTokens: bigint('max_output_tokens', { mode: 'number' }),
+  /** How many router deployments answer to this alias. */
+  deployments: integer('deployments').notNull().default(1),
+  /**
+   * Those deployments do not all charge the same, so the stored price is the
+   * cheapest of them — a floor. The daily aggregates carry no deployment id, so
+   * splitting the row is not possible; flagging it is.
+   */
+  priceVaries: boolean('price_varies').notNull().default(false),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * A closed calendar month, held still — one row per sealed month.
  *
  * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
@@ -641,6 +686,8 @@ export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
 export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
 export type GatewayBudgetHistoryRow = typeof gatewayBudgetHistory.$inferSelect;
 export type GatewayBudgetHistoryInsert = typeof gatewayBudgetHistory.$inferInsert;
+export type GatewayModelRow = typeof gatewayModel.$inferSelect;
+export type GatewayModelInsert = typeof gatewayModel.$inferInsert;
 export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
 export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
 export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;

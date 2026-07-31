@@ -13,6 +13,8 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDailyPoint,
+  GatewayModelPrice,
+  GatewayModels,
   GatewayProbe,
   GatewayProbeRoute,
   GatewayUsage,
@@ -25,6 +27,7 @@ import {
   gatewayBudget,
   gatewayBudgetHistory,
   gatewayDaily,
+  gatewayModel,
 } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayDailyRow } from '../db/schema.js';
 import { nanoToDollars } from '../lib/nano.js';
@@ -177,6 +180,54 @@ export async function getGatewayBudgets(): Promise<GatewayBudgets> {
   });
 
   return { budgets };
+}
+
+/**
+ * The proxy's configured price list, as of the last full sync.
+ *
+ * Current state like the budget snapshot, so no query parameters and no range —
+ * and an empty list is a legitimate answer three ways over: the gateway has
+ * never synced, the credential is not allowed to list models, or the proxy is
+ * old enough not to offer `/model/info` at all.
+ *
+ * Ordered cheapest input first among the priced rows, with the unpriced ones
+ * last: a price list is read to compare rates, and a model the proxy cannot
+ * price has no place in that comparison — but it still has to be *visible*,
+ * because it is the reason a coverage figure is short.
+ */
+export async function getGatewayModels(): Promise<GatewayModels> {
+  const rows = await db.select().from(gatewayModel);
+
+  const models: GatewayModelPrice[] = rows.map((row) => ({
+    model: row.model,
+    backend: row.backend,
+    provider: row.provider,
+    mode: row.mode,
+    inputPerMillion:
+      row.inputPerMillionNano === null ? null : nanoToDollars(row.inputPerMillionNano),
+    outputPerMillion:
+      row.outputPerMillionNano === null ? null : nanoToDollars(row.outputPerMillionNano),
+    cacheReadPerMillion:
+      row.cacheReadPerMillionNano === null ? null : nanoToDollars(row.cacheReadPerMillionNano),
+    cacheWritePerMillion:
+      row.cacheWritePerMillionNano === null ? null : nanoToDollars(row.cacheWritePerMillionNano),
+    maxInputTokens: row.maxInputTokens,
+    maxOutputTokens: row.maxOutputTokens,
+    deployments: row.deployments,
+    priceVaries: row.priceVaries,
+  }));
+
+  models.sort((a, b) => {
+    // Compared, not subtracted: an unpriced row sorts below every priced one,
+    // and `Infinity - Infinity` is NaN, which Array.sort reads as "equal" and
+    // silently scatters the rows through the middle of the table.
+    const left = a.inputPerMillion ?? Number.POSITIVE_INFINITY;
+    const right = b.inputPerMillion ?? Number.POSITIVE_INFINITY;
+    if (left !== right) return left < right ? -1 : 1;
+    return a.model.localeCompare(b.model);
+  });
+
+  return { models };
 }
 
 /**
