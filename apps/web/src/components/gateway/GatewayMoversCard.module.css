@@ -1,0 +1,145 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Name, diverging bar, then four numeric columns. */
+.row {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 88px 88px 132px 88px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 20px;
+  font-size: 12.5px;
+}
+
+.headerStrip {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.key {
+  font: 500 12px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Bars grow out of a centre line: right for a rise, left for a fall. */
+.track {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--border2);
+  overflow: hidden;
+}
+
+.axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+}
+
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 5px;
+}
+
+.up {
+  background: var(--neg);
+}
+
+.down {
+  background: var(--pos);
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.centre {
+  text-align: center;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.upText {
+  color: var(--neg);
+}
+
+.downText {
+  color: var(--pos);
+}
+
+/* The percentage rides alongside the dollars — secondary, same cell. */
+.pct {
+  color: var(--faint);
+  margin-left: 6px;
+  font-size: 11.5px;
+}
+
+.empty {
+  padding: 24px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .row {
+    grid-template-columns: 150px minmax(0, 1fr) 120px;
+  }
+
+  .row > :nth-child(3),
+  .row > :nth-child(4),
+  .row > :nth-child(6) {
+    display: none;
+  }
+}

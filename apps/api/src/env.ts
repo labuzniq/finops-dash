@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { GATEWAY_SOURCES } from '@dash/shared';
 
 /**
  * Env is parsed once at boot and fails loudly. A `github` source without
@@ -77,6 +78,53 @@ const schema = z
       z.string().url().optional(),
     ),
     JIRA_TOKEN: z.preprocess((value) => (value === '' ? undefined : value), z.string().optional()),
+    /**
+     * LLM gateway (LiteLLM proxy) source.
+     *   off     = feature dormant — the sync route answers 503, scheduler skips
+     *   mock    = seeded generator, no credentials (local development)
+     *   litellm = live proxy, needs LITELLM_BASE_URL + LITELLM_API_KEY
+     *
+     * Defaults to `off`, unlike COPILOT_SOURCE: the gateway view is additive,
+     * and a fresh clone should not imply the org has a gateway at all.
+     */
+    GATEWAY_SOURCE: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.enum(GATEWAY_SOURCES).default('off'),
+    ),
+    /** Proxy root, e.g. `https://llm-gateway.corp.example`. No trailing slash needed. */
+    LITELLM_BASE_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().url().optional(),
+    ),
+    /**
+     * Virtual key or master key sent as `Authorization: Bearer …`. The daily
+     * activity endpoints scope their answer to what the key may see, so this
+     * has to be an admin (or admin-viewer) key to get org-wide numbers.
+     */
+    LITELLM_API_KEY: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
+    /**
+     * Where governance findings go when they leave the dashboard.
+     *
+     * A single URL that accepts `POST` with a JSON body — a Slack or Teams
+     * incoming webhook, or anything else that will take one. Optional and off by
+     * default: with nothing set, every sync still *evaluates* governance and
+     * records what it found, and those findings sit pending until a target
+     * exists. That is deliberate, and it is why this is a URL rather than a
+     * feature flag — turning delivery on later is one variable, and the open
+     * findings go out on the next sync rather than being lost.
+     */
+    GATEWAY_ALERT_WEBHOOK_URL: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().url().optional(),
+    ),
+    /** Sent as `Authorization: Bearer …` when the target wants one. */
+    GATEWAY_ALERT_WEBHOOK_TOKEN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
   })
   .refine((env) => env.COPILOT_SOURCE !== 'github' || (env.GITHUB_TOKEN && env.GITHUB_ORG), {
     message: 'COPILOT_SOURCE=github requires GITHUB_TOKEN and GITHUB_ORG to be set',
@@ -89,7 +137,15 @@ const schema = z
   .refine((env) => Boolean(env.JIRA_BASE_URL) === Boolean(env.JIRA_TOKEN), {
     message: 'JIRA_BASE_URL and JIRA_TOKEN must be set together (or both left unset)',
     path: ['JIRA_BASE_URL'],
-  });
+  })
+  .refine(
+    (env) =>
+      env.GATEWAY_SOURCE !== 'litellm' || (env.LITELLM_BASE_URL && env.LITELLM_API_KEY),
+    {
+      message: 'GATEWAY_SOURCE=litellm requires LITELLM_BASE_URL and LITELLM_API_KEY to be set',
+      path: ['GATEWAY_SOURCE'],
+    },
+  );
 
 export type Env = z.infer<typeof schema>;
 

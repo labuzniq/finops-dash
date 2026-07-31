@@ -1,0 +1,199 @@
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.title {
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* Which client answered — mock and litellm must never be confusable. */
+.sourceTag {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.sourceValue {
+  font: 600 11px ui-monospace, Menlo, monospace;
+  color: var(--muted);
+}
+
+.filterBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: flex;
+  background: var(--border2);
+  padding: 3px;
+  border-radius: 9px;
+  gap: 2px;
+}
+
+.segment {
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.syncNote {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.syncButton {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.syncButton:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.kpiRowSecondary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.kpiCard {
+  padding: 16px 18px;
+}
+
+.kicker {
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.08em;
+}
+
+.kpiValue {
+  font-size: 26px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.kpiSub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+/* Period-over-period line under the KPI's own description. */
+.trend {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trendValue {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* Colour is about the invoice, not the traffic: cost up is negative. */
+.trendNeg {
+  color: var(--neg);
+}
+
+.trendPos {
+  color: var(--pos);
+}
+
+.trendPrev {
+  color: var(--faint);
+}
+
+/* Names the compared window once, so no KPI has to repeat it. */
+.compareNote {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .kpiRow {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .kpiRowSecondary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Spend and tokens side by side; stacked when narrow. */
+.chartRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 1100px) {
+  .chartRow {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The chart itself lives in GatewayTrendCard — both this page and the
+   per-key drill-down draw with it. */
+
+.status {
+  padding: 40px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.error {
+  color: var(--neg);
+}
+
+.hint {
+  font: 500 11.5px ui-monospace, Menlo, monospace;
+  color: var(--faint);
+}

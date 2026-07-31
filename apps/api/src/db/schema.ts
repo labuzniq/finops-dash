@@ -24,6 +24,7 @@ import {
   REFRESH_KINDS,
   REFRESH_STATUSES,
 } from '@dash/shared';
+import type { GatewayNotificationHealthDetail } from '@dash/shared';
 
 export const planEnum = pgEnum('plan', PLANS);
 export const refreshStatusEnum = pgEnum('refresh_status', REFRESH_STATUSES);
@@ -260,6 +261,665 @@ export const jiraPeople = pgTable('jira_people', {
   syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Per-day gateway-wide totals from the LiteLLM proxy — one row per calendar
+ * day, replaced wholesale for every day a sync fetches.
+ *
+ * Money is bigint nano-dollars (1e-9 USD) like `billing_daily`: LiteLLM
+ * reports per-request spend down to ~1e-8 USD, so cents cannot hold it and
+ * float sums drift. Token counters are bigint too — a corporate gateway
+ * clears int32's 2.1B ceiling in a single busy day.
+ */
+export const gatewayDaily = pgTable('gateway_daily', {
+  date: date('date').primaryKey(),
+  /** USD × 1e9. */
+  spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+  requests: integer('requests').notNull(),
+  successfulRequests: integer('successful_requests').notNull(),
+  failedRequests: integer('failed_requests').notNull(),
+  promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+  completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+  totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+  cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+  cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Per-day, per-key gateway usage for one breakdown dimension — the same
+ * one-generic-table shape as `usage_breakdown_daily`, for the same reason: the
+ * axes (model, provider, api_key, mcp_server, user, team, tag) carry identical
+ * metrics and the UI treats them identically.
+ *
+ * `key` is the raw id the proxy reports (hashed key tokens and user ids can be
+ * long, hence 200); `label` is the alias it resolved, null when it did not.
+ * Dimensions overlap by construction — never sum across them.
+ */
+export const gatewayBreakdownDaily = pgTable(
+  'gateway_breakdown_daily',
+  {
+    date: date('date').notNull(),
+    /** See GATEWAY_DIMENSIONS in @dash/shared. */
+    dimension: varchar('dimension', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: integer('requests').notNull(),
+    successfulRequests: integer('successful_requests').notNull(),
+    failedRequests: integer('failed_requests').notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.dimension, table.key] }),
+    // The range read filters on date and then groups by dimension; the primary
+    // key already leads with date, so this only serves the dimension-first
+    // lookups the drill-down issues.
+    index('gateway_breakdown_dimension_idx').on(table.dimension, table.date),
+  ],
+);
+
+/**
+ * Current budgets and rate limits per governed object on the LiteLLM proxy —
+ * one row per (scope, key), replaced wholesale on every gateway sync.
+ *
+ * The only gateway table with no date column, because it is not a time series:
+ * a budget is configuration plus the proxy's own counter for the period in
+ * flight, and the proxy is the system of record for both. `spend_nano` is
+ * deliberately *not* re-derivable from `gateway_daily` — a key's period resets
+ * on its own schedule, and only the enforced counter says how close to the cap
+ * the proxy thinks it is.
+ *
+ * Every limit column is nullable and none of them default to zero: NULL means
+ * "no such limit" while 0 means "budgeted at nothing, reject everything". This
+ * is the one place in the gateway schema where absence is unknown-shaped
+ * rather than zero-shaped.
+ */
+export const gatewayBudget = pgTable(
+  'gateway_budget',
+  {
+    /** See GATEWAY_BUDGET_SCOPES in @dash/shared — `api_key`, `team`, `tag` or `user`. */
+    scope: varchar('scope', { length: 20 }).notNull(),
+    /** The proxy's id: hashed key token, team id, tag name or user id — joins the usage dimension of the same name. */
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    /** USD × 1e9, for the budget period in flight. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    softBudgetNano: bigint('soft_budget_nano', { mode: 'bigint' }),
+    /** LiteLLM duration string — `30d`, `1mo`, `24h`. */
+    budgetDuration: varchar('budget_duration', { length: 20 }),
+    resetAt: timestamp('reset_at', { withTimezone: true }),
+    tpmLimit: bigint('tpm_limit', { mode: 'number' }),
+    rpmLimit: bigint('rpm_limit', { mode: 'number' }),
+    blocked: boolean('blocked').notNull().default(false),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.key] })],
+);
+
+/**
+ * What `gateway_budget` said, kept — one row per governed object per UTC day.
+ *
+ * The snapshot table above is replaced wholesale by every sync, which makes it
+ * exactly the wrong shape for the three questions an owner actually asks about
+ * a budget: when did this cross, what did the last period come to, and who
+ * moved the cap. None of the three can be re-derived from `gateway_daily`,
+ * because the proxy's enforced counter runs on the key's own period.
+ *
+ * Keyed on the *day*, not on the sync: the last observation of a day wins, so
+ * the table grows with the gateway and the calendar and is indifferent to how
+ * often the scheduler runs. `observed_at` keeps the instant that reading was
+ * taken, which is what says how stale the day's value is.
+ *
+ * Written only by a full sync. A ranged backfill does not fetch budgets at all
+ * (governance is a snapshot of the proxy, not of a date range), so it appends
+ * nothing here either — a repair of six days in May cannot invent a governance
+ * observation for May.
+ *
+ * Null still means "no such limit", exactly as in the snapshot: a row whose
+ * `max_budget_nano` is NULL was uncapped that day, and one whose value is 0 was
+ * rejecting every call.
+ */
+export const gatewayBudgetHistory = pgTable(
+  'gateway_budget_history',
+  {
+    scope: varchar('scope', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    /** UTC day the observation belongs to. */
+    date: date('date').notNull(),
+    /** The alias as it read that day — a rename is itself a recorded change. */
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    softBudgetNano: bigint('soft_budget_nano', { mode: 'bigint' }),
+    budgetDuration: varchar('budget_duration', { length: 20 }),
+    resetAt: timestamp('reset_at', { withTimezone: true }),
+    tpmLimit: bigint('tpm_limit', { mode: 'number' }),
+    rpmLimit: bigint('rpm_limit', { mode: 'number' }),
+    blocked: boolean('blocked').notNull().default(false),
+    /** When the reading this row kept was taken. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.scope, table.key, table.date] }),
+    // The read is always a window over every object, so date leads.
+    index('gateway_budget_history_date_idx').on(table.date),
+  ],
+);
+
+/**
+ * One governance finding per *episode* — what was found, and whether it left
+ * the building.
+ *
+ * Every other gateway finding on the dashboard is derived in the browser from
+ * the usage payload and exists only while somebody is looking at the page.
+ * Governance is the exception: it is a table, so the API can assess it after
+ * every full sync and hand what it finds to something outside the dashboard.
+ * This is the de-duplication story that makes a nightly evaluation something
+ * other than a nightly mailing.
+ *
+ * Keyed on the finding's fingerprint (`kind:scope:key`) and on nothing
+ * numeric, which is the whole design: a key still over the same cap tomorrow is
+ * the *same* finding and only moves `last_seen_at`, while one crossing from
+ * `soft` to `over` changes kind and is a new row. `cleared_at` closes an
+ * episode; the next time the same finding appears it starts a new one and
+ * delivers again, which is why the row is reset rather than deleted — the
+ * previous episode's dates are what say "this key has been over its cap three
+ * times this quarter".
+ *
+ * `delivered_at` is the retry policy in one column. Null means the alert has not
+ * been accepted by a delivery target, whether because the attempt failed or
+ * because none is configured, and the next sync tries again. There is no queue,
+ * because the sync is already a schedule.
+ *
+ * Money is nano-dollars like every other table here, and `max_budget_nano`
+ * keeps the snapshot's null-vs-zero rule: null is uncapped, 0 rejects everything.
+ */
+export const gatewayNotification = pgTable(
+  'gateway_notification',
+  {
+    /** `kind:scope:key` — the identity of the episode, carrying no numbers. */
+    fingerprint: varchar('fingerprint', { length: 260 }).primaryKey(),
+    /** See GATEWAY_ALERT_KINDS in @dash/shared. */
+    kind: varchar('kind', { length: 40 }).notNull(),
+    severity: varchar('severity', { length: 20 }).notNull(),
+    /**
+     * Which table the finding was assessed from — `budget` or `health`.
+     *
+     * Recorded rather than inferred from the kind, because it is what scopes the
+     * close pass: a source that could not be assessed this run must leave its
+     * open episodes alone, and "no findings" and "nothing to read" are opposite
+     * facts. Defaulted so every row written before deployment findings existed
+     * reads as the governance finding it was.
+     */
+    source: varchar('source', { length: 20 }).notNull().default('budget'),
+    /** A budget scope, or `model` — the one scope a deployment finding has. */
+    scope: varchar('scope', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    /** The governed object's, or the alias's, state at the most recent evaluation. */
+    state: varchar('state', { length: 20 }).notNull(),
+    /** Null on a deployment finding: there is no counter behind one. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    /**
+     * The reading behind a deployment finding — how many of how many, on which
+     * backends, with the proxy's own error texts. Null on a governance finding.
+     *
+     * Stored rather than rendered at evaluation time for the same reason the
+     * budget numbers are: the sentence is re-derived from the numbers, so the
+     * mail and the panel cannot say different things about one episode.
+     */
+    detail: jsonb('detail').$type<GatewayNotificationHealthDetail>(),
+    /** When this episode began — not when the object was first seen. */
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The last evaluation at which the finding was still true. */
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When it stopped being true. Null while open. */
+    clearedAt: timestamp('cleared_at', { withTimezone: true }),
+    /** When a delivery target accepted it. Null while pending — the retry flag. */
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    deliveryAttempts: integer('delivery_attempts').notNull().default(0),
+    deliveryError: text('delivery_error'),
+  },
+  (table) => [
+    // The panel reads open findings newest-first; the sync reads the pending
+    // ones. Both start from "is this cleared".
+    index('gateway_notification_cleared_idx').on(table.clearedAt, table.lastSeenAt),
+  ],
+);
+
+/**
+ * The proxy's configured price list — one row per routable public model name.
+ *
+ * The third kind of gateway fact and the second snapshot table: `gateway_daily`
+ * is what the gateway *did*, `gateway_budget` is what it will *refuse*, and this
+ * is what it is set up to *charge*. Replaced wholesale by every full sync, for
+ * the same reason budgets are — a model withdrawn from the router has no price
+ * any more, and a stale row would price traffic that can no longer happen.
+ *
+ * Money is nano-dollars per **million** tokens, not per token: LiteLLM quotes
+ * `2.5e-06` per token, and at nine fractional digits a per-token scale rounds a
+ * $0.05/M model down to three significant figures.
+ *
+ * Every price is nullable and none is ever zero-filled. Two genuinely different
+ * things produce an absent price — a model billed per second, and one LiteLLM's
+ * cost map cannot resolve at all — and both are "we cannot price this", which is
+ * the opposite of an explicit `0` (a free model the proxy skips budget checks
+ * for). Same rule as `gateway_budget`, one layer up.
+ */
+export const gatewayModel = pgTable('gateway_model', {
+  /** The public alias callers pass — also the `model` usage dimension's key. */
+  model: varchar('model', { length: 200 }).primaryKey(),
+  /** `litellm_params.model`: the provider-prefixed deployment behind the alias. */
+  backend: varchar('backend', { length: 200 }),
+  provider: varchar('provider', { length: 60 }),
+  /** `chat`, `embedding`, `rerank`, … */
+  mode: varchar('mode', { length: 40 }),
+  /** USD × 1e9 per 1,000,000 tokens. */
+  inputPerMillionNano: bigint('input_per_million_nano', { mode: 'bigint' }),
+  outputPerMillionNano: bigint('output_per_million_nano', { mode: 'bigint' }),
+  cacheReadPerMillionNano: bigint('cache_read_per_million_nano', { mode: 'bigint' }),
+  cacheWritePerMillionNano: bigint('cache_write_per_million_nano', { mode: 'bigint' }),
+  maxInputTokens: bigint('max_input_tokens', { mode: 'number' }),
+  maxOutputTokens: bigint('max_output_tokens', { mode: 'number' }),
+  /** How many router deployments answer to this alias. */
+  deployments: integer('deployments').notNull().default(1),
+  /**
+   * Those deployments do not all charge the same, so the stored price is the
+   * cheapest of them — a floor. The daily aggregates carry no deployment id, so
+   * splitting the row is not possible; flagging it is.
+   */
+  priceVaries: boolean('price_varies').notNull().default(false),
+  syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One deployment as `GET /health` last reported it — the only gateway table
+ * keyed below the model alias.
+ *
+ * Every other table here is keyed by something a caller can name. This one is
+ * keyed by the individual Azure/Bedrock endpoint the router chose, which is a
+ * resolution the usage aggregates simply do not have: LiteLLM fails over
+ * silently between the deployments of one alias, so an alias with a dead region
+ * bills normally, fails nothing, and shows up nowhere except here.
+ *
+ * Current state like `gateway_budget` and `gateway_model`, replaced wholesale by
+ * a full sync and untouched by a ranged one. `model` is a *resolved* column
+ * rather than a fetched one — `/health` reports routing strings and never public
+ * aliases, so the sync joins it against the catalogue it fetched in the same
+ * run, and a null means no catalogue row claimed the deployment.
+ */
+export const gatewayDeploymentHealth = pgTable('gateway_deployment_health', {
+  /** LiteLLM's `model_info.id`, or the routing string when it reported none. */
+  id: varchar('id', { length: 200 }).primaryKey(),
+  /** `litellm_params.model` — the deployment this row is about. */
+  backend: varchar('backend', { length: 200 }).notNull(),
+  /** The public alias it serves, resolved through `gateway_model`. */
+  model: varchar('model', { length: 200 }),
+  provider: varchar('provider', { length: 60 }),
+  /** Null on Bedrock (addressed by region) and on a details-stripped proxy alike. */
+  apiBase: varchar('api_base', { length: 300 }),
+  healthy: boolean('healthy').notNull(),
+  /** The proxy's own error text. Null on a healthy row and on a stripped one. */
+  error: text('error'),
+  /** `exception_status` — the upstream status, where the failure carried one. */
+  errorStatus: integer('error_status'),
+  checkedAt: timestamp('checked_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * What `gateway_deployment_health` said, kept — one row per deployment per UTC
+ * day, appended by every full sync.
+ *
+ * Same shape and the same argument as `gateway_budget_history`: the snapshot
+ * above is replaced wholesale, so it can say a pool is refusing now and can
+ * never say it has been refusing all week. That distinction is the whole
+ * difference between a blip and a standing fault, and it is the only thing that
+ * turns the nightly reading into evidence.
+ *
+ * It is a weaker sample than the budget one and the derivation
+ * (`summarizeDeploymentHistory` in @dash/shared) is written knowing it: a
+ * deployment can fail and recover between two readings and leave no trace,
+ * where a budget counter cannot un-spend itself. Hence readings are counted and
+ * never converted to hours, and a day with no row is unknown rather than
+ * healthy.
+ *
+ * Keyed on the *day*, so a second sync the same afternoon updates the day's row
+ * rather than adding one — the table grows with the gateway and the calendar,
+ * not with the scheduler's frequency. Written only when `/health` actually
+ * answered: a ranged backfill does not call it at all, and a swallowed failure
+ * leaves the day unrecorded rather than filing a reading nobody took.
+ *
+ * `model` is the alias as resolved *that day*, which is why it is stored rather
+ * than joined at read time — a deployment moved to another alias is a change
+ * worth seeing, and re-resolving history against today's catalogue would erase it.
+ */
+export const gatewayDeploymentHealthHistory = pgTable(
+  'gateway_deployment_health_history',
+  {
+    id: varchar('id', { length: 200 }).notNull(),
+    /** UTC day the observation belongs to. */
+    date: date('date').notNull(),
+    backend: varchar('backend', { length: 200 }).notNull(),
+    model: varchar('model', { length: 200 }),
+    provider: varchar('provider', { length: 60 }),
+    healthy: boolean('healthy').notNull(),
+    error: text('error'),
+    errorStatus: integer('error_status'),
+    /** When the reading this row kept was taken. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.id, table.date] }),
+    // The read is always a window over every deployment, so date leads.
+    index('gateway_deployment_health_history_date_idx').on(table.date),
+  ],
+);
+
+/**
+ * A closed calendar month, held still — one row per sealed month.
+ *
+ * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
+ * backfill repairs a gap, and LiteLLM revises late-landing usage. That is what
+ * an analysis wants and the opposite of what a bill wants. This row records the
+ * month's totals at the instant it was sealed, so a statement issued in July
+ * can still be reproduced in December and match to the cent — and so the two
+ * can be *compared*, which is how "June's bill has moved" becomes answerable.
+ *
+ * Written once per month by the sync, and only for a month that has ended with
+ * every one of its days stored (`resolveMonthSeal` in @dash/shared). Re-sealing
+ * is a deliberate, explicit act, never a side effect of another sync.
+ */
+export const gatewayMonth = pgTable(
+  'gateway_month',
+  {
+    /** `YYYY-MM`. */
+    month: varchar('month', { length: 7 }).notNull(),
+    /**
+     * Which statement of that month this row is — `1` for the first seal, one
+     * more for each re-seal. A re-seal inserts rather than replaces: the
+     * statement that was issued is evidence, and overwriting it would leave a
+     * corrected bill with nothing to be corrected *from*.
+     */
+    revision: integer('revision').notNull().default(1),
+    /** Set when a later revision replaced this one; null on the current statement. */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    monthStart: date('month_start').notNull(),
+    monthEnd: date('month_end').notNull(),
+    /** Days sealed — the month's calendar length, since a short month cannot be sealed. */
+    days: integer('days').notNull(),
+    sealedAt: timestamp('sealed_at', { withTimezone: true }).notNull().defaultNow(),
+    /** See GATEWAY_SEAL_ORIGINS in @dash/shared — `scheduler` or `manual`. */
+    sealedBy: varchar('sealed_by', { length: 20 }).notNull(),
+    /** USD × 1e9. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: bigint('requests', { mode: 'number' }).notNull(),
+    successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
+    failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.month, table.revision] }),
+    // At most one *current* statement per month, enforced here rather than by a
+    // read-then-write: a re-seal that failed to supersede its predecessor would
+    // otherwise leave two statements both claiming to be the bill.
+    uniqueIndex('gateway_month_current_idx')
+      .on(table.month)
+      .where(sql`${table.supersededAt} is null`),
+  ],
+);
+
+/**
+ * One payer's line on a sealed month — the statement itself, not a re-slice of
+ * the daily breakdowns.
+ *
+ * Only the payer-shaped dimensions are recorded (`team`, `tag`, `api_key`,
+ * `user` — GATEWAY_PAYER_DIMENSIONS in @dash/shared): a seal exists to make a
+ * *bill* reproducible, and `model`/`provider` charge nobody while `mcp_server`
+ * is a subset rather than a slice. The four are stored side by side and are
+ * never summed together — the same overlap rule the daily breakdowns carry.
+ */
+export const gatewayMonthLine = pgTable(
+  'gateway_month_line',
+  {
+    month: varchar('month', { length: 7 }).notNull(),
+    /** The revision of `gateway_month` these lines belong to. */
+    revision: integer('revision').notNull().default(1),
+    dimension: varchar('dimension', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: bigint('requests', { mode: 'number' }).notNull(),
+    successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
+    failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.month, table.revision, table.dimension, table.key] })],
+);
+
+/**
+ * How many calls hung, kept — one row per deployment key per alias per UTC day.
+ *
+ * The first of the four *live* reads to get a table, and the only one of the
+ * three per-alias sweeps whose payload supports one cleanly: exceptions carry no
+ * denominator and `/model/metrics` answers an average with its counts already
+ * thrown away, while `/model/metrics/slow_responses` answers a count beside the
+ * number of requests it counted them out of. Counts of disjoint request-log rows
+ * are the one thing in this integration that may be added across a sweep and
+ * across days, which is what makes a stored roll-up mean anything at all.
+ *
+ * It exists for the reason every history table here exists: the live read
+ * answers "how many hung in the window on screen" and can never answer "has this
+ * endpoint been hanging since Tuesday", which is the difference between an
+ * afternoon's trouble and a fault somebody owns. It is also the boundary a
+ * finding has to cross before it can leave the dashboard — `gateway_notify`
+ * assesses tables, not browser derivations.
+ *
+ * Grain is (date, model, key) rather than (date, key), deliberately: the proxy
+ * groups on `api_base` and is queried one alias at a time, so one endpoint
+ * serving four aliases answers four times with four *disjoint* counts of the
+ * same deployment's traffic. Storing them separately keeps the finest thing the
+ * route said and lets a reader sum to the key, which is the roll-up
+ * `summarizeGatewaySlowResponses` already performs. `key` is
+ * `slowResponseDeploymentKey`'s output, so an unaddressed deployment arrives
+ * under `UNKEYED_DEPLOYMENT` — one bucket per alias, never a deployment.
+ *
+ * Written by full syncs only, one day (the window's last, which is yesterday),
+ * upserted on the day so a second run the same afternoon replaces the reading
+ * rather than doubling it. A backfill records nothing: this route reads the
+ * *request log*, which is pruned on its own schedule and may be off entirely, so
+ * a repair of six days in May would be asking a table that no longer holds them.
+ * A day with no rows is therefore a day nobody read — never a day nothing hung.
+ */
+export const gatewaySlowResponseDaily = pgTable(
+  'gateway_slow_response_daily',
+  {
+    /** UTC day the counts cover — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `api_base` cut at `/openai/`, or `UNKEYED_DEPLOYMENT` for a deployment with none. */
+    deploymentKey: varchar('deployment_key', { length: 300 }).notNull(),
+    /** Request-log rows the proxy grouped. Cache hits excluded upstream, never the ledger's count. */
+    totalCount: bigint('total_count', { mode: 'number' }).notNull(),
+    /** Of those, how many reached the proxy's own `alerting_threshold` — a count with no duration on it. */
+    slowCount: bigint('slow_count', { mode: 'number' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deploymentKey] }),
+    // Every read is a window across every key, so date leads.
+    index('gateway_slow_response_daily_date_idx').on(table.date),
+  ],
+);
+
+/**
+ * Why calls failed, kept — one row per exception type per deployment per alias
+ * per UTC day.
+ *
+ * The second *live* read to get a table, licensed by the same arithmetic as the
+ * first: `LiteLLM_ErrorLogs` rows are disjoint, so counting them adds across the
+ * aliases of one sweep and across nights. `gateway_latency_daily` is stored too
+ * but on a narrower licence: `/model/metrics` answers a mean of per-request
+ * ratios with the counts behind them already discarded, so those readings may be
+ * compared night to night and never added to anything.
+ *
+ * What it does *not* inherit from `gateway_slow_response_daily` is a
+ * denominator. This route carries none at all, so nothing read off this table
+ * may become a rate, a share of traffic or a badge: the only share it supports
+ * is of the exceptions it recorded, which is a *mix*. That is also what makes
+ * the stored version worth having — the live card answers "what is breaking in
+ * the window on screen" and cannot answer "and is that different from last
+ * week", which for a fault taxonomy is the whole question.
+ *
+ * `exception_type` is stored verbatim and classified on read. The contrast with
+ * `gateway_deployment_health_history.model` is deliberate: that column is
+ * resolved against the catalogue fetched in the same run, so it is stored as
+ * resolved or a later catalogue would re-file a deployment that has since moved.
+ * A class is a static mapping from a Python class name to whoever can act on it,
+ * so deriving it on read means adding a name to the taxonomy re-files the
+ * history instead of stranding it under `other`.
+ *
+ * `deployment` is LiteLLM's `combined_model_api_base` verbatim, never parsed —
+ * the join to `gateway_deployment_health` runs the other way, through
+ * `deploymentExceptionKey`.
+ *
+ * Written by full syncs only, for the window's last day (yesterday), upserted on
+ * the grain so a second run the same afternoon replaces the reading rather than
+ * doubling counts that are meant to be added. A backfill records nothing: the
+ * error log is pruned on its own schedule, so asking it about six days in May
+ * would file whatever survived pruning as the reading for those days.
+ */
+export const gatewayExceptionDaily = pgTable(
+  'gateway_exception_daily',
+  {
+    /** UTC day the counts cover — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `CONCAT(litellm_model_name, '-', api_base)` verbatim. Never split. */
+    deployment: varchar('deployment', { length: 400 }).notNull(),
+    /** `exception_type` as the proxy stored it — the Python class name. */
+    exceptionType: varchar('exception_type', { length: 200 }).notNull(),
+    /** How many of them. A count of error-log rows, with no denominator anywhere. */
+    count: bigint('count', { mode: 'number' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deployment, table.exceptionType] }),
+    // Every read is a window across every deployment, so date leads.
+    index('gateway_exception_daily_date_idx').on(table.date),
+  ],
+);
+
+/**
+ * That the exception sweep ran on a night, whatever it found.
+ *
+ * The one table in this integration whose only purpose is to make an *absence*
+ * legible, and it exists because of a difference between two otherwise identical
+ * routes. `/model/metrics/slow_responses` answers a row for every deployment key
+ * that carried traffic, so a night that was read always leaves rows behind and
+ * "no rows" can only mean "nobody read". `/model/metrics/exceptions` answers rows
+ * only where something *failed*, so a night on which the gateway behaved perfectly
+ * records nothing at all — identical, in the table, to a night the sweep was
+ * refused, timed out, or never ran.
+ *
+ * Those are opposite findings, so the fact that the sweep ran is filed apart from
+ * what it found. A date here with no rows in `gateway_exception_daily` is a clean
+ * night; a date in neither is unread and stays unknown.
+ */
+export const gatewayExceptionSweep = pgTable('gateway_exception_sweep', {
+  /** UTC day swept. One row per day, replaced when the day is swept again. */
+  date: date('date').primaryKey(),
+  /** How many aliases were asked about — the sweep's own coverage. */
+  models: integer('models').notNull(),
+  /** How many deployments came back carrying at least one exception. */
+  deployments: integer('deployments').notNull(),
+  /** Our sum over the night's rows. Never the proxy's `total_exceptions`. */
+  exceptions: integer('exceptions').notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * How slowly each deployment answered, kept — one reading per deployment key per
+ * alias per UTC day.
+ *
+ * The third *live* read to get a table, and the one whose licence is different
+ * from the other two. `gateway_slow_response_daily` and
+ * `gateway_exception_daily` are stored because their counts **add**: disjoint
+ * request-log and error-log rows may be summed across a sweep and across nights.
+ * Nothing here adds. `/model/metrics` answers `AVG(seconds / completion_tokens)`
+ * with the request counts behind it already discarded, so two nights' readings
+ * may not be pooled, weighted or totalled — the arithmetic that licensed those
+ * two tables is unavailable here and always will be.
+ *
+ * What licenses this one is the *other* precedent in this integration:
+ * `gateway_deployment_health_history`, which stores a nightly reading that
+ * cannot be aggregated either. A sequence of readings is legitimate on its own
+ * terms — it answers "has this endpoint been slow all week or only tonight",
+ * which the live route structurally cannot, because it answers one window and
+ * has no memory. So the rule this table carries is narrower than the hang
+ * table's: the rows may be **kept and compared**, never **pooled**. Every window
+ * figure derived from them is a median of nightly readings, unweighted and
+ * stated as such, and no number read off this table is a duration, a percentile
+ * or an SLA figure — the same three things the live layer already refuses.
+ *
+ * Grain is (date, model, key) and, unlike the hang table, the alias may *not* be
+ * summed away. There the two aliases behind one endpoint answer two disjoint
+ * counts that add to the endpoint's traffic; here they answer two averages over
+ * two different workloads, and their mean would be a number describing neither.
+ * The live layer keys per (alias, key) pair for exactly this reason and the
+ * stored one matches it, so the card and the history cannot disagree.
+ *
+ * `seconds_per_token_nano` is the rate at 1e9 scale for the same reason money is
+ * integer cents: a float column drifts, and the readings are small (a few
+ * milliseconds per token is 1e6 here). It is never zero — the client drops a
+ * non-positive average, since a rate of zero is a parse failure rather than an
+ * instant deployment.
+ *
+ * Written by full syncs only, for the window's last day, upserted on the grain.
+ * A backfill records nothing: this reads the request log, which is pruned on its
+ * own schedule and may be switched off entirely, so asking it about six days in
+ * May would file whatever survived pruning as those nights' readings. A day with
+ * no rows is a day nobody read — never a night the gateway was fast.
+ */
+export const gatewayLatencyDaily = pgTable(
+  'gateway_latency_daily',
+  {
+    /** UTC day the reading covers — the day the sweep asked about, not the day it ran. */
+    date: date('date').notNull(),
+    /** The public alias the read was scoped to: the query parameter, not the row. */
+    model: varchar('model', { length: 200 }).notNull(),
+    /** `api_base` cut at `/openai/`, or the backend model string when there is no URL. */
+    deploymentKey: varchar('deployment_key', { length: 300 }).notNull(),
+    /** Seconds of wall clock per completion token, ×1e9. Never a request duration. */
+    secondsPerTokenNano: bigint('seconds_per_token_nano', { mode: 'bigint' }).notNull(),
+    /** When the sweep that produced this row ran. */
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.date, table.model, table.deploymentKey] }),
+    // Every read is a window across every key, so date leads.
+    index('gateway_latency_daily_date_idx').on(table.date),
+  ],
+);
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -393,6 +1053,35 @@ export type UsageBreakdownRow = typeof usageBreakdownDaily.$inferSelect;
 export type UsageBreakdownInsert = typeof usageBreakdownDaily.$inferInsert;
 export type AdoptionPhaseRow = typeof adoptionPhaseDaily.$inferSelect;
 export type AdoptionPhaseInsert = typeof adoptionPhaseDaily.$inferInsert;
+export type GatewayDailyRow = typeof gatewayDaily.$inferSelect;
+export type GatewayDailyInsert = typeof gatewayDaily.$inferInsert;
+export type GatewayBreakdownRow = typeof gatewayBreakdownDaily.$inferSelect;
+export type GatewayBreakdownInsert = typeof gatewayBreakdownDaily.$inferInsert;
+export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
+export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
+export type GatewayBudgetHistoryRow = typeof gatewayBudgetHistory.$inferSelect;
+export type GatewayBudgetHistoryInsert = typeof gatewayBudgetHistory.$inferInsert;
+export type GatewayNotificationRow = typeof gatewayNotification.$inferSelect;
+export type GatewayNotificationInsert = typeof gatewayNotification.$inferInsert;
+export type GatewayModelRow = typeof gatewayModel.$inferSelect;
+export type GatewayModelInsert = typeof gatewayModel.$inferInsert;
+export type GatewayDeploymentHealthRow = typeof gatewayDeploymentHealth.$inferSelect;
+export type GatewayDeploymentHealthInsert = typeof gatewayDeploymentHealth.$inferInsert;
+export type GatewayDeploymentHealthHistoryRow = typeof gatewayDeploymentHealthHistory.$inferSelect;
+export type GatewayDeploymentHealthHistoryInsert =
+  typeof gatewayDeploymentHealthHistory.$inferInsert;
+export type GatewaySlowResponseDailyRow = typeof gatewaySlowResponseDaily.$inferSelect;
+export type GatewaySlowResponseDailyInsert = typeof gatewaySlowResponseDaily.$inferInsert;
+export type GatewayExceptionDailyRow = typeof gatewayExceptionDaily.$inferSelect;
+export type GatewayExceptionDailyInsert = typeof gatewayExceptionDaily.$inferInsert;
+export type GatewayExceptionSweepRow = typeof gatewayExceptionSweep.$inferSelect;
+export type GatewayExceptionSweepInsert = typeof gatewayExceptionSweep.$inferInsert;
+export type GatewayLatencyDailyRow = typeof gatewayLatencyDaily.$inferSelect;
+export type GatewayLatencyDailyInsert = typeof gatewayLatencyDaily.$inferInsert;
+export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
+export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
+export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;
+export type GatewayMonthLineInsert = typeof gatewayMonthLine.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
 export type ImportLogRow = typeof importLogs.$inferSelect;
 export type ImportLogInsert = typeof importLogs.$inferInsert;

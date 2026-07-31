@@ -1,0 +1,344 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * The seal badge: a closed month whose figures were recorded and can be quoted
+ * back. Positive hue when the statement on screen still matches what was
+ * issued, negative when the daily rows have moved away from it.
+ */
+.seal {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--pos);
+  background: color-mix(in oklab, var(--pos) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--pos) 30%, transparent);
+}
+
+.sealDrift {
+  color: var(--neg);
+  background: color-mix(in oklab, var(--neg) 14%, transparent);
+  border-color: color-mix(in oklab, var(--neg) 30%, transparent);
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 3px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: flex;
+  background: var(--border2);
+  padding: 3px;
+  border-radius: 9px;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.segment {
+  border: 0;
+  background: transparent;
+  padding: 5px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.export {
+  border: 1px solid var(--border);
+  background: var(--card2);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.export:hover:not(:disabled) {
+  background: var(--border2);
+}
+
+.export:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+/* The four numbers a statement is checked against before it is sent. */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 20px 16px;
+}
+
+.stat {
+  background: var(--card2);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.statLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.statValue {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statNote {
+  font-size: 11px;
+  color: var(--faint);
+  margin-top: 3px;
+}
+
+.warn {
+  color: var(--neg);
+}
+
+.alert {
+  margin: 0 20px 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--neg);
+  background: color-mix(in oklab, var(--neg) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--neg) 28%, transparent);
+}
+
+/* Name, bar, then five numeric columns. */
+.row {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 90px 64px 84px 74px 132px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 20px;
+  font-size: 12.5px;
+}
+
+.headerStrip {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+/* The remainder is part of the table — it is a line of the bill, not a note
+   under it — but it is nobody's department, so it is drawn without a hue. */
+.remainder {
+  border-top: 1px dashed var(--border2);
+  background: var(--card2);
+}
+
+.remainderFill {
+  background: var(--faint);
+}
+
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.key {
+  font: 500 12px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.label {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track {
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--row-color) var(--chart-fill), transparent);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 5px;
+  background: var(--row-color);
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.change {
+  margin-left: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.up {
+  color: var(--neg);
+}
+
+.down {
+  color: var(--pos);
+}
+
+.empty {
+  padding: 24px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.footer {
+  padding: 12px 20px;
+  font-size: 11.5px;
+  color: var(--faint);
+  border-top: 1px solid var(--border2);
+}
+
+@media (max-width: 1240px) {
+  .summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row {
+    grid-template-columns: 150px minmax(0, 1fr) 84px 56px 110px;
+  }
+
+  .row > :nth-child(5),
+  .row > :nth-child(6) {
+    display: none;
+  }
+}
+
+/* Revision history — drawn as a disclosure rather than a card, because it is
+   evidence about the statement above it and not a second statement. */
+.revisions {
+  margin: 0 20px 12px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--card2);
+}
+
+.revisionsToggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text2);
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.revisionsToggle:hover {
+  color: var(--text);
+}
+
+.revisionBody {
+  padding: 2px 12px 10px;
+  border-top: 1px solid var(--border2);
+}
+
+.revisionRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 110px 92px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12.5px;
+}
+
+.revisionName {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.movers {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border2);
+}
+
+.moversTitle {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+
+.moverRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 90px 90px 112px;
+  gap: 12px;
+  align-items: center;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+
+.moversNote {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+}

@@ -1,7 +1,7 @@
 # RBCZ FinOps Dashboard
 
-GitHub Copilot spend dashboard. React + TypeScript frontend, Fastify + Postgres backend,
-in a pnpm monorepo.
+GitHub Copilot spend dashboard, with a parallel LLM-gateway (LiteLLM proxy) analytics
+view. React + TypeScript frontend, Fastify + Postgres backend, in a pnpm monorepo.
 
 Built from the design handoff in [`docs/handoff.md`](docs/handoff.md); the visual reference
 prototype lives in `.claude/design/` and the Nocturne design system in `.claude/design-system/`.
@@ -49,6 +49,7 @@ stops it.
 apps/
   api/           Fastify + drizzle + Postgres. Containerised.
     src/copilot/   the data-source adapter — mock.ts and github.ts behind one interface
+    src/gateway/   the LLM-gateway adapter — mock.ts and litellm.ts behind one interface
     src/services/  refresh (the async job) and dashboard (the read paths)
     src/routes/    HTTP surface
   web/           Vite + React. CSS Modules, no UI framework.
@@ -90,6 +91,8 @@ from compose. Both need `.env` to exist — copy it from `.env.example` first.
 | `GET /api/refresh/:id` | one job's status |
 | `GET /api/refresh/latest` | last job of any status — drives the "synced 2h ago" note |
 | `GET /api/imports` | import history — the Imports page's log, newest first, capped at 50 |
+| `GET /api/gateway` | LLM-gateway usage — daily totals + per-dimension breakdowns; ~20 sibling routes under `/api/gateway/*` (see [`docs/litellm-gateway.md`](docs/litellm-gateway.md)) |
+| `POST /api/refresh/gateway` | start an LLM-gateway sync (kind `gateway`); optional `?from=&to=` backfills a date range |
 | `GET /api/telemetry/rollup?days=90` | Claude Code telemetry, rolled up per (day, user, model, metric, type) |
 | `GET /api/telemetry/freshness` | newest ingested datapoint — the push source's "connected" signal |
 | `POST /v1/metrics` / `POST /v1/logs` | **OTLP/HTTP ingest** (JSON encoding) — see below |
@@ -149,6 +152,21 @@ Set by `COPILOT_SOURCE`:
 
 Both implement one `CopilotClient` interface, so nothing outside `src/copilot/` knows
 which is in use.
+
+The LLM gateway is a second, parallel source, set by `GATEWAY_SOURCE`:
+
+- **`off`** (default) — the feature stays dormant: the sync route answers 503 and the
+  **LLM gateway** page reports the source as disabled.
+- **`mock`** — a seeded generator, no credentials; like the Copilot mock, data appears
+  only when a sync is triggered.
+- **`litellm`** — a live LiteLLM proxy. Requires `LITELLM_BASE_URL` and
+  `LITELLM_API_KEY` (an admin or admin-viewer key); the API refuses to boot if either
+  is missing.
+
+Both implement one `GatewayClient` interface behind `src/gateway/`. The gateway syncs
+daily at 07:00 Europe/Prague alongside the other sources, or on demand from the **Data
+sources** page. [`docs/litellm-gateway.md`](docs/litellm-gateway.md) is the full
+reference — routes, tables, derivations, and the open questions against a live proxy.
 
 **Important:** GitHub does not expose everything the design shows. See
 [`docs/handoff.md` → Data gaps](docs/handoff.md#data-gaps-github-vs-the-design) for what

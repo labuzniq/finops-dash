@@ -43,6 +43,97 @@
       "when": 1784975775364,
       "tag": "0005_omniscient_grim_reaper",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785450141830,
+      "tag": "0006_silent_wallop",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785456305337,
+      "tag": "0007_volatile_grim_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785462605232,
+      "tag": "0008_wakeful_puff_adder",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785463381008,
+      "tag": "0009_pale_maddog",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785464157963,
+      "tag": "0010_slippery_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785467086482,
+      "tag": "0011_outstanding_omega_red",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785470086899,
+      "tag": "0012_known_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785471337411,
+      "tag": "0013_minor_randall_flagg",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785475397197,
+      "tag": "0014_clammy_diamondback",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785477438756,
+      "tag": "0015_far_invaders",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785483133422,
+      "tag": "0016_sturdy_vin_gonzales",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785484573529,
+      "tag": "0017_overrated_doctor_strange",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785486064188,
+      "tag": "0018_overrated_reavers",
+      "breakpoints": true
     }
   ]
 }
