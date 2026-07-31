@@ -980,6 +980,145 @@ export function describeBudgetAlert(
 }
 
 /**
+ * ─── Deployment findings that can leave the page ─────────────────────────────
+ *
+ * Governance was the first source able to leave the dashboard, and the reason
+ * was never that it was governance — it was that it is a *table*. Deployment
+ * health is the second table with the same property: `/health` is read by the
+ * nightly sync and stored, so the API can assess the same reading the card will
+ * without a browser and without re-implementing a derivation.
+ *
+ * The rule that governs which of the six digest sources may follow is therefore
+ * "is it a table", and the two that are answer it the same way: the assessment
+ * is the shared function the card reads (`summarizeDeploymentHealth`), never a
+ * second opinion computed for the mail.
+ *
+ * What travels is what the reading itself says, and only the two states worth
+ * waking somebody for. `up` is not a finding, and neither is the *history* — a
+ * standing fault names a deployment the snapshot is already reporting tonight,
+ * so it is the evidence under this finding rather than another one.
+ */
+export const GATEWAY_HEALTH_ALERT_KINDS = ['deployment-down', 'deployment-degraded'] as const;
+export type GatewayHealthAlertKind = (typeof GATEWAY_HEALTH_ALERT_KINDS)[number];
+
+/**
+ * Editorial, and the same editorial the page's digest applies.
+ *
+ * **Down** is critical because calls are being rejected right now — the usage
+ * payload will only show it as failures tomorrow. **Degraded** is a warning and
+ * is the finding nothing else can make at all: the alias still answers on the
+ * deployments it has left, so it bills normally and fails nothing.
+ */
+export const GATEWAY_HEALTH_ALERT_SEVERITY: Record<
+  GatewayHealthAlertKind,
+  'critical' | 'warning'
+> = {
+  'deployment-down': 'critical',
+  'deployment-degraded': 'warning',
+};
+
+/** Which table a finding came out of. Recorded, because the two are assessed apart. */
+export const GATEWAY_ALERT_SOURCES = ['budget', 'health'] as const;
+export type GatewayAlertSource = (typeof GATEWAY_ALERT_SOURCES)[number];
+
+export type GatewayAlertKind = GatewayBudgetAlertKind | GatewayHealthAlertKind;
+
+export const GATEWAY_ALERT_KINDS: readonly GatewayAlertKind[] = [
+  ...GATEWAY_BUDGET_ALERT_KINDS,
+  ...GATEWAY_HEALTH_ALERT_KINDS,
+];
+
+/**
+ * The key a deployment finding carries when the catalogue could not name the
+ * alias — the same string the page's digest uses, so the two name one subject.
+ *
+ * A bucket rather than a drop: a deployment nothing named is still a deployment
+ * that is failing, and filing it under a near-match is the one thing the health
+ * table refuses to do.
+ */
+export const UNNAMED_MODEL_KEY = 'unnamed deployments';
+
+/**
+ * One deployment-health finding, with the reading that justifies it.
+ *
+ * The fingerprint is the alias and the state, and carries no counts, for the
+ * same reason a budget's carries no dollars: a third region joining the outage
+ * is the same fault, while an alias falling from `degraded` to `down` is a
+ * different one and must be sent.
+ */
+export interface GatewayHealthAlert {
+  kind: GatewayHealthAlertKind;
+  severity: 'critical' | 'warning';
+  /** The alias, or `UNNAMED_MODEL_KEY`. Deployment findings have one scope. */
+  key: string;
+  fingerprint: string;
+  state: GatewayModelHealthState;
+  deployments: number;
+  unhealthy: number;
+  providers: string[];
+  /** Distinct error texts — three regions failing identically is one fault. */
+  errors: string[];
+}
+
+export function healthAlertFingerprint(kind: GatewayHealthAlertKind, key: string): string {
+  return `${kind}:model:${key}`;
+}
+
+/**
+ * The deployment findings a stored `/health` reading carries, worst first.
+ *
+ * Exactly one finding per alias, because `down` and `degraded` are disjoint
+ * subsets of the alias list — which is what makes this the tightest-checkable
+ * source the notifier has, and why it needs no ordering rule of its own: the
+ * summary is already worst-first and then by blast radius.
+ */
+export function deriveHealthAlerts(
+  summary: Pick<GatewayHealthSummary, 'down' | 'degraded'>,
+): GatewayHealthAlert[] {
+  const alerts: GatewayHealthAlert[] = [];
+
+  const push = (kind: GatewayHealthAlertKind, model: GatewayModelHealth): void => {
+    const key = model.model ?? UNNAMED_MODEL_KEY;
+    alerts.push({
+      kind,
+      severity: GATEWAY_HEALTH_ALERT_SEVERITY[kind],
+      key,
+      fingerprint: healthAlertFingerprint(kind, key),
+      state: model.state,
+      deployments: model.deployments,
+      unhealthy: model.unhealthy,
+      providers: [...model.providers],
+      errors: [...model.errors],
+    });
+  };
+
+  for (const model of summary.down) push('deployment-down', model);
+  for (const model of summary.degraded) push('deployment-degraded', model);
+
+  return alerts;
+}
+
+/**
+ * How one deployment finding reads as a sentence.
+ *
+ * Shared for the same reason `describeBudgetAlert` is: the webhook body carries
+ * it so a chat client that renders nothing else still says something useful, and
+ * the delivery panel renders the same string from the same stored numbers.
+ */
+export function describeHealthAlert(
+  alert: Pick<GatewayHealthAlert, 'kind' | 'key' | 'deployments' | 'unhealthy' | 'providers'>,
+): string {
+  const where =
+    alert.providers.length === 0 ? 'an unknown backend' : alert.providers.join(', ');
+
+  return alert.kind === 'deployment-down'
+    ? `${alert.key} is down — all ${alert.deployments} deployment${
+        alert.deployments === 1 ? '' : 's'
+      } behind it are failing on ${where}, so its calls are being rejected`
+    : `${alert.key} is degraded — ${alert.unhealthy} of ${alert.deployments} deployments failing on ${where}; the alias still answers, bills normally and fails nothing`;
+}
+
+/**
  * ─── Notification records ────────────────────────────────────────────────────
  *
  * What was found, when it was first found, and whether it left the building.
@@ -999,18 +1138,37 @@ export function describeBudgetAlert(
  *    retries it. That is the whole retry policy — there is no queue, because the
  *    sync is already a schedule.
  */
+/**
+ * The numbers a deployment finding carries, kept apart from the budget ones
+ * rather than folded into shared columns: `unhealthy of deployments` and
+ * `spend of maxBudget` are two different sentences and a column that held both
+ * would be readable as neither.
+ */
+export interface GatewayNotificationHealthDetail {
+  deployments: number;
+  unhealthy: number;
+  providers: string[];
+  errors: string[];
+}
+
 export interface GatewayNotification {
   fingerprint: string;
-  kind: GatewayBudgetAlertKind;
+  kind: GatewayAlertKind;
   severity: 'critical' | 'warning';
-  scope: GatewayBudgetScope;
+  /** Which table the finding was assessed from. */
+  source: GatewayAlertSource;
+  /** A budget scope, or `model` — the one scope a deployment finding has. */
+  scope: GatewayBudgetScope | 'model';
   key: string;
   label: string | null;
   /** The state as of the most recent evaluation, with the numbers behind it. */
-  state: GatewayBudgetState;
-  spend: number;
+  state: GatewayBudgetState | GatewayModelHealthState;
+  /** Null on a deployment finding: there is no counter behind it. */
+  spend: number | null;
   maxBudget: number | null;
   utilization: number | null;
+  /** The reading behind a deployment finding; null on a governance one. */
+  health: GatewayNotificationHealthDetail | null;
   /** ISO instant this episode began — not the first time the object was seen. */
   firstSeenAt: string;
   /** ISO instant the finding was last still true. */
@@ -1041,6 +1199,43 @@ export interface GatewayNotifications {
    * run" stay distinguishable, exactly as `recordingSince` does for history.
    */
   evaluatedAt: string | null;
+}
+
+/**
+ * One recorded finding as a sentence, whichever table it came out of.
+ *
+ * The single place a stored notification is turned into words — the webhook
+ * body and the delivery panel both call it, so a message somebody received and
+ * the row explaining it cannot drift apart. It dispatches on the finding's own
+ * source rather than guessing from which numbers are null, because a budget
+ * finding legitimately has no cap (`blocked`) and a health one legitimately has
+ * no dollars.
+ */
+export function describeGatewayNotification(
+  notification: Pick<
+    GatewayNotification,
+    'source' | 'kind' | 'scope' | 'key' | 'label' | 'spend' | 'maxBudget' | 'utilization' | 'health'
+  >,
+): string {
+  if (notification.source === 'health') {
+    return describeHealthAlert({
+      kind: notification.kind as GatewayHealthAlertKind,
+      key: notification.key,
+      deployments: notification.health?.deployments ?? 0,
+      unhealthy: notification.health?.unhealthy ?? 0,
+      providers: notification.health?.providers ?? [],
+    });
+  }
+
+  return describeBudgetAlert({
+    kind: notification.kind as GatewayBudgetAlertKind,
+    scope: notification.scope as GatewayBudgetScope,
+    key: notification.key,
+    label: notification.label,
+    spend: notification.spend ?? 0,
+    maxBudget: notification.maxBudget,
+    utilization: notification.utilization,
+  });
 }
 
 /**

@@ -2,6 +2,7 @@ import {
   GATEWAY_BUDGET_ALERT_SEVERITY,
   GATEWAY_BUDGET_SCOPE_LABELS,
   GATEWAY_DIMENSION_LABELS,
+  UNNAMED_MODEL_KEY,
 } from '@dash/shared';
 import type { GatewayCoverage, GatewayDimension } from '@dash/shared';
 import { compactCount, count, isoDateLabel, percent, usd } from '../format.js';
@@ -458,7 +459,10 @@ function fromHealth(view: HealthView): GatewayAlert[] {
   if (!view.answered || view.neverChecked) return [];
 
   const alerts: GatewayAlert[] = [];
-  const name = (model: string | null): string => model ?? 'unnamed deployments';
+  // The same constant the notifier keys its stored findings on: a deployment
+  // finding that left the building by mail and the digest row pointing at the
+  // card must name one subject.
+  const name = (model: string | null): string => model ?? UNNAMED_MODEL_KEY;
   const errors = (model: { errors: string[] }): string =>
     model.errors.length === 0
       ? 'The proxy reported no error text — it is configured to strip the detail.'

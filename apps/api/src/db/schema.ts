@@ -24,6 +24,7 @@ import {
   REFRESH_KINDS,
   REFRESH_STATUSES,
 } from '@dash/shared';
+import type { GatewayNotificationHealthDetail } from '@dash/shared';
 
 export const planEnum = pgEnum('plan', PLANS);
 export const refreshStatusEnum = pgEnum('refresh_status', REFRESH_STATUSES);
@@ -444,16 +445,37 @@ export const gatewayNotification = pgTable(
   {
     /** `kind:scope:key` — the identity of the episode, carrying no numbers. */
     fingerprint: varchar('fingerprint', { length: 260 }).primaryKey(),
-    /** See GATEWAY_BUDGET_ALERT_KINDS in @dash/shared. */
+    /** See GATEWAY_ALERT_KINDS in @dash/shared. */
     kind: varchar('kind', { length: 40 }).notNull(),
     severity: varchar('severity', { length: 20 }).notNull(),
+    /**
+     * Which table the finding was assessed from — `budget` or `health`.
+     *
+     * Recorded rather than inferred from the kind, because it is what scopes the
+     * close pass: a source that could not be assessed this run must leave its
+     * open episodes alone, and "no findings" and "nothing to read" are opposite
+     * facts. Defaulted so every row written before deployment findings existed
+     * reads as the governance finding it was.
+     */
+    source: varchar('source', { length: 20 }).notNull().default('budget'),
+    /** A budget scope, or `model` — the one scope a deployment finding has. */
     scope: varchar('scope', { length: 20 }).notNull(),
     key: varchar('key', { length: 200 }).notNull(),
     label: varchar('label', { length: 200 }),
-    /** The governed object's state at the most recent evaluation. */
+    /** The governed object's, or the alias's, state at the most recent evaluation. */
     state: varchar('state', { length: 20 }).notNull(),
-    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    /** Null on a deployment finding: there is no counter behind one. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }),
     maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    /**
+     * The reading behind a deployment finding — how many of how many, on which
+     * backends, with the proxy's own error texts. Null on a governance finding.
+     *
+     * Stored rather than rendered at evaluation time for the same reason the
+     * budget numbers are: the sentence is re-derived from the numbers, so the
+     * mail and the panel cannot say different things about one episode.
+     */
+    detail: jsonb('detail').$type<GatewayNotificationHealthDetail>(),
     /** When this episode began — not when the object was first seen. */
     firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
     /** The last evaluation at which the finding was still true. */

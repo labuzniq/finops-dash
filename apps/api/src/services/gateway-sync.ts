@@ -393,25 +393,29 @@ async function sealNewlyClosedMonths(ranged: boolean): Promise<void> {
 }
 
 /**
- * Assess the governance snapshot that has just landed and send what is new.
+ * Assess the snapshots that have just landed — budgets and the `/health`
+ * reading — and send what is new.
  *
- * Skipped by a backfill for the same reason the budget fetch is: a ranged sync
- * does not read governance at all, so the snapshot it would be evaluating is
- * whatever the last full run left, and re-evaluating it would only risk closing
- * and reopening episodes on a schedule nobody chose.
+ * Skipped by a backfill for the same reason those two fetches are: a ranged
+ * sync reads neither, so the snapshots it would be evaluating are whatever the
+ * last full run left, and re-evaluating them would only risk closing and
+ * reopening episodes on a schedule nobody chose.
  *
  * Never fails the sync. The usage has landed; an alert that could not be sent
- * tonight is still pending tomorrow, which is exactly the retry policy.
+ * tonight is still pending tomorrow, which is exactly the retry policy. A full
+ * sync whose `/health` call failed is the one case worth naming here: the
+ * reading is not refreshed, so the notifier does not assess it, and every open
+ * deployment episode stays open rather than reading as a gateway that recovered.
  */
-async function notifyGovernanceFindings(ranged: boolean): Promise<void> {
+async function notifyFindings(ranged: boolean): Promise<void> {
   if (ranged) return;
   try {
     const result = await notifyGatewayFindings();
     if (result.opened > 0 || result.cleared > 0 || result.delivered > 0) {
-      log.info({ dash: result }, 'gateway governance findings evaluated');
+      log.info({ dash: { ...result, assessed: result.assessed.join(',') } }, 'gateway findings evaluated');
     }
   } catch (error) {
-    log.error({ err: error }, 'evaluating gateway governance failed — usage sync unaffected');
+    log.error({ err: error }, 'evaluating gateway findings failed — usage sync unaffected');
   }
 }
 
@@ -461,7 +465,7 @@ export async function startGatewaySync(
       // would make the history disagree with the snapshot it came from.
       await persist(snapshot, budgets, models, health, utcDay(0), new Date());
       await sealNewlyClosedMonths(ranged);
-      await notifyGovernanceFindings(ranged);
+      await notifyFindings(ranged);
       return snapshot.dates.length;
     },
   });

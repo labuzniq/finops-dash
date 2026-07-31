@@ -1,4 +1,4 @@
-import { describeBudgetAlert } from '@dash/shared';
+import { describeGatewayNotification } from '@dash/shared';
 import type { GatewayNotification, GatewayNotifications } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { relativeTime } from '../../lib/format.js';
@@ -6,14 +6,15 @@ import { useGatewayNotifications } from '../../hooks/useGatewayData.js';
 import styles from './GatewayAlertPanel.module.css';
 
 /**
- * Governance alerting, and whether it is actually reaching anybody.
+ * Gateway alerting, and whether it is actually reaching anybody.
  *
  * The gateway page's attention digest already lists every finding the page's
  * cards make — but only *on the page*, and only while somebody is looking at it.
- * Governance is the one source that does not need a browser: budgets are a
- * table, so the API assesses them at the end of every full sync and can send
- * what it finds somewhere. This panel is the record of that: which findings are
- * open, which are new, and whether they left the building.
+ * Two of its sources do not need a browser, and it is the same property in both
+ * cases: budgets and the nightly `/health` reading are *tables*, so the API
+ * assesses them at the end of every full sync and can send what it finds
+ * somewhere. This panel is the record of that: which findings are open, which
+ * are new, and whether they left the building.
  *
  * The one thing it exists to make impossible is a silent alerting channel. An
  * unconfigured target is stated in the header rather than implied by an empty
@@ -55,7 +56,7 @@ function Row({ notification }: { notification: GatewayNotification }) {
       />
       <div className={styles.rowBody}>
         <div className={cx(styles.summary, cleared && styles.summaryCleared)}>
-          {describeBudgetAlert(notification)}
+          {describeGatewayNotification(notification)}
         </div>
         <div className={styles.meta}>
           {cleared
@@ -129,8 +130,8 @@ function Result({ data }: { data: GatewayNotifications }) {
       {data.notifications.length === 0 && (
         <div className={styles.note}>
           {data.evaluatedAt === null
-            ? 'Governance has not been evaluated yet — it runs at the end of the next full sync.'
-            : `Nothing over a cap, past a soft budget or pacing past one in the last ${WINDOW_DAYS} days.`}
+            ? 'Nothing has been evaluated yet — it runs at the end of the next full sync.'
+            : `Nothing over a cap, past a soft budget, pacing past one, or serving on fewer deployments than it has in the last ${WINDOW_DAYS} days.`}
         </div>
       )}
 
@@ -151,11 +152,12 @@ export function GatewayAlertPanel({ enabled }: { enabled: boolean }) {
     <div className={styles.panel}>
       <div className={styles.head}>
         <div className={styles.body}>
-          <div className={styles.title}>Governance alerts</div>
+          <div className={styles.title}>Gateway alerts</div>
           <div className={styles.sub}>
-            Every full sync assesses the budget snapshot and records what it finds — over a cap,
-            blocked, past a soft budget, or pacing past one. Each finding is sent once; a counter
-            climbing further is the same finding, and crossing into a worse state is a new one.
+            Every full sync assesses the budget snapshot and the deployment-health reading, and
+            records what it finds — over a cap, blocked, past a soft budget, pacing past one, or an
+            alias whose deployments are failing. Each finding is sent once; a counter climbing
+            further is the same finding, and crossing into a worse state is a new one.
           </div>
         </div>
         <div

@@ -1,12 +1,20 @@
 import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
-import { GATEWAY_BUDGET_ALERT_KINDS, deriveBudgetAlerts, describeBudgetAlert } from '@dash/shared';
+import {
+  GATEWAY_ALERT_KINDS,
+  deriveBudgetAlerts,
+  deriveHealthAlerts,
+  describeGatewayNotification,
+  summarizeDeploymentHealth,
+} from '@dash/shared';
 import type {
+  GatewayAlertKind,
+  GatewayAlertSource,
   GatewayBudget,
-  GatewayBudgetAlert,
-  GatewayBudgetAlertKind,
   GatewayBudgetScope,
   GatewayBudgetState,
+  GatewayModelHealthState,
   GatewayNotification,
+  GatewayNotificationHealthDetail,
   GatewayNotifications,
 } from '@dash/shared';
 import { db } from '../db/client.js';
@@ -15,27 +23,47 @@ import type { GatewayNotificationRow } from '../db/schema.js';
 import { env } from '../env.js';
 import { nanoToDollars } from '../lib/nano.js';
 import { moduleLogger } from '../log.js';
-import { toGatewayBudget } from './gateway.js';
+import { getGatewayHealth, toGatewayBudget } from './gateway.js';
 
 const log = moduleLogger('services.gateway-notify');
 
 /**
- * Governance alerting — the one gateway finding that can leave the dashboard.
+ * Gateway alerting — the findings that can leave the dashboard.
  *
- * Every other card on the gateway page derives its findings in the browser from
- * the usage payload, which means they exist only while somebody is looking. A
- * budget is different in kind: it is a *table*, replaced by every full sync, so
- * the API can assess it the moment it lands and act on what it finds. This
- * module is that act, and it runs at the end of the sync rather than on a timer
- * of its own for the same reason governance is fetched there — one fewer
- * schedule, and an alert about a snapshot arrives with the snapshot.
+ * Most cards on the gateway page derive their findings in the browser from the
+ * usage payload, which means they exist only while somebody is looking. Two
+ * sources are different in kind, and it is the same difference in both cases:
+ * they are *tables*, written by the full sync, so the API can assess them the
+ * moment they land and act on what it finds.
  *
- * Three rules hold the whole thing up:
+ *  - **Budgets** (`gateway_budget`) — over a cap, blocked, past a soft budget,
+ *    or pacing past one.
+ *  - **Deployment health** (`gateway_deployment_health`) — an alias whose
+ *    deployments are all failing, or only some of them.
  *
- *  - **It owns no threshold.** Every state comes from `assessBudget` in
- *    `@dash/shared`, the same function the budget card and the attention digest
- *    read. A notification saying a key is fine while the card it links to says
- *    it is blocked would be the digest's two-answers failure delivered by mail.
+ * Nothing else may follow them, and the boundary is "is it a table" rather than
+ * "is it important": anomalies, reliability, cache churn and coverage are
+ * browser derivations over a *range*, and evaluating them here would mean either
+ * a second implementation of five modules or an answer to "what range" that a
+ * nightly job does not have.
+ *
+ * This runs at the end of the sync rather than on a timer of its own for the
+ * same reason both tables are fetched there — one fewer schedule, and an alert
+ * about a snapshot arrives with the snapshot.
+ *
+ * Four rules hold the whole thing up:
+ *
+ *  - **It owns no threshold.** Every state comes from `assessBudget` or
+ *    `summarizeDeploymentHealth` in `@dash/shared`, the same functions the cards
+ *    and the attention digest read. A notification saying a key is fine while
+ *    the card it links to says it is blocked would be the digest's two-answers
+ *    failure delivered by mail.
+ *  - **A source that could not be read clears nothing.** An episode is closed
+ *    because the finding stopped being reported, which is only a fact when the
+ *    table it came from was actually assessed. `/health` failing (its failure is
+ *    swallowed, so the last reading stands) or having never run must not read as
+ *    "every deployment recovered", so the close pass is scoped to the sources
+ *    this run evaluated.
  *  - **An alert is sent once per episode.** The fingerprint (`kind:scope:key`)
  *    carries no numbers, so a counter climbing from 104% to 137% is the same
  *    finding and moves only `lastSeenAt`; crossing from `soft` to `over` is a
@@ -66,8 +94,10 @@ const DELIVERY_TIMEOUT_MS = 10_000;
 const DELIVERY_BATCH = 50;
 
 export interface GatewayNotifyResult {
-  /** Findings the snapshot carries right now. */
+  /** Findings the snapshots carry right now, across every source assessed. */
   found: number;
+  /** Which sources were assessed — the ones whose episodes this run may close. */
+  assessed: GatewayAlertSource[];
   /** Episodes that started this run — the ones worth sending. */
   opened: number;
   /** Episodes that ended this run. */
@@ -96,6 +126,92 @@ function toNano(dollars: number): bigint {
 }
 
 /**
+ * One finding on its way into the table, whichever source produced it.
+ *
+ * Flat rather than a discriminated union because the row it becomes is flat: a
+ * budget finding has dollars and no reading, a deployment finding has a reading
+ * and no dollars, and both are nullable columns for exactly that reason.
+ */
+interface PendingAlert {
+  fingerprint: string;
+  kind: GatewayAlertKind;
+  severity: 'critical' | 'warning';
+  source: GatewayAlertSource;
+  scope: string;
+  key: string;
+  label: string | null;
+  state: string;
+  spendNano: bigint | null;
+  maxBudgetNano: bigint | null;
+  detail: GatewayNotificationHealthDetail | null;
+}
+
+/**
+ * Everything both tables say right now, and which of them actually answered.
+ *
+ * The second half of that is what keeps a missing reading from reading as a
+ * recovery. Governance is always assessed — an empty `gateway_budget` is a
+ * proxy that refused the management routes, which is indistinguishable from an
+ * ungoverned one and has been treated as "no findings" since the table existed.
+ * Health is not: `checkedAt` is null exactly when no reading has ever been
+ * stored, and a reading that could not be refreshed is the *previous* one still
+ * standing, which is the right thing to keep alerting on.
+ */
+async function collect(now: Date): Promise<{
+  alerts: PendingAlert[];
+  assessed: GatewayAlertSource[];
+}> {
+  const [budgets, health] = await Promise.all([readBudgets(), getGatewayHealth()]);
+
+  const alerts: PendingAlert[] = deriveBudgetAlerts(budgets, now).map((alert) => ({
+    fingerprint: alert.fingerprint,
+    kind: alert.kind,
+    severity: alert.severity,
+    source: 'budget',
+    scope: alert.scope,
+    key: alert.key,
+    label: alert.label,
+    state: alert.state,
+    spendNano: toNano(alert.spend),
+    maxBudgetNano: alert.maxBudget === null ? null : toNano(alert.maxBudget),
+    detail: null,
+  }));
+
+  const assessed: GatewayAlertSource[] = ['budget'];
+
+  if (health.checkedAt !== null) {
+    assessed.push('health');
+    const summary = summarizeDeploymentHealth(health.deployments, health.checkedAt);
+    for (const alert of deriveHealthAlerts(summary)) {
+      alerts.push({
+        fingerprint: alert.fingerprint,
+        kind: alert.kind,
+        severity: alert.severity,
+        source: 'health',
+        // Deployment findings have one scope: the alias is a `model`, which is
+        // also the usage dimension a reader would look it up in.
+        scope: 'model',
+        key: alert.key,
+        // The key *is* the name here — a second copy of it would be the only
+        // label a deployment finding could carry, and it would go stale.
+        label: null,
+        state: alert.state,
+        spendNano: null,
+        maxBudgetNano: null,
+        detail: {
+          deployments: alert.deployments,
+          unhealthy: alert.unhealthy,
+          providers: alert.providers,
+          errors: alert.errors,
+        },
+      });
+    }
+  }
+
+  return { alerts, assessed };
+}
+
+/**
  * Reconcile the findings against what is already recorded, in one transaction.
  *
  * Upsert every current finding and close every open row that is no longer among
@@ -105,7 +221,8 @@ function toNano(dollars: number): bigint {
  * was raised, and went over again is two things that happened.
  */
 async function reconcile(
-  alerts: readonly GatewayBudgetAlert[],
+  alerts: readonly PendingAlert[],
+  assessed: readonly GatewayAlertSource[],
   now: Date,
 ): Promise<{ opened: number; cleared: number }> {
   return db.transaction(async (tx) => {
@@ -118,12 +235,14 @@ async function reconcile(
           fingerprint: alert.fingerprint,
           kind: alert.kind,
           severity: alert.severity,
+          source: alert.source,
           scope: alert.scope,
           key: alert.key,
           label: alert.label,
           state: alert.state,
-          spendNano: toNano(alert.spend),
-          maxBudgetNano: alert.maxBudget === null ? null : toNano(alert.maxBudget),
+          spendNano: alert.spendNano,
+          maxBudgetNano: alert.maxBudgetNano,
+          detail: alert.detail,
           firstSeenAt: now,
           lastSeenAt: now,
         })
@@ -131,12 +250,15 @@ async function reconcile(
           target: gatewayNotification.fingerprint,
           set: {
             // The label, the state and the numbers are refreshed every run: the
-            // finding is the same, but what it is worth saying about it is not.
+            // finding is the same, but what it is worth saying about it is not
+            // — a second region joining an outage is the same episode reported
+            // with a worse reading.
             label: sql`excluded.label`,
             severity: sql`excluded.severity`,
             state: sql`excluded.state`,
             spendNano: sql`excluded.spend_nano`,
             maxBudgetNano: sql`excluded.max_budget_nano`,
+            detail: sql`excluded.detail`,
             lastSeenAt: sql`excluded.last_seen_at`,
             // A row that was cleared and is back starts over; one that never
             // cleared keeps every date it had, so an ongoing finding is not
@@ -156,12 +278,22 @@ async function reconcile(
     // `lastSeenAt` rather than by a NOT IN list of fingerprints: the rows just
     // upserted carry this run's instant, so one predicate closes exactly the
     // ones the snapshot no longer justifies, however many there are.
+    //
+    // ...and scoped to the sources that were actually read, because "not
+    // reported" only means "resolved" for a table somebody looked at. A run
+    // with no health reading leaves every deployment episode open.
     const closed = await tx
       .update(gatewayNotification)
       .set({ clearedAt: now })
       // `lt` rather than a raw `sql` fragment: a bare Date interpolated into a
       // template reaches the driver untyped and is rejected at bind time.
-      .where(and(isNull(gatewayNotification.clearedAt), lt(gatewayNotification.lastSeenAt, now)))
+      .where(
+        and(
+          isNull(gatewayNotification.clearedAt),
+          lt(gatewayNotification.lastSeenAt, now),
+          inArray(gatewayNotification.source, [...assessed]),
+        ),
+      )
       .returning({ fingerprint: gatewayNotification.fingerprint });
 
     return { opened, cleared: closed.length };
@@ -181,36 +313,36 @@ async function reconcile(
  * must not fail the sync that the usage already landed from.
  */
 async function deliver(url: string, rows: GatewayNotificationRow[]): Promise<string | null> {
-  const findings = rows.map((row) => ({
-    fingerprint: row.fingerprint,
-    kind: row.kind,
-    severity: row.severity,
-    scope: row.scope,
-    key: row.key,
-    label: row.label,
-    state: row.state,
-    spend: nanoToDollars(row.spendNano),
-    maxBudget: row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano),
-    firstSeenAt: row.firstSeenAt.toISOString(),
-    summary: describeBudgetAlert({
-      kind: row.kind as GatewayBudgetAlertKind,
-      scope: row.scope as GatewayBudgetScope,
+  const findings = rows.map((row) => {
+    const notification = toNotification(row);
+    return {
+      fingerprint: row.fingerprint,
+      kind: row.kind,
+      severity: row.severity,
+      // `source` on the finding, not on the envelope: a batch legitimately
+      // mixes a key over its cap with an alias whose region went dark, and a
+      // recipient routing on it needs to tell them apart.
+      source: row.source,
+      scope: row.scope,
       key: row.key,
       label: row.label,
-      spend: nanoToDollars(row.spendNano),
+      state: row.state,
+      spend: row.spendNano === null ? null : nanoToDollars(row.spendNano),
       maxBudget: row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano),
-      utilization:
-        row.maxBudgetNano === null || row.maxBudgetNano <= 0n
-          ? null
-          : (Number(row.spendNano) / Number(row.maxBudgetNano)) * 100,
-    }),
-  }));
+      health: row.detail,
+      firstSeenAt: row.firstSeenAt.toISOString(),
+      summary:
+        notification === null
+          ? `${row.kind} on ${row.key}`
+          : describeGatewayNotification(notification),
+    };
+  });
 
   const body = {
     source: 'dash-llm-gateway',
     generatedAt: new Date().toISOString(),
     text: [
-      `LLM gateway — ${findings.length} governance finding${findings.length === 1 ? '' : 's'}`,
+      `LLM gateway — ${findings.length} finding${findings.length === 1 ? '' : 's'}`,
       ...findings.map((finding) => `• ${finding.summary}`),
     ].join('\n'),
     findings,
@@ -247,9 +379,8 @@ async function deliver(url: string, rows: GatewayNotificationRow[]): Promise<str
  * same instant produces the same episodes.
  */
 export async function notifyGatewayFindings(now: Date = new Date()): Promise<GatewayNotifyResult> {
-  const budgets = await readBudgets();
-  const alerts = deriveBudgetAlerts(budgets, now);
-  const { opened, cleared } = await reconcile(alerts, now);
+  const { alerts, assessed } = await collect(now);
+  const { opened, cleared } = await reconcile(alerts, assessed, now);
 
   // Pending = open and never accepted. That set includes findings from earlier
   // runs whose delivery failed or had nowhere to go, which is the point: turning
@@ -271,6 +402,7 @@ export async function notifyGatewayFindings(now: Date = new Date()): Promise<Gat
     // broken endpoint rather than as an unconfigured one.
     return {
       found: alerts.length,
+      assessed,
       opened,
       cleared,
       delivered: 0,
@@ -281,7 +413,15 @@ export async function notifyGatewayFindings(now: Date = new Date()): Promise<Gat
   }
 
   if (pendingRows.length === 0) {
-    return { found: alerts.length, opened, cleared, delivered: 0, pending: 0, deliveryError: null };
+    return {
+      found: alerts.length,
+      assessed,
+      opened,
+      cleared,
+      delivered: 0,
+      pending: 0,
+      deliveryError: null,
+    };
   }
 
   const failure = await deliver(url, pendingRows);
@@ -313,13 +453,21 @@ export async function notifyGatewayFindings(now: Date = new Date()): Promise<Gat
     {
       'event.action': 'gateway-notify',
       'event.outcome': failure === null ? 'success' : 'failure',
-      dash: { found: alerts.length, opened, cleared, batch: pendingRows.length, failure },
+      dash: {
+        found: alerts.length,
+        assessed: assessed.join(','),
+        opened,
+        cleared,
+        batch: pendingRows.length,
+        failure,
+      },
     },
-    failure === null ? 'gateway governance findings delivered' : 'gateway governance delivery failed',
+    failure === null ? 'gateway findings delivered' : 'gateway finding delivery failed',
   );
 
   return {
     found: alerts.length,
+    assessed,
     opened,
     cleared,
     delivered: failure === null ? pendingRows.length : 0,
@@ -328,22 +476,33 @@ export async function notifyGatewayFindings(now: Date = new Date()): Promise<Gat
   };
 }
 
+/**
+ * A stored row as the contract sees it.
+ *
+ * A kind this build does not know is dropped rather than guessed at — the table
+ * outlives the code that wrote it, and a finding nothing can render is worse
+ * than one that is missing. `source` is read from the row rather than derived
+ * from the kind for the same reason: it is what the row was written as.
+ */
 function toNotification(row: GatewayNotificationRow): GatewayNotification | null {
-  const kind = GATEWAY_BUDGET_ALERT_KINDS.find((candidate) => candidate === row.kind);
+  const kind = GATEWAY_ALERT_KINDS.find((candidate) => candidate === row.kind);
   if (kind === undefined) return null;
+  const spend = row.spendNano === null ? null : nanoToDollars(row.spendNano);
   const maxBudget = row.maxBudgetNano === null ? null : nanoToDollars(row.maxBudgetNano);
   return {
     fingerprint: row.fingerprint,
     kind,
     severity: row.severity === 'critical' ? 'critical' : 'warning',
-    scope: row.scope as GatewayBudgetScope,
+    source: row.source === 'health' ? 'health' : 'budget',
+    scope: row.scope as GatewayBudgetScope | 'model',
     key: row.key,
     label: row.label,
-    state: row.state as GatewayBudgetState,
-    spend: nanoToDollars(row.spendNano),
+    state: row.state as GatewayBudgetState | GatewayModelHealthState,
+    spend,
     maxBudget,
     utilization:
-      maxBudget === null || maxBudget <= 0 ? null : (nanoToDollars(row.spendNano) / maxBudget) * 100,
+      spend === null || maxBudget === null || maxBudget <= 0 ? null : (spend / maxBudget) * 100,
+    health: row.detail,
     firstSeenAt: row.firstSeenAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
     clearedAt: row.clearedAt === null ? null : row.clearedAt.toISOString(),

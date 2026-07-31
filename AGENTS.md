@@ -356,18 +356,29 @@ carries **no total** — a budget counter, a day's overrun and a token count sha
 same rule as the budget card — never merges two findings about one key, and never reads an empty list as
 health: an input it could not read (refused management routes, a history too short to show a crossing,
 coverage that has not answered) is named as a blind spot, and only "nothing to report *and* nothing
-unread" renders no card. Governance is the one of those six sources whose findings can leave the
-dashboard, and only because it is a *table* rather than a browser derivation: after every full sync
-`services/gateway-notify.ts` assesses the same snapshot the card will — through `assessBudget` in
+unread" renders no card. Governance and deployment health are the two of those six sources whose findings can
+leave the dashboard, and only because they are *tables* rather than browser derivations over a range:
+after every full sync
+`services/gateway-notify.ts` assesses the same snapshots the cards will — through `assessBudget` and
+`summarizeDeploymentHealth` in
 `@dash/shared`, so a mailed alert and the card it names cannot disagree — and POSTs what has not been
-sent to `GATEWAY_ALERT_WEBHOOK_URL`. Four states travel (`blocked`, `over`, `soft`, pacing past a cap);
-`warn` does not, because a threshold nobody configured is worth a row and not worth waking somebody.
+sent to `GATEWAY_ALERT_WEBHOOK_URL`. Four governance states travel (`blocked`, `over`, `soft`, pacing
+past a cap); `warn` does not, because a threshold nobody configured is worth a row and not worth waking
+somebody. Two alias states travel with them — `deployment-down` as critical (calls are being rejected
+now) and `deployment-degraded` as a warning (the finding no spend- or failure-shaped surface can make) —
+while `up`, and the *history*, do not: a standing fault would name the deployment tonight's snapshot is
+already reporting, so `gateway_deployment_health_history` is the evidence under the finding rather than
+a second one.
 `gateway_notification` is the de-duplication story and its key is the finding's fingerprint —
-`kind:scope:key`, carrying no numbers — so a counter climbing further is the same episode, an escalation
+`kind:scope:key` (`scope` is the budget scope, or `model` for an alias), carrying no numbers — so a
+counter climbing further, or a third region joining an outage, is the same episode, an escalation
 into a worse state is a new one, and a resolution is *recorded* rather than announced, which is what
 makes a later reappearance a fresh episode. `delivered_at` is the whole retry policy: a refused POST or
 an unconfigured target leaves it null and the next sync tries again, and with no target nothing is
-attempted so the attempt counter reads as unconfigured rather than as a broken endpoint.
+attempted so the attempt counter reads as unconfigured rather than as a broken endpoint. The close pass
+is scoped to the sources that were actually **assessed**: `/health`'s failure is swallowed by the sync
+(it issues a live call per deployment) and a proxy that never answered it leaves the table empty, so
+neither may read as every deployment recovering — an open outage survives a blind night.
 `GET /api/gateway/notifications` and `GatewayAlertPanel` (on the `Data sources` page) are the record of
 that — the one gateway surface describing this dashboard's own behaviour rather than the proxy's, built
 so an alerting channel cannot go silent unnoticed: an unconfigured target is stated rather than implied
@@ -491,11 +502,15 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   "unchanged" — so nothing derived from it may be interpolated, and a period total read off it is a
   floor rather than a total.
 - **An alert is one per episode, and a notified state is never re-derived.** `gateway_notification` is
-  keyed on `kind:scope:key` with no numbers in it, so a counter climbing further is the same finding
-  while an escalation is a new one; `delivered_at` null is the retry state, and nothing is attempted (or
-  counted) when no target is configured. Every state a notification carries comes from `assessBudget` in
-  `@dash/shared` — the same function the budget card and the digest read — because an alert that has
-  already left the building must not disagree with the card the reader opens to check it.
+  keyed on `kind:scope:key` with no numbers in it, so a counter climbing further (or a second region
+  joining an outage) is the same finding while an escalation is a new one; `delivered_at` null is the
+  retry state, and nothing is attempted (or counted) when no target is configured. Every state a
+  notification carries comes from `assessBudget` or `summarizeDeploymentHealth` in
+  `@dash/shared` — the same functions the cards and the digest read — because an alert that has
+  already left the building must not disagree with the card the reader opens to check it. Only findings
+  assessed from a *table* may travel, and a table that could not be read closes nothing: an empty or
+  unrefreshed `gateway_deployment_health` leaves every open deployment episode open, because an unread
+  table is not a recovery.
 - **Deployment health is keyed below the alias, and an alias is only `down` when
   every deployment behind it is failing.** `gateway_deployment_health` holds one
   row per deployment — the resolution `gateway_daily` does not have. A

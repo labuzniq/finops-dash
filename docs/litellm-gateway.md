@@ -535,20 +535,40 @@ governance does, one fewer schedule to reason about. Three rules:
 - **Never fails the sync.** The usage has already landed by then, and a
   bookkeeping step that could not run today runs tomorrow.
 
-Finally — again only after a **full** sync — the job **evaluates governance and
-sends what it finds** (`services/gateway-notify.ts`). This is the one gateway
-finding that can leave the dashboard, and it can only because governance is a
-table: every other card derives its findings in the browser from the
-usage payload, so they exist only while somebody is looking at the page. Four
-states travel — `blocked`, `over`, `soft`, and *pacing* past a cap — and they are
-classified by `assessBudget` in `@dash/shared`, the same function the budget card
-and the attention digest read, so a notification and the card it names cannot
-disagree. `warn`, `ok` and `uncapped` deliberately produce nothing: a threshold
-nobody configured is worth a row on a card and is not worth waking somebody, and
-an uncapped key is a standing decision rather than an event.
+Finally — again only after a **full** sync — the job **evaluates what it just
+stored and sends what it finds** (`services/gateway-notify.ts`). Two sources
+feed it, and they are the only two that may: a finding can leave the dashboard
+exactly when it comes out of a *table*, because every other card derives its
+findings in the browser from the usage payload over a range, so they exist only
+while somebody is looking at the page and there is no obvious range for a
+nightly job to evaluate them over.
+
+**Governance** (`gateway_budget`) sends four states — `blocked`, `over`, `soft`,
+and *pacing* past a cap — classified by `assessBudget` in `@dash/shared`, the
+same function the budget card and the attention digest read, so a notification
+and the card it names cannot disagree. `warn`, `ok` and `uncapped` deliberately
+produce nothing: a threshold nobody configured is worth a row on a card and is
+not worth waking somebody, and an uncapped key is a standing decision rather
+than an event.
+
+**Deployment health** (`gateway_deployment_health`) sends the two alias states
+`summarizeDeploymentHealth` — again the shared function, again the one the card
+reads — calls out: `deployment-down` (every deployment behind the alias failing,
+so calls are being rejected *now*, which the usage payload only shows as
+failures tomorrow) as critical, and `deployment-degraded` (some failing, the
+alias still answering) as a warning, because that is the finding no spend- or
+failure-shaped surface can make at all. `up` is not a finding, and neither is
+the *history*: a standing fault names the deployment the snapshot is already
+reporting tonight, so `gateway_deployment_health_history` is the evidence under
+the finding rather than a second one. The one deliberately odd key here is the
+unnamed bucket (`UNNAMED_MODEL_KEY`, shared with the page's digest): a
+deployment the catalogue could not name is still a deployment that is failing,
+and filing it under a near-match is the one thing the health table refuses to do.
 
 The de-duplication story is `gateway_notification`, keyed on the finding's
-**fingerprint** — `kind:scope:key`, carrying no numbers:
+**fingerprint** — `kind:scope:key`, carrying no numbers (`scope` is the budget
+scope for a governance finding and `model` for a deployment one, since an alias
+is what a reader looks up):
 
 - **A finding still true tomorrow is not a new alert.** A counter climbing from
   104% to 137% is the same episode and only moves `last_seen_at`. Crossing from
@@ -563,6 +583,15 @@ The de-duplication story is `gateway_notification`, keyed on the finding's
   With no target configured nothing is attempted and no attempt is counted, so
   the column reads as *unconfigured* rather than as a broken endpoint, and
   turning a webhook on tomorrow sends what was found today.
+- **A source that could not be read closes nothing.** An episode ends because
+  the finding stopped being reported, which is only a fact about a table
+  somebody actually looked at. `/health` is the one whose failure is *swallowed*
+  by the sync (it issues a live call per deployment, so failing a sync over it
+  would be the wrong trade), which leaves the previous reading standing and no
+  reading refreshed — and a proxy that has never answered it leaves the table
+  empty. Neither is a recovery, so the close pass is scoped to the sources the
+  run evaluated (`GatewayNotifyResult.assessed`), and every open deployment
+  episode survives a blind night.
 
 Delivery is one POST per run carrying at most 50 findings (worst first, so a
 truncated batch is the batch that matters), with a 10-second timeout, no retry
@@ -701,11 +730,19 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   accepted by a target, whether the POST failed or none is configured — and no
   attempt is counted when there is nowhere to send it.
 - **A notified state is never re-derived.** Every state a notification carries
-  comes from `assessBudget` in `@dash/shared`, the one the budget card and the
-  attention digest read. A second implementation on the server would let the
-  alert somebody received disagree with the card they open to check it, which is
-  strictly worse than the digest's two-answers failure because one of the
-  answers is already out of the building.
+  comes from `assessBudget` or `summarizeDeploymentHealth` in `@dash/shared` —
+  the ones the budget card, the health card and the attention digest read. A
+  second implementation on the server would let the alert somebody received
+  disagree with the card they open to check it, which is strictly worse than the
+  digest's two-answers failure because one of the answers is already out of the
+  building.
+- **A source that could not be read closes no episode.** Alerting assesses
+  tables, and "the finding is gone" is only a fact when the table was actually
+  read. An empty `gateway_deployment_health` (never asked) and a stale one
+  (`/health` failed and its failure was swallowed, so the previous reading
+  stands) must both leave open deployment episodes open — a run that closed them
+  would announce a recovery nobody observed, the same invention the health
+  history refuses when it declines to split a run across an unread night.
 - **Deployment health is keyed below the alias, and the alias reading is the
   only one worth making.** `gateway_deployment_health` is one row per
   deployment — the resolution `gateway_daily` does not have. LiteLLM fails over
@@ -736,7 +773,7 @@ status, so retrying it would burn the whole backoff and then fail the sync with
 GATEWAY_SOURCE=off             # off (default) | mock | litellm
 LITELLM_BASE_URL=              # https://llm-gateway.corp.example
 LITELLM_API_KEY=               # admin / admin-viewer virtual key
-GATEWAY_ALERT_WEBHOOK_URL=     # optional: where governance findings are POSTed
+GATEWAY_ALERT_WEBHOOK_URL=     # optional: where budget and deployment findings are POSTed
 GATEWAY_ALERT_WEBHOOK_TOKEN=   # optional: bearer token for that endpoint
 ```
 
@@ -2275,10 +2312,11 @@ runs on distinct days), so the crossing case is planted the way earlier syncs
 would have written it. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-alerts.ts`.
 
-`apps/api/scripts/verify-gateway-notify.ts` covers governance *alerting*, and it
-is the only script here whose subject is a side effect rather than a number: the
-question is not whether a finding is right but whether it is sent, once, at the
-right moment. Three halves. The **pure** one pins which states travel (`blocked`,
+`apps/api/scripts/verify-gateway-notify.ts` covers gateway *alerting* — both
+sources — and it is the only script here whose subject is a side effect rather
+than a number: the question is not whether a finding is right but whether it is
+sent, once, at the right moment. Three halves. The **pure** one pins which states
+travel (`blocked`,
 `over`, `soft`, pacing) and which do not (`warn` — a threshold nobody
 configured — plus `ok` and `uncapped`), that a fingerprint carries no numbers so
 a counter climbing from 104% to 999% is one episode, that crossing from `soft`
@@ -2296,7 +2334,25 @@ row says, an escalation closes the superseded finding and sends the new one, a
 refused delivery is recorded with the target's own error and left undelivered
 (then retried and stamped on the next run, with the attempt counted), and a
 resolved finding closes silently but re-opens dated afresh and is delivered
-again. It plants budget rows under a `verify-notify-` prefix and removes them.
+again.
+
+The health source is checked the same way twice over, because its findings are a
+*partition of a snapshot* rather than a ranking over a window: on constructed
+readings (an alias with everything failing is down, one with a survivor is
+degraded, a healthy one produces nothing, an unnamed failing deployment still
+produces a finding under the shared bucket key, exactly one finding per failing
+alias, critical sorted first, a fingerprint that survives a third region joining
+the outage and changes when the alias falls over), and then on planted rows in
+Postgres — where a deployment finding is recorded with a *null* counter and its
+reading in `detail` (a $0.00 on a webhook message would read as a budget nobody
+spent against), a spreading outage updates the row without sending again,
+`degraded → down` closes the old episode and sends the new one, and a recovery
+closes silently. The last of those is the rule the second source added: the
+health rows are removed for one run, and the open outage must **still be open**
+afterwards, because a table nobody read is not a recovery.
+
+It plants budget rows and deployment rows under a `verify-notify-` prefix and
+removes them.
 Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-notify.ts`.
 
@@ -2646,20 +2702,25 @@ Governance is now rendered end to end across all four scopes
   sync that wrote it, and only at daily resolution. Neither limit can be lifted
   from here: the proxy serves current state and has nothing older to give, and a
   finer sample would mean syncing more often for no other reason.
-- **Alerting beyond governance.** A budget finding now leaves the dashboard:
-  every full sync evaluates the snapshot, records each finding as an episode in
-  `gateway_notification`, and POSTs the undelivered ones to
-  `GATEWAY_ALERT_WEBHOOK_URL`. The other five sources the attention digest reads
-  cannot follow it there, and the reason is structural rather than a missing
+- **Alerting beyond the two tables.** Budget findings and deployment-health
+  findings now leave the dashboard: every full sync evaluates both snapshots,
+  records each finding as an episode in `gateway_notification`, and POSTs the
+  undelivered ones to `GATEWAY_ALERT_WEBHOOK_URL`. The remaining digest sources
+  cannot follow them there, and the reason is structural rather than a missing
   feature: anomalies, reliability, cache churn and coverage gaps are derived in
-  the *browser* from the usage payload, so sending them would mean either running
-  those derivations server-side (a second implementation of five modules, i.e.
-  precisely the two-answers failure the digest exists to prevent) or moving them
-  into `@dash/shared` and giving the API a range to evaluate them over — which is
-  a real design question, since "what range" has no obvious answer for a nightly
-  job. Delivery itself is also deliberately thin: one URL, one POST, no
-  per-recipient routing, no severity filter and no quiet hours. Each of those is
-  a policy somebody has to actually want before it is worth encoding.
+  the *browser* from the usage payload over the range on screen, so sending them
+  would mean either running those derivations server-side (a second
+  implementation of four modules, i.e. precisely the two-answers failure the
+  digest exists to prevent) or moving them into `@dash/shared` and giving the API
+  a range to evaluate them over — which is a real design question, since "what
+  range" has no obvious answer for a nightly job. Two things are deliberately
+  *not* sent from the sources that do travel: a recovery ("the key is under its
+  cap again", "the region is back"), and a standing fault from
+  `gateway_deployment_health_history`, which would name a deployment tonight's
+  snapshot is already reporting. Delivery itself is also deliberately thin: one
+  URL, one POST, no per-recipient routing, no severity filter and no quiet hours.
+  Each of those is a policy somebody has to actually want before it is worth
+  encoding.
 - **Pricing what the catalogue now makes priceable.** Both cards the catalogue
   was fetched for now exist. `Price catalogue`
   (`lib/metrics/gatewayCatalog.ts`) puts list rates beside the effective rate
