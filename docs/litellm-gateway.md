@@ -393,6 +393,7 @@ What it shows, and why each one is there:
 | Breakdown | One dimension at a time, ranked by spend, with each row's share **of the gateway-wide total** |
 | Drill-down | Selecting a breakdown row opens that key's own daily trend (spend / tokens / requests) and its unit economics: $/1M, $/request, cache-hit and success rate |
 | Period-over-period | Every KPI carries its change against the immediately preceding window of the same length; `Biggest movers` ranks the current dimension's keys by how many dollars they moved |
+| Why spend moved | The same two windows split three ways — volume (more tokens at the prices already being paid), mix (the same tokens routed somewhere dearer), rate (the same slice costing more per token) — with the current dimension's keys ranked by what volume does *not* explain |
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
@@ -401,7 +402,7 @@ What it shows, and why each one is there:
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
 
-Twelve decisions worth keeping:
+Thirteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -624,6 +625,51 @@ Twelve decisions worth keeping:
   every model serves every workload — cache behaviour is a property of how a
   workload builds its prompts, not of the deployment it routes to.
 
+- **The movement is decomposed by an identity, and the identity is what limits
+  where the card may be read.** `lib/metrics/gatewayMix.ts` splits the spend
+  delta between the two comparison windows into three effects, per key `i`,
+  with `t` for tokens, `p` for dollars per token and `s` for share of the
+  window's tokens:
+
+      volume_i = (T₁ − T₀)·s_i₀·p_i₀     more tokens at the old prices
+      mix_i    = T₁·(s_i₁ − s_i₀)·p_i₀   the same tokens routed elsewhere
+      rate_i   = t_i₁·(p_i₁ − p_i₀)      the same slice costing more per token
+
+  Those sum to `t_i₁p_i₁ − t_i₀p_i₀` — the key's own spend delta — with no
+  interaction term left over, and summed across a dimension that reconstitutes
+  the totals they reproduce the gateway-wide movement exactly. That exactness is
+  the card's whole claim: three *reasons*, not three opinions, which is why the
+  rows can be read as contributions and why the verify script asserts the
+  identity per key as well as in total. It is also the constraint on where the
+  card is allowed to appear — `mcp_server` is a strict subset and `user` may be
+  partially attributed, so for those the three effects explain only part of the
+  movement. The derivation measures its own coverage and marks itself
+  **unusable** rather than reporting a short sum that looks like a full one.
+
+  Three consequences worth stating. **Volume is counted in tokens**, because a
+  token is what the gateway is billed for; the cost is that a workload holding
+  its request count and doubling its prompt length reads as volume rather than
+  as a price change, and that a key's `p` is a blended input+output rate, so an
+  output-heavy shift inside one model lands in rate. Both are on the card.
+  **It follows the dimension switcher**, and unlike every other card that does,
+  the switcher changes the *answer*: traffic moving from a cheap model to a dear
+  one inside one provider is mix by `model` and rate by `provider`. The mock
+  shows it plainly — the same $73.74 movement reads as `mix $55.06 / rate
+  −$4.08` by model and `mix −$2.53 / rate $53.50` by provider. Neither is wrong,
+  and seeing a movement change character between two slices is the finding.
+  Volume is a gateway-wide quantity and is identical in every dimension, which
+  the verify script asserts. **The render gate is on the gross effect, not on
+  the net delta**: a gateway whose bill held flat while it processed 20% fewer
+  tokens at a 25% dearer blended price has not had a quiet month, and it is the
+  one case every other card on the page reports as nothing at all.
+
+  A key present in only one window is handled by the identity rather than by a
+  special case. An arrival has no prior price, so it is priced at the
+  *gateway's* prior blended rate: it then reads as mix (traffic moved to it)
+  plus rate (it is dearer, or cheaper, than what the gateway used to pay), and
+  the sum is still exactly its spend. A departure's rate term is zero by
+  construction and its mix term gives back exactly what it used to cost.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -760,6 +806,27 @@ unknown, and the card stands down), a key too small to badge, and a write-only
 key, which must read as `churning` on a zero reuse rather than falling through
 to `unused` on the strength of its zero hit rate. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache.ts`.
+
+`apps/api/scripts/verify-gateway-mix.ts` covers the volume/mix/rate
+decomposition, and it is the one layer where the checks *are* the design: the
+split has to be an identity or the card is three opinions. So the script asserts
+it twice over — per key (`volume + mix + rate` equals that key's own spend
+delta) and gateway-wide (nothing unexplained across every full-coverage
+dimension, while `mcp_server` at ~18% coverage is refused rather than reported
+short). The headline effects are checked to be the sum of the rows that make
+them up, not a second derivation of the same quantity, and the volume effect is
+checked to be identical in every dimension, since it is a gateway-wide number
+that no slicing can change. Then each effect is isolated on a constructed
+payload where only one thing moved: doubling every key's tokens at fixed prices
+is pure volume, re-weighting a fixed token count toward a dearer key is pure
+mix, and re-pricing a fixed mix is pure rate — a failure there means an effect
+is absorbing movement that belongs to another. The arrival/departure convention
+is pinned in dollars (a new model at $9/M against a $6/M gateway splits as $6 of
+mix and $3 of rate), and the edges cover no prior traffic, no tokens, a
+70%-covered dimension, a 0.2% movement that reconciles but is not worth a card,
+and the case the gate exists for — a flat bill hiding $20 of volume against $20
+of rate, which must still render. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-mix.ts`.
 
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a

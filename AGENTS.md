@@ -72,7 +72,15 @@ trimmed spine, so they are not known until the current payload has answered, and
 entirely when it falls outside the proxy's 90-day retention. `lib/metrics/gatewayAnomaly.ts` flags days
 that ran away from their trailing median and attributes the overrun across the selected dimension — on a
 *mean* baseline, deliberately, because means add up and the contributor rows must reconcile to the day's
-overrun exactly. `lib/metrics/gatewayForecast.ts` is the page's other extra fetch and the only
+overrun exactly. `lib/metrics/gatewayMix.ts` reads those same two windows once more and answers *why*
+the bill moved rather than that it did — volume (more tokens at the old prices), mix (the same tokens
+routed somewhere dearer) and rate (the same slice costing more per token). The three are an **identity**,
+summing to the spend delta per key and gateway-wide with no interaction term, which is what licenses
+reading the rows as contributions; it is also why the module measures its own coverage and refuses a
+dimension that does not reconstitute the totals (`mcp_server`, or a partly attributed `user`) instead of
+reporting a short sum. It follows the dimension switcher, and it is the one card where the switcher
+changes the answer: a shift to a dearer model inside one provider is mix by `model` and rate by
+`provider`. `lib/metrics/gatewayForecast.ts` is the page's other extra fetch and the only
 forward-looking card: it projects the *calendar month* (never the picked range — budgets are monthly),
 pulling the month to date plus the 28 days before it so each remaining day can be priced at its own
 weekday's trailing mean instead of a flat run rate. It does not extrapolate growth, so a ramping

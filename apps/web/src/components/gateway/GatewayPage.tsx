@@ -28,6 +28,7 @@ import {
 } from '../../lib/metrics/gatewayCompare.js';
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
+import { deriveGatewayMix, hasMixSignal } from '../../lib/metrics/gatewayMix.js';
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
   useGatewayBudgets,
@@ -49,6 +50,7 @@ import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
+import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -245,6 +247,25 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             activeDimension,
           ),
     [compared, summary, activeDimension, priorUsage],
+  );
+
+  // The movement's *reason*, on the same two windows the movers card uses. It
+  // follows the switcher for a reason of its own: mix and rate are relative to
+  // the slice — traffic moving to a dearer model inside one provider is mix by
+  // model and rate by provider — so which one is on screen changes the answer.
+  const mix = useMemo(
+    () =>
+      compared === null
+        ? null
+        : deriveGatewayMix(
+            summary.breakdowns[activeDimension],
+            priorUsage?.breakdowns ?? [],
+            activeDimension,
+            totals,
+            compared.totals,
+            compared.window,
+          ),
+    [compared, summary, activeDimension, priorUsage, totals],
   );
 
   const configured = statusQuery.data?.configured ?? false;
@@ -590,6 +611,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           {compared !== null && movers.length > 0 && (
             <GatewayMoversCard rows={movers} dimension={activeDimension} window={compared.window} />
           )}
+
+          {hasMixSignal(mix) && <GatewayMixCard decomposition={mix} />}
 
           {selectedRow !== null && (
             <GatewayKeyDetail
