@@ -298,6 +298,51 @@ const TAG_BUDGETS: readonly { tag: string; limits: MockLimits }[] = [
 ];
 
 /**
+ * User budgets — the fourth governance scope, and the only one where the mock
+ * deliberately governs a *minority* of the objects it could.
+ *
+ * `/user/list` answers every internal user the proxy has ever seen sign in, and
+ * only the ones carrying a limit are governance (see `isGovernedUser` in
+ * `litellm.ts`). A real corporate proxy caps a handful of them — a service
+ * identity, a contractor, somebody who ran up a bill once — and leaves the rest
+ * to the key and team caps above. Five of this generator's fifty-four names are
+ * governed here, which is what makes the scope's coverage reading low *and*
+ * correct rather than an artefact.
+ *
+ * The five are chosen to be the states no other scope can produce:
+ *
+ *  - `ana.kovacs` sits on `copilot-agents`, the one key nobody would cap. Her
+ *    cap is therefore the *only* governance on the gateway's largest workload,
+ *    which is the argument for the scope existing at all.
+ *  - `etl-service` is machine traffic on the batch key, driven past its cap
+ *    twice a month by the same re-embedding burst the anomaly card flags.
+ *  - `owen.tanaka` runs on a weekly period, so the scope carries two durations.
+ *  - `kofi.weber` is rate-limited and uncapped: governed without a budget, which
+ *    is a row the card must draw with no bar rather than drop.
+ *  - `hugo.laurent` is budgeted at exactly $0 — a contractor whose access was
+ *    revoked with a budget rather than a delete. Null-versus-zero on a new
+ *    scope: uncapped renders as no limit, $0 renders as blocked.
+ *
+ * The key is the same string the `user` usage dimension is keyed by, which here
+ * is the email. On a real proxy `user_id` is an SSO subject and the email is the
+ * *label* (open question 2); the mock collapses the two because its usage rows
+ * carry no separate id to join on.
+ */
+const USER_BUDGETS: readonly { user: string; limits: MockLimits }[] = [
+  { user: 'ana.kovacs@corp.example', limits: { maxBudget: 800, softBudget: 640, budgetDuration: '1mo' } },
+  { user: 'etl-service@corp.example', limits: { maxBudget: 900, softBudget: 720, budgetDuration: '1mo' } },
+  { user: 'owen.tanaka@corp.example', limits: { maxBudget: 120, budgetDuration: '7d' } },
+  { user: 'kofi.weber@corp.example', limits: { tpmLimit: 120_000, rpmLimit: 600 } },
+  { user: 'hugo.laurent@corp.example', limits: { maxBudget: 0, budgetDuration: '1mo' } },
+];
+
+/**
+ * Everybody `/user/list` would answer with, governed or not — the denominator
+ * the probe reports the governed count against.
+ */
+const ROSTER_SIZE = new Set(KEYS.flatMap((key) => key.users)).size;
+
+/**
  * How each workload uses the providers' prompt cache, as fractions of the
  * prompt tokens it sends: `read` is served from cache, `write` is committed to
  * it at a premium.
@@ -805,6 +850,11 @@ export class MockGatewayClient implements GatewayClient {
     for (const tag of TAG_BUDGETS) {
       push('tag', tag.tag, null, tag.limits, 'tag');
     }
+    // Only the governed users, exactly as the live client stores them: the other
+    // forty-nine names are on the page already, as rows of the `user` dimension.
+    for (const user of USER_BUDGETS) {
+      push('user', user.user, user.user, user.limits, 'user');
+    }
 
     log.info({ dash: { budgets: budgets.length } }, 'mock gateway budgets generated');
     return budgets;
@@ -1188,6 +1238,20 @@ export class MockGatewayClient implements GatewayClient {
         durationMs: 0,
         rows: scoped('tag'),
         detail: `${scoped('tag')} tag(s), all configured`,
+        dimensions: [],
+      },
+      {
+        path: '/user/list',
+        purpose:
+          'The budget card will be empty for users; key, team and tag budgets are unaffected. Per-user caps are optional on a proxy, so an empty answer here is often correct.',
+        required: false,
+        status: scoped('user') === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        // `rows` is what the route answered and `detail` says how many of them
+        // are governance — the gap is the whole point of the reading here.
+        rows: ROSTER_SIZE,
+        detail: `${ROSTER_SIZE} user(s), ${scoped('user')} carrying a limit — the rest are reported as usage, not as governance`,
         dimensions: [],
       },
       {

@@ -83,6 +83,7 @@ const money = (value: number | null) => (value === null ? 'n/a' : `$${value.toFi
 const keys = summary.scopes.find((scope) => scope.scope === 'api_key');
 const teams = summary.scopes.find((scope) => scope.scope === 'team');
 const tags = summary.scopes.find((scope) => scope.scope === 'tag');
+const usersScope = summary.scopes.find((scope) => scope.scope === 'user');
 
 console.log(`budgets: ${budgets.length} rows · ${summary.scopes.length} scopes`);
 
@@ -90,7 +91,7 @@ console.log(`budgets: ${budgets.length} rows · ${summary.scopes.length} scopes`
 
 check(!summary.isEmpty, 'the mock reported no budgets at all');
 check(
-  keys !== undefined && teams !== undefined && tags !== undefined,
+  keys !== undefined && teams !== undefined && tags !== undefined && usersScope !== undefined,
   'a scope is missing from the derivation',
 );
 check(
@@ -98,7 +99,8 @@ check(
   'scopes must render in the shared const order, whatever order the payload grouped them in',
 );
 check(
-  (keys?.total ?? 0) + (teams?.total ?? 0) + (tags?.total ?? 0) === budgets.length,
+  (keys?.total ?? 0) + (teams?.total ?? 0) + (tags?.total ?? 0) + (usersScope?.total ?? 0) ===
+    budgets.length,
   'the scopes did not partition the rows',
 );
 check(
@@ -110,8 +112,8 @@ check(
   "a scope's counter rule disagrees with the shared predicate",
 );
 
-if (keys === undefined || teams === undefined || tags === undefined) {
-  console.error('cannot continue without all three scopes');
+if (keys === undefined || teams === undefined || tags === undefined || usersScope === undefined) {
+  console.error('cannot continue without all four scopes');
   process.exit(1);
 }
 
@@ -337,6 +339,87 @@ check(
 check(
   tags.total < usageTags.size,
   `governed tags (${tags.total}) must be a strict subset of observed ones (${usageTags.size}) — partial governance is the realistic shape and the reason coverage is worth reporting`,
+);
+
+// ------------------------------------------------------- the user scope
+//
+// Users are the one scope whose objects this integration deliberately does not
+// store all of: a key, a team and a tag exist because somebody created them, so
+// an uncapped one is a governance fact, while an internal user row is created
+// the first time somebody signs in. Only the governed ones are kept, which is
+// why the checks here are about the *gap* between the two counts.
+
+const usersByKey = new Map(usersScope.rows.map((entry) => [entry.budget.key, entry]));
+for (const entry of usersScope.rows) {
+  console.log(
+    `  ${(entry.budget.label ?? entry.budget.key).padEnd(30)} ${entry.state.padEnd(9)} ` +
+      `${money(entry.budget.spend).padStart(10)} of ${money(entry.budget.maxBudget).padStart(9)} ` +
+      `· ${entry.utilization === null ? 'n/a' : `${entry.utilization.toFixed(1)}%`}`,
+  );
+}
+check(usersScope.total > 0, 'the mock plants per-user caps — the user scope cannot be empty');
+check(
+  usersScope.spendIsCumulative === false,
+  "a user's counter is reset by the proxy — ResetBudgetJob walks LiteLLM_UserTable",
+);
+
+const usageUsers = new Set(
+  usage.breakdowns.filter((entry) => entry.dimension === 'user').map((entry) => entry.key),
+);
+check(usageUsers.size > 0, 'the usage side reported no users to compare governance against');
+check(
+  usersScope.rows.every((entry) => usageUsers.has(entry.budget.key)),
+  'a governed user does not appear in the user usage dimension — the ids do not join',
+);
+check(
+  usersScope.total < usageUsers.size,
+  `governed users (${usersScope.total}) must be a strict subset of the people on the gateway (${usageUsers.size}) — a proxy caps a handful, and storing the rest would put the directory in gateway_budget`,
+);
+check(
+  usersScope.rows.every(
+    (entry) =>
+      !keyIds.has(entry.budget.key) &&
+      !teamIds.has(entry.budget.key) &&
+      !tags.rows.some((tag) => tag.budget.key === entry.budget.key),
+  ),
+  'a user id collided with a key, team or tag id — the scopes would merge',
+);
+
+// The argument for the scope existing: the gateway's largest workload runs on a
+// key nobody will cap, so the only budget over that traffic is the user's own.
+const cappedUser = usersByKey.get('ana.kovacs@corp.example');
+check(
+  cappedUser !== undefined && cappedUser.budget.maxBudget !== null,
+  'the user on the uncapped key must carry a cap — she is the only governance over that traffic',
+);
+check(
+  uncapped?.state === 'uncapped' && cappedUser?.state !== 'uncapped',
+  'the capped user and her uncapped key must classify differently — that contrast is the scope’s reason to exist',
+);
+
+const rateLimitedUser = usersByKey.get('kofi.weber@corp.example');
+check(
+  rateLimitedUser?.state === 'uncapped' && rateLimitedUser?.rateLimited === true,
+  'a user with rate limits and no budget is governed and uncapped — a row with no bar, not a dropped row',
+);
+check(
+  rateLimitedUser?.utilization === null && rateLimitedUser?.projectedSpend === null,
+  'nothing may be divided by, or projected from, a user with no cap and no period',
+);
+
+const revokedUser = usersByKey.get('hugo.laurent@corp.example');
+check(revokedUser?.state === 'blocked', 'a user budgeted at $0 is blocked, not uncapped');
+check(
+  revokedUser?.blockReason === 'zero-cap',
+  'the block reason must name the $0 cap — no admin flag was set on this user',
+);
+check(
+  new Set(
+    usersScope.rows
+      .map((entry) => entry.budget.budgetDuration)
+      .filter((duration): duration is string => duration !== null),
+  ).size >= 2,
+  'the user scope must carry more than one period — a weekly cap and a monthly one read differently',
 );
 
 // The rule is the scope's, not the row's: two otherwise identical rows must

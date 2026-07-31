@@ -190,7 +190,7 @@ export async function getGatewayBudgets(): Promise<GatewayBudgets> {
     budget.maxBudget === null || budget.maxBudget <= 0 ? -1 : budget.spend / budget.maxBudget;
 
   budgets.sort((a, b) => {
-    // Ordered off the shared const rather than by name: with three scopes a
+    // Ordered off the shared const rather than by name: with four scopes a
     // two-way `a.scope === 'api_key' ? -1 : 1` is not even a consistent
     // comparator, since it answers "after" for both team-vs-tag and tag-vs-team.
     if (a.scope !== b.scope) {

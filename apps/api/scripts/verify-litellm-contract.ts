@@ -904,7 +904,7 @@ check(
 
 const tagAbsent = await withProxy(
   (captured) =>
-    captured.path === '/tag/list'
+    captured.path === '/tag/list' || captured.path === '/user/list'
       ? { status: 404, body: {} }
       : captured.path === '/key/list'
         ? { status: 200, body: { keys: [keyRow({ token: 'k' })], total_pages: 1 } }
@@ -939,7 +939,217 @@ check(
 );
 
 // =====================================================================
-// 6c · The model catalogue — GET /model/info
+// 6c · The fourth governance route — /user/list
+// =====================================================================
+//
+// Users are the scope this integration deliberately does not store all of, and
+// three things about the route make that both necessary and easy to get wrong:
+//
+//   1. it pages on `page_size`, not on `size` — sending the wrong parameter is
+//      accepted and ignored, which silently pins the read to 25 users;
+//   2. the roster is the staff directory, so only rows carrying a limit are
+//      governance and the rest are already on the page as usage; and
+//   3. the limits may be inline or on a joined budget row, tag-style, and the
+//      inline one is what the proxy enforces against this user.
+
+console.log('\n6c · budgets — /user/list');
+
+const users = await withProxy(
+  (captured) => {
+    if (captured.path === '/user/list') {
+      const page = Number(captured.query.get('page') ?? '1');
+      if (page === 1) {
+        return {
+          status: 200,
+          body: {
+            users: [
+              // Capped inline, the ordinary shape.
+              {
+                user_id: 'sso|ana',
+                user_email: '  ana.kovacs@corp.example  ',
+                user_role: 'internal_user',
+                spend: 312.4,
+                max_budget: 400,
+                soft_budget: 320,
+                budget_duration: '1mo',
+                budget_reset_at: '2026-08-01T00:00:00.594000Z',
+                tpm_limit: null,
+                rpm_limit: 600,
+              },
+              // Governed by a *shared* budget row: nothing inline, everything on
+              // the join, exactly as a tag carries it.
+              {
+                user_id: 'sso|owen',
+                user_email: 'owen.tanaka@corp.example',
+                spend: 41,
+                budget_id: 'budget-contractors',
+                litellm_budget_table: {
+                  budget_id: 'budget-contractors',
+                  max_budget: 120,
+                  budget_duration: '7d',
+                  rpm_limit: 100,
+                },
+              },
+              // Both, disagreeing: the inline cap is the enforced one.
+              {
+                user_id: 'sso|both',
+                user_email: 'both@corp.example',
+                spend: 5,
+                max_budget: 50,
+                budget_id: 'budget-contractors',
+                litellm_budget_table: { budget_id: 'budget-contractors', max_budget: 120 },
+              },
+              // Rate-limited and uncapped — governed without a budget.
+              { user_id: 'sso|kofi', user_email: 'kofi.weber@corp.example', spend: 88, rpm_limit: 60 },
+              // Budgeted at exactly nothing: a block, not an absence.
+              { user_id: 'sso|hugo', user_email: 'hugo.laurent@corp.example', spend: 0, max_budget: 0 },
+              // The directory: a person, not a decision. Dropped.
+              { user_id: 'sso|nina', user_email: 'nina.larsen@corp.example', spend: 240.1 },
+              // Governed but unjoinable — a cap with no id to put it beside.
+              { user_id: '   ', user_email: 'orphan@corp.example', max_budget: 10 },
+            ],
+            total: 9,
+            page: 1,
+            page_size: 100,
+            total_pages: 2,
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          users: [
+            {
+              user_id: 'sso|etl',
+              user_alias: 'ETL service account',
+              spend: 954.25,
+              max_budget: 900,
+              budget_duration: '1mo',
+            },
+            { user_id: 'sso|quiet', user_email: 'quiet@corp.example' },
+          ],
+          total: 9,
+          page: 2,
+          page_size: 100,
+          total_pages: 2,
+        },
+      };
+    }
+    return { status: 404, body: {} };
+  },
+  async (proxy) => {
+    const rows = await client(proxy.baseUrl).fetchBudgets();
+    return { rows, calls: proxy.calls };
+  },
+);
+
+const userCalls = users.calls.filter((call) => call.path === '/user/list');
+check(userCalls.length === 2, `/user/list is followed to its last page (${userCalls.length} pages)`);
+check(
+  userCalls[0]?.query.get('page_size') === '100' && userCalls[0]?.query.get('size') === null,
+  '/user/list is paged on page_size — `size` is the key route’s parameter and is ignored here',
+);
+check(
+  userCalls[0]?.query.get('page') === '1' && userCalls[1]?.query.get('page') === '2',
+  'pages are walked in order off total_pages',
+);
+check(
+  users.rows.every((row) => row.scope === 'user'),
+  'an absent /key/list, /team/list and /tag/list leave the user rows answering alone',
+);
+check(
+  users.rows.length === 6,
+  `only governed, identified users are stored (${users.rows.length} of 9 answered)`,
+);
+
+const userOf = (key: string) => users.rows.find((row) => row.key === key);
+
+check(
+  users.rows.every((row) => row.key !== 'sso|nina' && row.key !== 'sso|quiet'),
+  'a user carrying no limit at all is a person, not a governance object — storing them would put the directory in gateway_budget',
+);
+check(
+  users.rows.every((row) => row.label !== 'orphan@corp.example'),
+  'a capped user with no user_id cannot be joined to the usage dimension and is dropped, exactly as a key with no token is',
+);
+
+const ana = userOf('sso|ana');
+check(
+  ana?.maxBudgetNano === 400_000_000_000n && ana?.softBudgetNano === 320_000_000_000n,
+  'inline caps are read from the user row',
+);
+check(
+  ana?.label === 'ana.kovacs@corp.example',
+  'user_email is the label, trimmed — a user_id is frequently an SSO subject nobody recognises',
+);
+check(
+  ana?.spendNano === 312_400_000_000n && ana?.rpmLimit === 600 && ana?.tpmLimit === null,
+  "the user's own counter and rate limits survive, and the absent one stays null",
+);
+check(
+  ana?.budgetDuration === '1mo' && ana?.resetAt?.toISOString() === '2026-08-01T00:00:00.594Z',
+  'the duration and reset instant are read the same way a key carries them',
+);
+
+const owen = userOf('sso|owen');
+check(
+  owen?.maxBudgetNano === 120_000_000_000n && owen?.budgetDuration === '7d' && owen?.rpmLimit === 100,
+  'a user attached to a shared budget row gets its caps from the join, tag-style',
+);
+check(
+  userOf('sso|both')?.maxBudgetNano === 50_000_000_000n,
+  'where a user carries both, the inline cap wins — it is the one the proxy enforces against this user',
+);
+check(
+  userOf('sso|kofi')?.maxBudgetNano === null && userOf('sso|kofi')?.rpmLimit === 60,
+  'a rate-limited user with no budget is governed and uncapped — two different facts',
+);
+check(
+  userOf('sso|hugo')?.maxBudgetNano === 0n,
+  'a user budgeted at zero keeps 0: blocked, the opposite of the uncapped row next to it',
+);
+check(
+  userOf('sso|etl')?.label === 'ETL service account',
+  'user_alias is the fallback label when a service identity carries no email',
+);
+
+const userAbsent = await withProxy(
+  (captured) =>
+    captured.path === '/user/list'
+      ? { status: 403, body: { detail: 'Only proxy admins may list users' } }
+      : captured.path === '/key/list'
+        ? { status: 200, body: { keys: [keyRow({ token: 'k' })], total_pages: 1 } }
+        : { status: 200, body: [] },
+  (proxy) => client(proxy.baseUrl).fetchBudgets(),
+);
+check(
+  userAbsent.length === 1 && userAbsent[0]?.scope === 'api_key',
+  'a credential refused user management still syncs key budgets — /user/list is independently optional',
+);
+
+const userMalformed = await withProxy(
+  (captured) =>
+    captured.path === '/user/list'
+      ? { status: 200, body: { users: [{ user_id: 'u', max_budget: 'plenty' }] } }
+      : { status: 404, body: {} },
+  (proxy) =>
+    client(proxy.baseUrl)
+      .fetchBudgets()
+      .then(() => 'resolved')
+      .catch((error: unknown) => String(error)),
+);
+check(
+  userMalformed.includes('unexpected shape'),
+  'a cap of the wrong type throws rather than syncing a silently wrong user budget',
+);
+
+check(
+  budgetCounterResets('user'),
+  "the user counter is reset by the proxy — ResetBudgetJob walks LiteLLM_UserTable, so a pace projection over it means what it says",
+);
+
+// =====================================================================
+// 6d · The model catalogue — GET /model/info
 // =====================================================================
 //
 // A fourth envelope: `{"data": [...]}`, one entry per *deployment*, three
@@ -949,7 +1159,7 @@ check(
 // deployments onto one public alias, which is forced (the daily aggregates
 // carry no deployment id) and therefore has to report a floor.
 
-console.log('\n6c · the model catalogue — /model/info');
+console.log('\n6d · the model catalogue — /model/info');
 
 const deployment = (over: Record<string, unknown> = {}) => ({
   model_name: 'gpt-4o',
@@ -1784,6 +1994,19 @@ const healthy = await withProxy(
       status: 200,
       body: [{ name: 'coding-assistant', spend: 1, litellm_budget_table: { max_budget: 10 } }],
     },
+    '/user/list': {
+      status: 200,
+      body: {
+        users: [
+          { user_id: 'sso|ana', user_email: 'ana@corp.example', spend: 3, max_budget: 400 },
+          // A person with no cap: answered by the route, counted in `rows`, and
+          // not governance — the gap the probe's detail exists to spell.
+          { user_id: 'sso|nina', user_email: 'nina@corp.example', spend: 9 },
+        ],
+        total: 2,
+        total_pages: 1,
+      },
+    },
     '/model/info': {
       status: 200,
       body: {
@@ -1807,10 +2030,10 @@ const healthy = await withProxy(
 const route = (path: string): GatewayProbeRoute | undefined =>
   healthy.routes.find((candidate) => candidate.path === path);
 
-check(healthy.calls.length === 8, `one call per route, no retries (${healthy.calls.length})`);
+check(healthy.calls.length === 9, `one call per route, no retries (${healthy.calls.length})`);
 check(
   healthy.calls.map((call) => call.path).join(' ') ===
-    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list /model/info /health/readiness',
+    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list /tag/list /user/list /model/info /health/readiness',
   'routes are probed in dependency order, activity before management',
 );
 check(
@@ -1886,6 +2109,7 @@ const restricted = await withProxy(
     // Older proxy: tag management does not exist at all, which is a different
     // fix from the refused routes above and must classify differently.
     '/tag/list': { status: 404, body: { detail: 'Not Found' } },
+    '/user/list': { status: 403, body: { detail: 'Only proxy admins may list users' } },
     '/model/info': { status: 403, body: { detail: 'Only proxy admins may view models' } },
     // Readiness needs no credential at all, so a restricted key does not
     // explain it away — a 503 here is the proxy itself, not this integration's
@@ -1899,7 +2123,7 @@ const restrictedRoute = (path: string): GatewayProbeRoute | undefined =>
   restricted.routes.find((candidate) => candidate.path === path);
 
 check(
-  restricted.calls.length === 8,
+  restricted.calls.length === 9,
   `a refused or absent route is attempted once, never retried (${restricted.calls.length})`,
 );
 check(
@@ -1949,7 +2173,7 @@ check(
   // Five unanswered routes plus the empty-but-required user route: six gaps,
   // six statements. The count moves with the route table by design — a new
   // optional route that warned about nothing would be a route nobody misses.
-  restrictedSummary.warnings.length === 8,
+  restrictedSummary.warnings.length === 9,
   `one statement per gap, no more (${restrictedSummary.warnings.length})`,
 );
 

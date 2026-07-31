@@ -90,6 +90,7 @@ they live on different routes — the management API, not the analytics one:
 GET /key/list?page=1&size=100&return_full_object=true   → { keys, total_count, current_page, total_pages }
 GET /team/list                                          → [ … ]   (a bare array, no envelope)
 GET /tag/list                                           → [ … ]   (a bare array, limits nested)
+GET /user/list?page=1&page_size=100                     → { users, total, page, page_size, total_pages }
 Authorization: Bearer sk-…
 ```
 
@@ -128,6 +129,42 @@ the bare-array shape and adds three differences of its own:
   coverage against. `isGoverned` in `litellm.ts` drops them and logs the count.
 - **The counter is not reset.** See the invariant below; this is the one fact
   about tags that changes what the dashboard is allowed to derive.
+
+**`/user/list` is a fourth envelope, and the one scope this integration does not
+store all of.** `LiteLLM_UserTable` is the same kind of object as a key or a team
+— a spend counter, a cap, a duration, rate limits — but the route and the
+population differ:
+
+- **It pages on `page` + `page_size`,** not on `size`, and answers a proper
+  envelope (`users`, `total`, `page`, `page_size`, `total_pages`). Sending
+  `size` here is accepted and ignored, which would silently pin the read to the
+  default page of 25 users and lose the rest without an error anywhere.
+- **The roster is the staff directory.** A key list is a curated set somebody
+  created; an internal user row is created the first time somebody signs in, so
+  a corporate proxy has one per employee. Only rows carrying an actual limit are
+  governance (`isGovernedUser` in `litellm.ts`: a cap, a soft budget, a rate
+  limit, a `budget_id` link, or an explicit block — `spend` is deliberately *not*
+  on that list, since every user who ever made a call has one). The rest are
+  dropped and counted, exactly as `/tag/list`'s dynamic tags are, and for the
+  same reason read from the other direction: an uncapped *key* is a governance
+  fact ("nobody has capped this"), while an uncapped *user* is a person. Storing
+  them would put the directory in `gateway_budget` and append it again to
+  `gateway_budget_history` every night.
+- **The limits may be inline or on a join.** A user budgeted directly carries
+  `max_budget` at the top level; one attached to a shared budget row carries a
+  `budget_id` and the caps on `litellm_budget_table`, tag-style. Inline wins
+  where both are present, because that is the row the proxy enforces against
+  *this* user rather than against everyone sharing the budget.
+- **`user_id` is the join and `user_email` is the label.** The id is what the
+  `entities` breakdown of `/user/daily/activity` is keyed by, so a capped user's
+  cap lands beside the spend the adoption card already ranks; the email is worth
+  carrying because a proxy's `user_id` is frequently an SSO subject nobody
+  recognises (open question 2). A governed row with no `user_id` is an orphan and
+  is dropped, exactly as a key row with no token is.
+- **The counter *is* reset.** `ResetBudgetJob` walks `LiteLLM_UserTable` along
+  with keys and teams, so `budgetCounterResets('user')` is true and a pace
+  projection over a user's counter means what it says. Tags remain the only
+  exception.
 
 `budget_duration` is LiteLLM's own duration grammar — `(\d+)(mo|[smhdw]?)`, with
 the word aliases `hourly`/`daily`/`weekly`/`monthly` normalised first. Note that
@@ -618,7 +655,7 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   enforces, and the enforced one is what an owner needs. `blocked` is likewise
   carried, not inferred: an admin can disable a key nowhere near its cap.
 - **Whether that counter resets is a property of the scope, and on one scope it
-  does not.** LiteLLM's `ResetBudgetJob` walks keys and teams; it has no tag
+  does not.** LiteLLM's `ResetBudgetJob` walks keys, teams and internal users; it has no tag
   handler (BerriAI/litellm#27481), so a tag's linked `budget_reset_at` advances
   every cycle while `LiteLLM_TagTable.spend` keeps climbing. A tag's counter is
   therefore spend **since the tag was created**, whatever its `budget_duration`
@@ -633,6 +670,17 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   it exists on the governance side only if somebody created it. The two
   populations are deliberately different sizes, which is why "governed tags" is
   a coverage number worth reporting rather than always 100%.
+- **`/user/list`'s stored rows are a strict subset for the opposite reason, and
+  the cut is ours rather than the proxy's.** Every internal user is a real row on
+  the proxy; only the ones carrying a limit are stored here. A key, a team and a
+  tag exist because somebody created them, so an uncapped one records a decision
+  ("nobody has capped this"); a user row is created the first time somebody signs
+  in, so an uncapped one records a person. Keeping them all would put the staff
+  directory in `gateway_budget` and append it again to `gateway_budget_history`
+  every night, and would report the gateway as ~0% governed for the arithmetic
+  reason that most employees are not individually capped — which says nothing
+  about whether user budgets are in use. The dropped rows are not lost: they are
+  the `user` usage dimension, which is where "who spent what" belongs.
 - **A budget observation is a sample, not a series.** `gateway_budget_history`
   holds one reading per governed object per day the sync ran. A day with no row
   is a day nobody looked — not zero, and not "unchanged" — so nothing derived
@@ -801,7 +849,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | Method | Path | Answer |
 | --- | --- | --- |
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
-| `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and the enforced counter per key, team and configured tag, grouped in `GATEWAY_BUDGET_SCOPES` order and each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
+| `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and the enforced counter per key, team, configured tag and *governed* user (an uncapped user is a person, not a governance object), grouped in `GATEWAY_BUDGET_SCOPES` order and each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
 | `GET` | `/api/gateway/budgets/history?days=` | What those same budgets read on each of the last `days` days (default 60, max 365) — the dashboard's own recording, since the proxy serves current state only. Nothing is filled in for a day no sync ran. `recordingSince` is answered *outside* the window, because "never over its cap" and "we started watching yesterday" are otherwise the same answer. |
 | `GET` | `/api/gateway/models` | `{ models }` — the proxy's configured price list as of the last full sync: per-model input/output/cache rates in dollars per million tokens, context window, modality and provider. Cheapest input first, with the unpriced models last. No parameters: state, not a range, and deliberately not folded into `/api/gateway`, which is a date range. |
 | `GET` | `/api/gateway/health` | `{ deployments, checkedAt }` — every deployment as the last full sync found it, failing ones first: routing string, resolved alias (null when the catalogue could not name it), provider, endpoint, state, the proxy's own error text and the upstream status. A *stored* reading rather than a live one, deliberately: forwarding `/health` would let a browser refresh bill a test call per deployment. `checkedAt` is null when it has never answered, which is not the same as a proxy that routes nothing. |
@@ -823,7 +871,8 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 `GET /api/gateway/probe`, behind **Test connection** on the `Data sources`
 page (`apps/web/src/components/sources/GatewayProbePanel.tsx`). It calls every
 route the sync depends on — the three activity routes for a single day, then
-`/key/list`, `/team/list`, `/tag/list`, `/model/info` and `/health/readiness` —
+`/key/list`, `/team/list`, `/tag/list`, `/user/list`, `/model/info` and
+`/health/readiness` —
 and reports what each one answered. `/model/info` judges itself on *priced* rows rather than returned
 ones, for the same reason `/tag/list` judges itself on governed ones: a proxy can
 answer every deployment it routes to and know the price of none of them, and a
@@ -839,10 +888,14 @@ also has no rows to be empty of, so it reports `ok` or the status that says why
 not, and a `503` there classifies as `unreachable` rather than `denied` precisely
 because no credential was involved.
 
-`/tag/list` is the one route where `empty` is counted on the *governed* rows
-rather than on the response: a proxy that answers forty dynamic tags and no
-configured one has nothing to put on the budget card, which is the same
-consequence as an empty array and a different one from a refusal.
+`/tag/list` and `/user/list` are the two routes where `empty` is counted on the
+*governed* rows rather than on the response: a proxy that answers forty dynamic
+tags and no configured one — or four thousand users and no caps — has nothing to
+put on the budget card, which is the same consequence as an empty array and a
+different one from a refusal. On `/user/list` the gap between the two counts is
+the wider and more interesting number, so the detail spells both: it is also the
+fastest way to see that this integration is deliberately not storing the staff
+directory.
 
 It exists because everything else on this page is a draft written against
 published documentation. The day a real proxy and a real credential appear, the
@@ -1965,8 +2018,8 @@ than against themselves. Then the rule the whole table rests on: null and zero
 are opposite ends. An uncapped row has no utilization, no remaining and no soft
 mark; a `maxBudget: 0` row is *blocked*, with the reason carried separately from
 the admin flag. Then the ordering (blocked first, then descending share of cap,
-uncapped last ranked by dollars), the scope separation (key, team and tag ids
-never collide, so the three scopes can never merge), and the pace projection in
+uncapped last ranked by dollars), the scope separation (key, team, tag and user
+ids never collide, so the four scopes can never merge), and the pace projection in
 both regimes — a month one day in projects nothing, half a month at $600 against
 a $1,000 cap projects $1,200 and is flagged as pacing over, and every projection
 that does answer is exactly `spend ÷ elapsed`.
@@ -1982,7 +2035,19 @@ must be a strict subset of the tags the usage side reports, and a constructed
 pair of rows identical in every field but `scope` must differ in exactly two
 ways: the tag twin projects nothing while the key twin projects $1,200, and both
 land in the same state, since withholding a projection may not change what a row
-is classified as. Run it with
+is classified as.
+
+The user scope gets a section for the opposite reason the tag scope does: not a
+rule about the counter, but a rule about which objects exist at all. The governed
+users must be a *strict* subset of the people the usage side reports — a proxy
+caps a handful and the rest are a directory this table has no business holding —
+and their ids must collide with no key, team or tag. The states are checked
+against what the generator planted: the capped user on the deliberately uncapped
+key (the contrast that is the scope's whole argument — that user's cap is the
+only governance over the gateway's largest workload), a rate-limited user who is
+governed *and* uncapped and must draw a row with no bar rather than vanish, a
+user budgeted at exactly `$0` classified as blocked with `zero-cap` as the reason,
+and two different periods inside one scope. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budgets.ts`.
 
 `apps/api/scripts/verify-gateway-budget-history.ts` covers the recording and
@@ -2552,7 +2617,7 @@ job's error string.
 
 ## Not yet built
 
-Governance is now rendered end to end across all three scopes
+Governance is now rendered end to end across all four scopes
 (`GatewayBudgetCard`, on `lib/metrics/gatewayBudgets.ts` over
 `GET /api/gateway/budgets`). What is still missing on this side of the gateway:
 
@@ -2565,6 +2630,16 @@ Governance is now rendered end to end across all three scopes
   its lifetime, which is a legitimate way to configure one). What this side owes
   it is the evidence: once budget history has watched a tag across a reset date,
   open question 8 answers itself and `budgetCounterResets` can stop assuming.
+
+- **Per-user governance beyond the caps somebody set.** `/user/list` now feeds
+  a fourth budget scope, but only for users carrying an actual limit — an
+  uncapped user is a person, not a governance object, and the roster is the staff
+  directory. What that leaves unbuilt is any read of the *ungoverned* population
+  from this route: `user_role`, team membership and the key count each user
+  holds are all on the payload and none of them are stored, because they are
+  identity facts rather than governance ones and the place they would belong is
+  the cost-centre join that open questions 2 and 4 block. The `user` usage
+  dimension already answers "who spent what".
 
 - **Budget history beyond what we recorded.** `gateway_budget_history` now
   answers "was this key already over last week" — but only back to the first

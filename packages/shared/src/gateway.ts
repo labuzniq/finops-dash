@@ -408,8 +408,9 @@ export function resolveModelPrice(
  *
  * Everything above is *usage*: what the gateway did, per day, forever. A budget
  * is the opposite kind of fact — current configuration plus the proxy's own
- * live counter. There is exactly one row per key, per team and per configured
- * tag, it is replaced wholesale on every sync, and it has no history.
+ * live counter. There is exactly one row per key, per team, per configured tag
+ * and per *governed* internal user, it is replaced wholesale on every sync, and
+ * it has no history.
  *
  * Two rules invert here, and both matter:
  *
@@ -430,23 +431,34 @@ export function resolveModelPrice(
 /**
  * Whose budget it is. Each scope joins the usage dimension of the same name by
  * `key`, which is what lets a cap be read next to the spend it governs.
+ *
+ * `user` is last for a reason beyond ordering: it is the one scope whose objects
+ * this dashboard does not store all of. A key, a team and a tag exist because
+ * somebody created them, so an uncapped one is a governance fact worth a row
+ * ("nobody has capped this key"). An internal user row is created by the proxy
+ * the first time somebody logs in, so an uncapped user is not a decision anybody
+ * took — it is a person. Storing every one of them would put the whole staff
+ * directory in `gateway_budget` and append it again to `gateway_budget_history`
+ * every night, so only users carrying an actual limit are kept. Same argument
+ * that drops `/tag/list`'s dynamic tags, arrived at from the other direction.
  */
-export const GATEWAY_BUDGET_SCOPES = ['api_key', 'team', 'tag'] as const;
+export const GATEWAY_BUDGET_SCOPES = ['api_key', 'team', 'tag', 'user'] as const;
 export type GatewayBudgetScope = (typeof GATEWAY_BUDGET_SCOPES)[number];
 
 export const GATEWAY_BUDGET_SCOPE_LABELS: Record<GatewayBudgetScope, string> = {
   api_key: 'API key',
   team: 'Team',
   tag: 'Tag',
+  user: 'User',
 };
 
 /**
  * Does the proxy zero this scope's `spend` counter when its period rolls?
  *
- * For a key and a team, yes: LiteLLM's `ResetBudgetJob` walks both tables, so
- * the counter is spend *within the period in flight* and everything built on
- * that reading — a pace projection, a closed-period total, a period reset in the
- * history — means what it says.
+ * For a key, a team and an internal user, yes: LiteLLM's `ResetBudgetJob` walks
+ * all three tables, so the counter is spend *within the period in flight* and
+ * everything built on that reading — a pace projection, a closed-period total, a
+ * period reset in the history — means what it says.
  *
  * For a tag, **no**. `LiteLLM_TagTable.spend` has no handler in that job: the
  * linked budget row's `budget_reset_at` advances every cycle while the tag's own
@@ -474,12 +486,12 @@ export function budgetCounterResets(scope: GatewayBudgetScope): boolean {
 }
 
 /**
- * One governed object on the proxy — a virtual key, a team or a tag.
+ * One governed object on the proxy — a virtual key, a team, a tag or a user.
  *
  * `key` is the same id the matching usage dimension reports (the hashed key
- * token for `api_key`, the team id for `team`, the tag name for `tag`), which is
- * what lets a budget row be read next to the spend it governs without a second
- * join key.
+ * token for `api_key`, the team id for `team`, the tag name for `tag`, the
+ * proxy's `user_id` for `user`), which is what lets a budget row be read next to
+ * the spend it governs without a second join key.
  */
 export interface GatewayBudget {
   scope: GatewayBudgetScope;

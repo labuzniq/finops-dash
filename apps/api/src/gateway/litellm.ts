@@ -280,6 +280,97 @@ function isGoverned(row: z.infer<typeof tagRowSchema>): boolean {
 }
 
 /**
+ * `/user/list` — the fourth governance route, and a *fifth* pagination dialect.
+ *
+ * `LiteLLM_UserTable` is the same kind of object as a key or a team (a spend
+ * counter, a cap, a duration, rate limits), but three things about the route are
+ * unlike `/key/list` and both bare-array routes:
+ *
+ *  1. **It pages on `page` + `page_size`,** not on `size`, and answers a proper
+ *     envelope (`users`, `total`, `page`, `page_size`, `total_pages`). Sending
+ *     `size` here is silently ignored, which would pin the read to the default
+ *     page of 25 users and quietly lose the rest.
+ *  2. **The roster is unbounded.** A key list is a curated set; an internal user
+ *     row is created the first time somebody signs in, so a corporate proxy has
+ *     one per employee. That is why `isGovernedUser` exists — see
+ *     `GATEWAY_BUDGET_SCOPES` for why an uncapped user is not a governance
+ *     object — and why the page walk still respects `MAX_PAGES`.
+ *  3. **The limits can be in either of two places.** A user budgeted directly
+ *     carries `max_budget` inline; one attached to a shared budget row carries a
+ *     `budget_id` and the caps on the joined `litellm_budget_table`, tag-style.
+ *     Inline wins where both are present, because that is the row the proxy
+ *     enforces against this user rather than against everyone sharing the budget.
+ */
+const userBudgetTableSchema = z.object({
+  budget_id: z.string().nullish(),
+  max_budget: nullableNumber,
+  soft_budget: nullableNumber,
+  budget_duration: z.string().nullish(),
+  budget_reset_at: z.string().nullish(),
+  tpm_limit: nullableNumber,
+  rpm_limit: nullableNumber,
+});
+
+const userRowSchema = z.object({
+  user_id: z.string().nullish(),
+  user_email: z.string().nullish(),
+  user_alias: z.string().nullish(),
+  user_role: z.string().nullish(),
+  spend: z.number().nullish(),
+  max_budget: nullableNumber,
+  soft_budget: nullableNumber,
+  budget_duration: z.string().nullish(),
+  budget_reset_at: z.string().nullish(),
+  tpm_limit: nullableNumber,
+  rpm_limit: nullableNumber,
+  budget_id: z.string().nullish(),
+  litellm_budget_table: userBudgetTableSchema.nullish(),
+  /** Not a documented column on `LiteLLM_UserTable`; read if a proxy sends it. */
+  blocked: z.boolean().nullish(),
+});
+
+const userListSchema = z.object({
+  users: z.array(userRowSchema).default([]),
+  total: z.number().nullish(),
+  page: z.number().nullish(),
+  page_size: z.number().nullish(),
+  total_pages: z.number().nullish(),
+});
+
+/**
+ * Does this user row record a decision somebody took, or just a person?
+ *
+ * A cap, a soft budget, a rate limit, a link to a budget row, or an explicit
+ * block: any one of those is somebody having governed this user. `spend` is not
+ * on the list and must not be — every user who has ever made a call carries one,
+ * so admitting it would store the whole directory and report the gateway as ~0%
+ * governed for the arithmetic reason that most employees are not individually
+ * capped, which says nothing about whether user budgets are in use.
+ *
+ * The uncapped users are not lost by this: they are already on the page as rows
+ * of the `user` usage dimension, which is where "who spent what" belongs. What
+ * is dropped is only the claim that each of them is an ungoverned governance
+ * object.
+ */
+function isGovernedUser(row: z.infer<typeof userRowSchema>): boolean {
+  const nested = row.litellm_budget_table ?? null;
+  const configured = [
+    row.max_budget,
+    row.soft_budget,
+    row.budget_duration,
+    row.tpm_limit,
+    row.rpm_limit,
+    nested?.max_budget,
+    nested?.soft_budget,
+    nested?.budget_duration,
+    nested?.tpm_limit,
+    nested?.rpm_limit,
+  ].some((value) => value !== null && value !== undefined && value !== '');
+  const linked = typeof row.budget_id === 'string' && row.budget_id !== '';
+  return configured || linked || row.blocked === true;
+}
+
+/**
  * `/model/info` — the fourth management envelope, and the only one that is
  * neither a bare array nor a paginated page: a single `{"data": [...]}` object
  * holding every routable deployment, however many there are.
@@ -456,6 +547,14 @@ type SpendLogRow = z.infer<typeof spendLogRowSchema>;
 
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
+
+/**
+ * `/user/list` pages on `page_size`, and caps it at 100 the same way.
+ *
+ * Named separately from `KEY_PAGE_SIZE` because the *parameter* differs, not
+ * because the number does: writing `size` on this route is accepted and ignored.
+ */
+const USER_PAGE_SIZE = 100;
 
 /**
  * Which endpoint fills which dimensions.
@@ -987,10 +1086,11 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
-   * Current budgets and rate limits for every key, team and tag the credential
-   * can see, from the management routes rather than the analytics ones.
+   * Current budgets and rate limits for every key, team, tag and governed user
+   * the credential can see, from the management routes rather than the analytics
+   * ones.
    *
-   * All three routes are optional, and independently so — a proxy can perfectly
+   * All four routes are optional, and independently so — a proxy can perfectly
    * well have keys and no tags, and a tag-management route only exists on newer
    * versions at all. A read-only analytics key is also a reasonable thing to
    * point this integration at, and it will be refused every one of them:
@@ -1010,6 +1110,9 @@ export class LiteLlmGatewayClient implements GatewayClient {
     }
     for (const budget of await this.fetchTagBudgets()) {
       budgets.set(`tag ${budget.key}`, budgets.get(`tag ${budget.key}`) ?? budget);
+    }
+    for (const budget of await this.fetchUserBudgets()) {
+      budgets.set(`user ${budget.key}`, budgets.get(`user ${budget.key}`) ?? budget);
     }
 
     log.info({ dash: { budgets: budgets.size } }, 'litellm budgets fetched');
@@ -1170,6 +1273,99 @@ export class LiteLlmGatewayClient implements GatewayClient {
       log.info(
         { dash: { dynamic, governed: budgets.length } },
         'tag rows seen only in spend data — reported as usage, not as governance',
+      );
+    }
+    return budgets;
+  }
+
+  /**
+   * `/user/list` — internal users, of which only the governed ones are kept.
+   *
+   * The join is `user_id`, which is what the `entities` breakdown of
+   * `/user/daily/activity` is keyed by, so a capped user's cap lands beside the
+   * spend the adoption card already ranks. `user_email` is the label, and is the
+   * one label on this route worth having: a proxy's `user_id` is frequently an
+   * SSO subject nobody recognises (open question 2).
+   *
+   * Two rules that are this route's and nothing else's:
+   *
+   *  - **Ungoverned rows are dropped and counted** (`isGovernedUser`). The count
+   *    is the interesting half: "4,000 users, none of them capped" and "no users
+   *    at all" are different answers about the same empty table.
+   *  - **A row without a `user_id` is an orphan**, exactly as a key without a
+   *    token is: an email alone cannot be joined to the usage dimension, and a
+   *    cap that cannot be put beside a spend is not worth a row.
+   */
+  private async fetchUserBudgets(): Promise<GatewayBudgetSnapshot[]> {
+    const budgets: GatewayBudgetSnapshot[] = [];
+    let ungoverned = 0;
+    let unidentified = 0;
+
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const url = new URL(`${this.root}/user/list`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('page_size', String(USER_PAGE_SIZE));
+
+      const body = await this.getJson(url, true);
+      if (body === null) return budgets;
+
+      const parsed = userListSchema.safeParse(body);
+      if (!parsed.success) {
+        throw new Error(
+          `LiteLLM /user/list returned an unexpected shape: ${parsed.error.issues
+            .slice(0, 3)
+            .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+            .join('; ')}`,
+        );
+      }
+
+      for (const row of parsed.data.users) {
+        if (!isGovernedUser(row)) {
+          ungoverned += 1;
+          continue;
+        }
+        const id = row.user_id?.trim() ?? '';
+        if (id === '') {
+          unidentified += 1;
+          continue;
+        }
+        // Inline limits win over the shared budget row they may also carry: the
+        // inline one is what the proxy enforces against this user specifically.
+        const shared = row.litellm_budget_table ?? null;
+        const pick = <T>(inline: T | null | undefined, nested: T | null | undefined): T | null =>
+          inline ?? nested ?? null;
+        const label = row.user_email?.trim() || row.user_alias?.trim() || '';
+
+        budgets.push({
+          scope: 'user',
+          key: id.slice(0, 200),
+          label: label === '' ? null : label.slice(0, 200),
+          spendNano: dollarsToNano(row.spend ?? 0),
+          maxBudgetNano: optionalDollarsToNano(pick(row.max_budget, shared?.max_budget)),
+          softBudgetNano: optionalDollarsToNano(pick(row.soft_budget, shared?.soft_budget)),
+          budgetDuration:
+            pick(row.budget_duration, shared?.budget_duration)?.trim().slice(0, 20) ?? null,
+          resetAt: toInstant(pick(row.budget_reset_at, shared?.budget_reset_at)),
+          tpmLimit: toLimit(pick(row.tpm_limit, shared?.tpm_limit)),
+          rpmLimit: toLimit(pick(row.rpm_limit, shared?.rpm_limit)),
+          blocked: row.blocked === true,
+        });
+      }
+
+      const totalPages = parsed.data.total_pages ?? 1;
+      if (parsed.data.users.length === 0 || page >= totalPages) break;
+      if (page === MAX_PAGES) {
+        log.warn(
+          { dash: { pages: MAX_PAGES, totalPages } },
+          'user roster longer than the page walk — governed users beyond it are not read',
+        );
+      }
+    }
+
+    if (ungoverned > 0 || unidentified > 0) {
+      log.info(
+        { dash: { governed: budgets.length, ungoverned, unidentified } },
+        'user rows carrying no limit are reported as usage, not as governance',
       );
     }
     return budgets;
@@ -1398,6 +1594,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
     routes.push(await this.probeKeyList());
     routes.push(await this.probeTeamList());
     routes.push(await this.probeTagList());
+    routes.push(await this.probeUserList());
     routes.push(await this.probeModelInfo());
     routes.push(await this.probeReadiness());
 
@@ -1586,6 +1783,52 @@ export class LiteLlmGatewayClient implements GatewayClient {
           : governed === rows
             ? `${rows} tag(s), all configured`
             : `${rows} tag(s), ${governed} configured — the rest were only seen in spend data and carry no budget`,
+    };
+  }
+
+  /**
+   * `/user/list`, judged on its *governed* rows for the same reason `/tag/list`
+   * is — and with the gap between the two counts far wider here.
+   *
+   * A proxy answering four thousand users and no caps is working perfectly and
+   * gives the budget card nothing, so `rows` alone would read as a healthy route
+   * feeding an empty scope with no explanation. The detail spells both counts,
+   * which is also the fastest way to see that this integration is deliberately
+   * not storing the staff directory.
+   */
+  private async probeUserList(): Promise<GatewayProbeRoute> {
+    const url = new URL(`${this.root}/user/list`);
+    url.searchParams.set('page', '1');
+    url.searchParams.set('page_size', String(USER_PAGE_SIZE));
+
+    const attempt = await this.probeOnce(url);
+    const base = {
+      path: '/user/list',
+      purpose:
+        'The budget card will be empty for users; key, team and tag budgets are unaffected. Per-user caps are optional on a proxy, so an empty answer here is often correct.',
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = userListSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+    const rows = parsed.data.users.length;
+    const governed = parsed.data.users.filter(isGovernedUser).length;
+    return {
+      ...base,
+      status: governed === 0 ? 'empty' : 'ok',
+      rows,
+      detail:
+        rows === 0
+          ? null
+          : `${rows} user(s) on this page of ${parsed.data.total ?? rows}, ${governed} carrying a limit — the rest are reported as usage, not as governance`,
     };
   }
 

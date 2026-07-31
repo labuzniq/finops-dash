@@ -341,9 +341,9 @@ export const gatewayBreakdownDaily = pgTable(
 export const gatewayBudget = pgTable(
   'gateway_budget',
   {
-    /** See GATEWAY_BUDGET_SCOPES in @dash/shared — `api_key` or `team`. */
+    /** See GATEWAY_BUDGET_SCOPES in @dash/shared — `api_key`, `team`, `tag` or `user`. */
     scope: varchar('scope', { length: 20 }).notNull(),
-    /** The proxy's id: hashed key token, or team id — joins the usage dimension of the same name. */
+    /** The proxy's id: hashed key token, team id, tag name or user id — joins the usage dimension of the same name. */
     key: varchar('key', { length: 200 }).notNull(),
     label: varchar('label', { length: 200 }),
     /** USD × 1e9, for the budget period in flight. */
