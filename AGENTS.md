@@ -115,7 +115,20 @@ price, and the gateway fronts three backends whose price lists differ; the one w
 labelled a *convention* (0.1× read, 1.25× write). Those multipliers give the card its only threshold —
 below `0.25/0.9 ≈ 0.28` reads per token written the cache costs more than not caching — and only that
 `churning` state and a material workload with no cache activity are badged, never "below average". Rows
-rank by uncached input tokens (the size of the opportunity, not of the mistake). Everything above is
+rank by uncached input tokens (the size of the opportunity, not of the mistake).
+`lib/metrics/gatewayChargeback.ts` is the page's only *statement* rather than analysis, and the only
+derivation built to be read outside the dashboard — which is why it is the one surface that must **add
+up**: the lines plus an explicit `unallocated` row equal the month's gateway spend exactly, with no
+top-N cap and no pro-rata spreading of the remainder, because distributing dollars the proxy never
+attributed would put an unauditable number on a department's line. It offers only payer-shaped
+dimensions (`team`, `tag`, `api_key`, `user` — `model`/`provider` are the supply side and bill nobody,
+`mcp_server` is a subset), bills exactly one of them at a time since they overlap, and scopes itself to
+a *calendar month* picked on the card rather than to the range picker, offering only months whose first
+day is still inside retention. A month in flight is labelled a preview and compared against the same
+number of days of the month before it, cut by day-of-month and clamped, or every statement would read
+as a collapse until the month ended. `buildChargebackCsv` in `lib/exportCsv.ts` exports it with a
+preamble carrying the period, the totals and the overlap warning, and the remainder as a row of the
+table, so a recipient who sums the spend column lands on the gateway total. Everything above is
 *usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the counter for the period in flight, per key and per team,

@@ -7,6 +7,7 @@ import {
   fetchGatewayUsage,
 } from '../api/client.js';
 import type { GatewayStatus } from '../api/client.js';
+import type { ChargebackRange } from '../lib/metrics/gatewayChargeback.js';
 import type { ComparisonWindow } from '../lib/metrics/gatewayCompare.js';
 import type { ForecastRange } from '../lib/metrics/gatewayForecast.js';
 import { spendRangeBounds } from './useSpendData.js';
@@ -57,6 +58,24 @@ export function useGatewayComparisonData(window: ComparisonWindow | null) {
  * the answer.
  */
 export function useGatewayForecastData(range: ForecastRange, enabled: boolean) {
+  return useQuery<GatewayUsage>({
+    queryKey: ['gateway', range.from, range.to],
+    queryFn: () => fetchGatewayUsage(range.from, range.to),
+    enabled,
+  });
+}
+
+/**
+ * One billing month plus the one before it — the chargeback statement's own
+ * window, picked by month rather than read off the range picker because an
+ * invoice period is a calendar month and nothing else.
+ *
+ * Both months come in one request (62 days at most, inside retention by
+ * construction) so every line on the statement carries a prior-month figure
+ * without a second round trip, and switching between the offered months
+ * re-reads only the months not already cached.
+ */
+export function useGatewayChargebackData(range: ChargebackRange, enabled: boolean) {
   return useQuery<GatewayUsage>({
     queryKey: ['gateway', range.from, range.to],
     queryFn: () => fetchGatewayUsage(range.from, range.to),

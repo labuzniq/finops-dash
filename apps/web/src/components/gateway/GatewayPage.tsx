@@ -17,6 +17,13 @@ import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAg
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveGatewayCache, hasCacheActivity } from '../../lib/metrics/gatewayCache.js';
+import {
+  CHARGEBACK_DIMENSIONS,
+  chargebackMonths,
+  chargebackRange,
+  deriveChargeback,
+} from '../../lib/metrics/gatewayChargeback.js';
+import type { ChargebackDimension } from '../../lib/metrics/gatewayChargeback.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import {
   comparisonWindow,
@@ -32,6 +39,7 @@ import { deriveGatewayMix, hasMixSignal } from '../../lib/metrics/gatewayMix.js'
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
   useGatewayBudgets,
+  useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayData,
   useGatewayForecastData,
@@ -48,6 +56,7 @@ import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
+import { GatewayChargebackCard } from './GatewayChargebackCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
@@ -183,6 +192,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   /** Which governance scope the budget card shows. Keys and teams cap the same dollars. */
   const [budgetScope, setBudgetScope] = useState<GatewayBudgetScope>('api_key');
+  /**
+   * The chargeback statement's own period and payer, held apart from the range
+   * picker and the breakdown switcher on purpose: a bill is issued for a
+   * calendar month against whoever is being charged, and neither of those is
+   * the question the rest of the page is answering. Null month means "the one
+   * in flight", resolved once retention is known.
+   */
+  const [billMonth, setBillMonth] = useState<string | null>(null);
+  const [billDimension, setBillDimension] = useState<ChargebackDimension>('team');
 
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
@@ -290,6 +308,46 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const budgets = useMemo(
     () => deriveBudgets(budgetsQuery.data?.budgets, new Date()),
     [budgetsQuery.data],
+  );
+
+  // The chargeback statement's window is a calendar month picked here, plus
+  // the month before it in the same request so every line carries a
+  // prior-period figure. Deliberately independent of the range picker: an
+  // invoice period is a month, and "the last 28 days" bills nobody.
+  const billMonths = useMemo(() => chargebackMonths(maxIso, minIso), [maxIso, minIso]);
+  const activeMonth = billMonth !== null && billMonths.includes(billMonth)
+    ? billMonth
+    : (billMonths[0] ?? maxIso.slice(0, 7));
+  const billRange = useMemo(
+    () => chargebackRange(activeMonth, maxIso, minIso),
+    [activeMonth, maxIso, minIso],
+  );
+  const billQuery = useGatewayChargebackData(billRange, configured);
+
+  // The payer dimensions the proxy actually answered for. A gateway that tags
+  // nothing falls back to `api_key`, which always exists — every call is made
+  // with one, so there is always somebody to bill.
+  const billDimensions = useMemo(() => {
+    const present = new Set(
+      (billQuery.data?.breakdowns ?? []).map((point) => point.dimension as string),
+    );
+    const offered = CHARGEBACK_DIMENSIONS.filter((option) => present.has(option));
+    return offered.length > 0 ? offered : (['api_key'] as ChargebackDimension[]);
+  }, [billQuery.data]);
+
+  const activeBillDimension = billDimensions.includes(billDimension)
+    ? billDimension
+    : (billDimensions[0] ?? 'api_key');
+
+  const statement = useMemo(
+    () =>
+      deriveChargeback(
+        billQuery.data?.daily ?? [],
+        billQuery.data?.breakdowns ?? [],
+        billRange,
+        activeBillDimension,
+      ),
+    [billQuery.data, billRange, activeBillDimension],
   );
 
   const latestJob = latestJobQuery.data ?? null;
@@ -573,6 +631,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             scope={budgetScope}
             onScope={setBudgetScope}
             loaded={!budgetsQuery.isPending}
+          />
+
+          <GatewayChargebackCard
+            statement={statement}
+            months={billMonths}
+            onMonth={setBillMonth}
+            onDimension={setBillDimension}
+            available={billDimensions}
+            loading={billQuery.isPending}
           />
 
 

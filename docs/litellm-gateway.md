@@ -400,9 +400,10 @@ What it shows, and why each one is there:
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
+| Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
 
-Thirteen decisions worth keeping:
+Fourteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -670,6 +671,51 @@ Thirteen decisions worth keeping:
   the sum is still exactly its spend. A departure's rate term is zero by
   construction and its mix term gives back exactly what it used to cost.
 
+- **The chargeback statement is the one surface that has to add up, and every
+  rule on it follows from that.** `lib/metrics/gatewayChargeback.ts` +
+  `GatewayChargebackCard` are not an analysis of the gateway's spend but a
+  *bill* for it, and a bill leaves the dashboard — it is exported, pasted into
+  a finance thread, and argued with by the department on the line. Four
+  consequences:
+
+  **The lines plus an explicit `unallocated` row equal the month's gateway
+  spend exactly.** No top-N cap (a department missing from its own statement is
+  a different kind of bug from a key missing from a ranked table), and the
+  remainder is *never* spread pro-rata across the other lines. LiteLLM carries
+  a user or a tag only when the caller passed one, so a service key acting on
+  nobody's behalf legitimately falls outside every row; distributing those
+  dollars would invent an attribution the proxy never made and put an
+  unauditable number on someone's line. It is shown, labelled, and left there.
+  The mock reconciles at 100% coverage on all four payer dimensions, which
+  makes the remainder row a live check rather than a decoration.
+
+  **Only payer-shaped dimensions are offered** — `team`, `tag`, `api_key`,
+  `user`. `model` and `provider` are the supply side (a statement charging AWS
+  Bedrock $4,000 bills nobody) and `mcp_server` is a strict subset rather than
+  a slice. And because the dimensions overlap, a month is billed by exactly one
+  of them: the card says so, and the exported file repeats it in its own
+  preamble, since the recipient cannot see the card.
+
+  **The period is a calendar month, picked on the card, independent of the
+  range picker** — the same reason the forecast fetches its own month. Only
+  months whose *first* day is still inside the proxy's 90-day retention are
+  offered; a month missing its opening days would bill short. The month in
+  flight is offered as a preview and labelled as one.
+
+  **A month still running is compared against the same number of days of the
+  month before it**, cut by day-of-month and clamped (a run through the 31st
+  compared with February stops at the 28th and says `partial`). Comparing
+  twelve days against a whole month would report every statement as a collapse
+  until the month ended — the same failure mode the comparison window avoids by
+  measuring off the trimmed spine rather than the requested range.
+
+  The export (`buildChargebackCsv` in `lib/exportCsv.ts`) carries a preamble
+  naming the period, its status, the dimension, the gateway total, the
+  allocated sum, the remainder and the overlap warning, then the rows and the
+  remainder as a row of the table — so a recipient who sums the spend column
+  lands on the gateway total, which is the first thing anyone does with the
+  file.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -807,6 +853,35 @@ key, which must read as `churning` on a zero reuse rather than falling through
 to `unused` on the strength of its zero hit rate. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache.ts`.
 
+`apps/api/scripts/verify-gateway-chargeback.ts` covers the chargeback
+statement, and what it checks is what a bill has to survive. The lines plus the
+remainder must reproduce the month's gateway spend to the cent on every payer
+dimension the proxy answered — and not only the dollars: requests and tokens
+reconcile the same way, because a department that cannot dispute a line's money
+will dispute the tokens behind it. Line shares must sum to the statement's own
+coverage figure (they take the gateway-wide denominator, like every share on
+the page), and `api_key` must leave nothing unallocated, since every call is
+made with a key. The month is proven to be the *only* window that contributes,
+checked within one pull rather than against a second one: the mock's Lehmer
+stream is consumed from the window start, so re-fetching a different range
+redraws the same calendar day and the comparison would measure the generator
+instead of the derivation — trimming the payload to the two months, and padding
+it with a day six months away, must both leave the bill unchanged. The period
+arithmetic is pinned where it is easy to get wrong (2024-02 ends on the 29th,
+2023-02 on the 28th, January's prior month is the previous December, a prior
+month outside retention is refused rather than fetched short), and the partial
+comparison is exercised on a constructed payload where the two answers differ
+by construction: a July reported through the 10th compares against the first
+ten days of June ($100, flat) and the same July once finished compares against
+all $300 of it. The export is parsed back and its spend column summed, which
+must land on the gateway total, with the remainder as its last row and RFC 4180
+escaping checked on a key carrying a comma and a quote. The edges cover an
+unreported month (which must not read as complete), a month with one day and no
+breakdown rows (everything falls into the remainder), and a dimension
+attributing *more* than the gateway saw — clamped so no negative remainder is
+drawn, and surfaced as `reconciles: false` rather than hidden. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-chargeback.ts`.
+
 `apps/api/scripts/verify-gateway-mix.ts` covers the volume/mix/rate
 decomposition, and it is the one layer where the checks *are* the design: the
 split has to be an identity or the card is three opinions. So the script asserts
@@ -932,3 +1007,17 @@ missing on this side of the gateway:
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.
+- **Chargeback beyond 90 days.** The statement can only bill months whose first
+  day is still inside the proxy's retention window, so the third month back
+  disappears partway through every month. `gateway_daily` already holds
+  everything the sync has ever seen, but the read route serves the requested
+  range from the table without distinguishing "the proxy no longer has this"
+  from "we never asked" — a month sealed at close (a `gateway_month` snapshot,
+  or simply trusting the stored days) is what would make a statement issuable a
+  year later. Worth doing the first time someone asks for last quarter.
+- **Cost centres on a gateway line.** A statement bills a team id, a tag or an
+  email, not a department: joining those to the org taxonomy the Copilot side
+  already has (`lib/metrics/costCentre.ts`) needs the `user`/`team` ids to be
+  something an identity system recognises, which is open question 2 and 4 and
+  cannot be settled from here. Until then the statement is billed against the
+  proxy's own identifiers, which is what the export carries.
