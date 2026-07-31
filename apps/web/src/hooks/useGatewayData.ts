@@ -5,6 +5,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDeploymentHistory,
+  GatewayExceptions,
   GatewayHealth,
   GatewayModels,
   GatewayNotifications,
@@ -19,6 +20,7 @@ import {
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayDeploymentHistory,
+  fetchGatewayExceptions,
   fetchGatewayHealth,
   fetchGatewayModels,
   fetchGatewayNotifications,
@@ -283,6 +285,27 @@ export function useGatewaySpendLogs(window: { from: string; to: string } | null)
   return useQuery<GatewaySpendLogs>({
     queryKey: ['gateway', 'logs', window?.from ?? 'none', window?.to ?? 'none'],
     queryFn: () => fetchGatewaySpendLogs(window?.from ?? '', window?.to ?? ''),
+    enabled: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+    gcTime: 10 * 60_000,
+  });
+}
+
+/**
+ * Why the failed calls in a window failed, read on demand.
+ *
+ * The third gateway query that does not run on mount, and the reason is the
+ * proxy's own route rather than the table's size: `/model/metrics/exceptions`
+ * filters on one `model_group` at a time with no wildcard, so a read is a round
+ * trip per alias in the window. `refetch()` is the trigger, exactly as it is
+ * for the request sample, and the answer is cached under the window so pressing
+ * it again for the same days costs nothing.
+ */
+export function useGatewayExceptions(window: { from: string; to: string } | null) {
+  return useQuery<GatewayExceptions>({
+    queryKey: ['gateway', 'exceptions', window?.from ?? 'none', window?.to ?? 'none'],
+    queryFn: () => fetchGatewayExceptions(window?.from ?? '', window?.to ?? ''),
     enabled: false,
     staleTime: 5 * 60_000,
     retry: false,

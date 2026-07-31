@@ -428,7 +428,20 @@ by spend (`EXCEPTION_MODEL_CAP`, 12) and reports the ones it skipped. `classifyG
 `@dash/shared` is the single mapping from LiteLLM's exception names to the party that can act on the
 fault (rate-limit, auth, budget, timeout, backend, request, content), which is the whole point of the
 layer: `RateLimitError` and `AuthenticationError` are one `failed_requests` in the ledger and two
-unrelated pieces of work.
+unrelated pieces of work. `lib/metrics/gatewayExceptions.ts` and `GatewayExceptionCard` are what
+read it, directly under the reliability card and never in place of it — that card says how many
+calls failed, this one is the only place the gateway says what they were. The module adds no rule
+about the gateway (the shared taxonomy and roll-up are the whole statement) and four about the
+*reading*: the window is the tail of the trimmed spine capped at `EXCEPTION_MAX_WINDOW_DAYS`; it is
+fetched on a press, because a sweep is a round trip per alias; every share is a share of what was
+**recorded**, with the ledger's own failure count carried beside the total as an *unclamped*
+disagreement between two tables rather than as coverage (under 100% is error logging off or pruned,
+over 100% is one retried call logging twice); and each deployment row is joined to the nightly
+`/health` reading by rebuilding the exception key with `deploymentExceptionKey`, where a deployment
+the reading does not name reads *not in the reading* rather than healthy. Unread, refused and
+answered-with-nothing are three separate silences, an alias the cap left out is **unread rather than
+clean**, and the card feeds no digest finding: the fault it would name is already the health card's
+`degraded`, and what it adds is the reason under that finding.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`

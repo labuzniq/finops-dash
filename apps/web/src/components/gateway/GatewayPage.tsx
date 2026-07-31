@@ -46,6 +46,11 @@ import {
   rateDelta,
 } from '../../lib/metrics/gatewayCompare.js';
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
+import {
+  deriveGatewayExceptions,
+  exceptionWindow,
+  ledgerFailuresIn,
+} from '../../lib/metrics/gatewayExceptions.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
 import {
@@ -62,6 +67,7 @@ import {
   useGatewayComparisonData,
   useGatewayCoverage,
   useGatewayDeploymentHistory,
+  useGatewayExceptions,
   useGatewayHealth,
   useGatewayModels,
   useGatewaySealHistory,
@@ -93,6 +99,7 @@ import { GatewayHistoryCard } from './GatewayHistoryCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
+import { GatewayExceptionCard } from './GatewayExceptionCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -583,6 +590,27 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [logsQuery.data, logRowDimension, logColumnDimension, summary.daily, logWindow],
   );
 
+  // Why those failures happened — the page's second live read, and the only
+  // source of a *reason*. Its window is the tail of the trimmed spine like the
+  // request sample's, capped at a month by the error table's own retention, and
+  // it is never fetched until the card's button asks: the proxy's route filters
+  // on one alias at a time, so a read is a round trip per model.
+  const exceptionRead = useMemo(() => exceptionWindow(summary.daily), [summary.daily]);
+  const exceptionsQuery = useGatewayExceptions(exceptionRead);
+  // Two parameters the module refuses to fetch for itself: the ledger's own
+  // failure count for the same days (context beside the exception total, never
+  // its denominator — the two tables are switched and pruned independently),
+  // and tonight's health reading, which is the only other surface keyed at a
+  // deployment and therefore the only thing these rows can be joined to.
+  const exceptions = useMemo(
+    () =>
+      deriveGatewayExceptions(exceptionsQuery.data ?? null, {
+        ledgerFailures: ledgerFailuresIn(summary.daily, exceptionRead),
+        health: healthQuery.data ?? null,
+      }),
+    [exceptionsQuery.data, summary.daily, exceptionRead, healthQuery.data],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -909,6 +937,25 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
           <div id="gateway-reliability">
             <GatewayReliabilityCard summary={reliability} />
+          </div>
+
+          {/*
+            Immediately under reliability, and deliberately not instead of it:
+            that card says how many calls failed and where, this one says what
+            they were. The ledger has no error column at all, so a rate limit
+            and an expired credential are one number up there and two different
+            jobs down here — and a reader given only this card would read an
+            exception count as a failure count, which is why it never appears
+            without the rate above it.
+          */}
+          <div id="gateway-exceptions">
+            <GatewayExceptionCard
+              view={exceptions}
+              onRead={() => void exceptionsQuery.refetch()}
+              loading={exceptionsQuery.isFetching}
+              error={exceptionsQuery.error instanceof Error ? exceptionsQuery.error : null}
+              enabled={configured && exceptionRead !== null}
+            />
           </div>
 
           {/*

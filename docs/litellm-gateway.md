@@ -1113,6 +1113,7 @@ What it shows, and why each one is there:
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
+| Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
 | Deployment health over time | The same nightly readings kept as a sequence — the one thing the snapshot above structurally cannot say: which deployments have been refusing for nights rather than for one evening. A strip per deployment with three states (answering, failing, **no reading filed**), the gateway-wide failing count per night, standing faults first, then anything failing now, then intermittence — every figure a count of **readings**, never a duration or an availability percentage. A recording too short to hold a standing run says so instead of reporting a clean sheet |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
@@ -1129,7 +1130,7 @@ What it shows, and why each one is there:
 | Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-six decisions worth keeping:
+Twenty-seven decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1595,7 +1596,7 @@ Twenty-six decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because eighteen cards each flagging their own faults means every
+  their findings in one list, because nineteen cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -1895,6 +1896,53 @@ Twenty-six decisions worth keeping:
   findings it *would* raise — a pool refusing behind a healthy-looking alias —
   the health card already raises from the nightly reading, which is the reading
   that is always there.
+
+- **The exception card is a reason beside a rate, never instead of one.** It
+  sits directly under the reliability card, and every rule on it comes from the
+  layer rather than from the view.
+
+  **A button, not a mount**, for a reason the request sample does not have: the
+  proxy's route filters on one `model_group` at a time with no wildcard, so a
+  read is a round trip *per alias in the window*. The API picks the aliases from
+  the window's own usage ranked by spend, caps the sweep, and reports the rest —
+  and the card renders those as **unread rather than clean**, because a capped
+  per-model read that says nothing about the cap looks exactly like a quiet
+  gateway.
+
+  **No rate, no share of traffic, anywhere.** `LiteLLM_ErrorLogs` carries no
+  denominator at all, so every percentage on the card is a share of the
+  exceptions *recorded*. The one figure that touches the ledger — exceptions
+  recorded over failures counted for the same days — is deliberately
+  **unclamped** and labelled as a disagreement between two tables rather than as
+  coverage: under 100% is error logging switched off or pruned for part of the
+  window, over 100% is a retried call failing twice against one failed request,
+  and both are real readings. The rate stays on the card above, which reads the
+  ledger.
+
+  **The class is the finding, and the owner is why.** `RateLimitError` and
+  `AuthenticationError` are one `failed_requests` upstream and two unrelated
+  pieces of work, so each class is rendered with the party that can act on it —
+  capacity, configuration, governance, latency, provider, caller, policy. Two of
+  them (`auth`, `budget`) appear on no other surface on this page at all.
+
+  **The deployment rows join to the health reading, and only in that
+  direction.** The exception key is `CONCAT(litellm_model_name, '-', api_base)`
+  and both halves contain hyphens, so it is rebuilt from a health row with
+  `deploymentExceptionKey` and never split. A deployment the reading does not
+  name reads **not in the reading** rather than healthy: an absent row is
+  silence, which is the same rule the health strip follows for an unread night.
+
+  **Three silences again, and the middle one is not a fault**: not read yet,
+  refused (`disable_error_logs` or a non-admin credential), and
+  answered-with-nothing — which the card words as *no errors recorded*, beside
+  the failures the ledger counted over the same days, because the two are not
+  the same claim.
+
+  **It feeds no finding to the attention digest**, for the button's reason and
+  one more: the fault it would name — a pool refusing on quota behind an alias
+  that bills normally — is already the health card's `degraded` finding, and the
+  digest never carries two findings about one key. What this card adds is the
+  reason under that finding, which is why the two are read together.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -2634,6 +2682,28 @@ the exception total and the ledger's `failed_requests` disagree, on purpose. Run
 it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exceptions.ts`.
 
+`apps/api/scripts/verify-gateway-exceptions-view.ts` covers what the *page* does
+with those rows. Its **pure** half keeps the three silences apart (unread,
+refused, answered-with-nothing — and only the last is about the gateway), pins
+the roll-up the card draws (class shares summing to one over what was recorded,
+the dominant class carrying its owner, deployments ranked by their own totals),
+and holds the two rules that are easiest to soften: the ledger comparison is
+reported unclamped — a fixture where the exception count *exceeds* the ledger's
+failures must read past 100% rather than being trimmed to it — and the join to
+`gateway_deployment_health` is one-directional, with a deployment the reading
+does not name reported as unread rather than healthy, including the
+details-stripped case where `api_base` is null and the key is the backend alone.
+The window rules are checked on the spine rather than on the picker, and the
+skipped aliases survive the derivation. The **mock** half drives
+`fetchModelExceptions` and `fetchHealth` together and checks the claim the card
+exists to make: the reserved-throughput pool the health reading finds failing is
+the same deployment the exception log names, it is rate limits and almost
+nothing else, its sibling behind the same alias is healthy — which is why the
+alias reads as ordinary everywhere else — and the exception total disagrees with
+the ledger's failures for the window, which is the disagreement the card shows
+rather than reconciles. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exceptions-view.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -2898,20 +2968,24 @@ Governance is now rendered end to end across all four scopes
   mean anything on a proxy nobody has looked at yet — needs a real proxy to
   answer.
 
-- **A view on the exception classes.** `GET /api/gateway/exceptions` is built,
-  contract-checked and rendered by nothing: the API answers per-deployment
-  exception counts with each class attributed to the party that can act on it,
-  and the page has no card for it yet. The shape it is already forced into is
-  worth stating, because the layer's own rules decide it: it must be read on a
-  press rather than on mount (a sweep is one proxy round trip per alias, the
-  same argument the request-log card follows), it may not draw a rate or a share
-  of traffic (the table carries no denominator), and it has to sit beside the
-  reliability card rather than replace it — the ledger says *how many* and this
-  says *which kind*, and a reader given only the second will read an exception
-  count as a failure count. What it adds that nothing else can: a deployment
-  failing behind an alias that bills and fails normally, named as a quota rather
-  than as a mystery, and two classes (`auth`, `budget`) that appear on no other
-  surface at all.
+- **Alerting on a reason.** The exception layer is now read end to end — the
+  API sweeps the window's aliases, and the `Why calls failed` card renders the
+  classes with their owners and the deployments joined to the health reading.
+  What it still cannot do is *leave the dashboard*: nothing here is stored, so
+  there is no table for `services/gateway-notify.ts` to assess after a sync,
+  which is the boundary both existing alert sources sit on the other side of.
+  Storing a nightly roll-up would cross it — one row per deployment per class
+  per day, the same shape as the health history — and the first question it
+  raises needs a real proxy: whether a corporate gateway's error mix is stable
+  enough that a change in it is a finding, or whether it moves with the workload
+  and would page somebody every time a team shipped a new prompt.
+
+  Two smaller things the card deliberately leaves out: there is no per-class
+  daily strip (the route answers a window, not a series, so a trend would need
+  one read per day), and no `elevated` badge anywhere on it — this table carries
+  no denominator, so significance would have to be borrowed from the ledger, and
+  a badge whose numbers come from a different table is exactly the disagreement
+  the digest rule exists to prevent.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

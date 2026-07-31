@@ -6,6 +6,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayDeploymentHistory,
+  GatewayExceptions,
   GatewayHealth,
   GatewayModels,
   GatewayNotifications,
@@ -355,6 +356,21 @@ export function fetchGatewaySpendLogs(
   const query = new URLSearchParams({ from, to });
   if (limit !== undefined) query.set('limit', String(limit));
   return request<GatewaySpendLogs>(`/gateway/logs?${query.toString()}`);
+}
+
+/**
+ * Why the failed calls in a window failed, per deployment — the only source
+ * that carries a *reason* rather than a count.
+ *
+ * Live like the request sample, and stored nowhere: it reads
+ * `LiteLLM_ErrorLogs`, which is switched on separately from the aggregates and
+ * pruned on its own schedule. The proxy's route has no wildcard, so the API
+ * sweeps one alias at a time and reports the ones its cap left unread — which
+ * is why this is a manual read too.
+ */
+export function fetchGatewayExceptions(from: string, to: string): Promise<GatewayExceptions> {
+  const query = new URLSearchParams({ from, to });
+  return request<GatewayExceptions>(`/gateway/exceptions?${query.toString()}`);
 }
 
 /**
