@@ -4,6 +4,7 @@ import {
   cacheHitRate,
   costPerMillionTokens,
   costPerRequest,
+  GATEWAY_RETENTION_DAYS,
   RANGE_DAYS,
   rangeDayCount,
   successRate,
@@ -41,6 +42,7 @@ import {
   useGatewayBudgets,
   useGatewayChargebackData,
   useGatewayComparisonData,
+  useGatewayCoverage,
   useGatewayData,
   useGatewayForecastData,
   useGatewayStatus,
@@ -57,6 +59,7 @@ import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
 import { GatewayChargebackCard } from './GatewayChargebackCard.js';
+import { GatewayCoverageNote } from './GatewayCoverageNote.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
@@ -78,8 +81,6 @@ import styles from './GatewayPage.module.css';
  * seeded mock until a real proxy is reachable. See docs/litellm-gateway.md.
  */
 
-/** The proxy retains 90 days of daily aggregates; the picker is clamped to match. */
-const RETENTION_DAYS = 90;
 const MS_PER_DAY = 86_400_000;
 
 function KpiCard({
@@ -205,6 +206,11 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
   const latestJobQuery = useLatestJob('gateway');
+  // Which days are actually stored. Gated on the source only so an `off`
+  // gateway makes no call; the answer is needed before the pickers can be
+  // clamped, so it runs alongside the usage fetch rather than after it.
+  const coverageQuery = useGatewayCoverage(statusQuery.data?.configured ?? false);
+  const coverage = coverageQuery.data ?? null;
 
   const { from, to } = spendRangeBounds(range);
   const summary = useMemo(() => deriveGateway(usageQuery.data, from, to), [usageQuery.data, from, to]);
@@ -219,7 +225,24 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   );
 
   const maxIso = new Date().toISOString().slice(0, 10);
-  const minIso = new Date(Date.now() - (RETENTION_DAYS - 1) * MS_PER_DAY).toISOString().slice(0, 10);
+  /**
+   * How far back the page may look — the earliest day the dashboard has
+   * *stored*, not the earliest day the proxy would still answer for.
+   *
+   * The two diverge the longer the scheduler runs: the sync deletes only the
+   * dates it re-fetched, so `gateway_daily` keeps every day it has ever pulled
+   * while LiteLLM prunes at 90. Clamping to the proxy's window would hide
+   * history the API is holding, and it is the same floor the comparison window
+   * and the chargeback month list use, so it is computed once here.
+   *
+   * The retention window is the fallback until coverage answers, deliberately:
+   * it is the narrower of the two, so the picker can lag behind the stored
+   * history for a moment but can never offer a range with nothing behind it.
+   */
+  const retentionFloorIso = new Date(Date.now() - GATEWAY_RETENTION_DAYS * MS_PER_DAY)
+    .toISOString()
+    .slice(0, 10);
+  const minIso = coverage?.floor ?? retentionFloorIso;
   const rangeDays = rangeDayCount(range);
 
   const { totals } = summary;
@@ -232,9 +255,9 @@ export function GatewayPage({ sync }: GatewayPageProps) {
       : (summary.availableDimensions[0] ?? dimension);
 
   // The prior window is measured off the *trimmed* spine, so it is exactly as
-  // long as what is on screen — and it is only asked for when it is inside
-  // retention, where an empty answer would mean "nothing spent" rather than
-  // "never synced".
+  // long as what is on screen — and it is only asked for when it is inside the
+  // stored history, where an empty answer would mean "nothing spent" rather
+  // than "never synced".
   const priorWindow = useMemo(() => {
     const window = comparisonWindow(summary.daily);
     return window !== null && isWithinRetention(window, minIso) ? window : null;
@@ -508,6 +531,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
       {configured && !usageQuery.error && !usageQuery.isPending && hasData && (
         <>
+          <GatewayCoverageNote coverage={coverage} />
+
           {compared !== null && (
             <div className={styles.compareNote}>
               compared against the preceding {compared.window.days} days ({compared.window.from} …{' '}

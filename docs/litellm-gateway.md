@@ -306,6 +306,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | --- | --- | --- |
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and period spend per key and team, keys first, each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
+| `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -402,8 +403,9 @@ What it shows, and why each one is there:
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
+| Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Renders nothing when there is nothing to say, which is the normal state |
 
-Fourteen decisions worth keeping:
+Fifteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -698,9 +700,11 @@ Fourteen decisions worth keeping:
 
   **The period is a calendar month, picked on the card, independent of the
   range picker** — the same reason the forecast fetches its own month. Only
-  months whose *first* day is still inside the proxy's 90-day retention are
-  offered; a month missing its opening days would bill short. The month in
-  flight is offered as a preview and labelled as one.
+  months whose *first* day is still covered are offered; a month missing its
+  opening days would bill short. "Covered" means the stored history rather than
+  the proxy's window — see the coverage decision below — so a statement stays
+  issuable after LiteLLM has pruned the month it bills. The month in flight is
+  offered as a preview and labelled as one.
 
   **A month still running is compared against the same number of days of the
   month before it**, cut by day-of-month and clamped (a run through the 31st
@@ -715,6 +719,45 @@ Fourteen decisions worth keeping:
   remainder as a row of the table — so a recipient who sums the spend column
   lands on the gateway total, which is the first thing anyone does with the
   file.
+
+- **How far back the page may look is a property of the table, not of the
+  clock.** Everything above reads *usage*; `GET /api/gateway/coverage` reads the
+  shape of `gateway_daily` itself, and it exists because the two answers
+  diverge the longer the scheduler runs.
+
+  The sync deletes only the dates it re-fetched, so the table is not a rolling
+  window — it accumulates every day it has ever pulled while LiteLLM prunes its
+  own rollup at 90. A floor computed in the browser as *today − 90* therefore
+  hides data the API is holding, and it gets steadily worse the longer the
+  dashboard runs. `coverage.floor` — the first stored day, or the retention
+  floor when nothing is stored — is now the single number the range picker, the
+  comparison window and the chargeback month list all clamp to. The retention
+  floor stays the fallback until coverage answers, deliberately: it is the
+  narrower of the two, so the picker can lag behind the stored history for a
+  moment but can never offer a range with nothing behind it.
+
+  Lifting that clamp is what makes the other half necessary. `deriveGateway`
+  zero-fills interior days on purpose — a quiet weekend is a real dip, and
+  dropping it would misdraw every chart — but a stretch when the scheduler was
+  down zero-fills *identically* and reads as a fortnight when the corporation
+  stopped using the gateway. From inside a usage payload the two are the same
+  bytes. The only place they can be told apart is against the list of dates that
+  actually carry rows, which is why gaps are reported as runs (`2026-06-10 –
+  2026-06-16`, seven days) rather than as a count, and why the note says which
+  of them a future sync can still fill: anything newer than the retention floor
+  will come back, anything older is gone from the proxy for good.
+
+  `daysBeyondRetention` is the same fact read the other way — history that
+  exists here and nowhere else, and therefore the part of the range no sync can
+  ever correct. It is stated on the note rather than left implicit, because it
+  is also the licence for the widened floor.
+
+  Two arithmetic details, both easy to get wrong by one: the retention floor is
+  `today − retentionDays`, matching the first day the sync actually asks the
+  proxy for (its window is 90 days *ending yesterday*), not `today − 89` — the
+  other reading reports the first day of every ordinary sync as unrepeatable
+  archive. And `storedDays + missingDays == spanDays` is asserted, because
+  without it "eleven days missing" is a number nobody can act on.
 
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
@@ -882,6 +925,28 @@ attributing *more* than the gateway saw — clamped so no negative remainder is
 drawn, and surfaced as `reconciles: false` rather than hidden. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-chargeback.ts`.
 
+`apps/api/scripts/verify-gateway-coverage.ts` covers the coverage read. Nothing
+here is a metric, so there is nothing to reconcile — what there is, is
+arithmetic that is easy to get subtly wrong and impossible to notice on screen.
+The span identity (`storedDays + missingDays == spanDays`) is asserted on every
+constructed table, including one whose gap list has been truncated, since the
+count must stay complete while the list becomes a sample. Gaps are checked as
+runs with the right bounds and lengths, newest first, with a one-day run
+carrying `from === to` (or the label reads as a range) and a February-crossing
+gap pinning the day arithmetic where a naive month count is off by 28.
+`daysBeyondRetention` is checked against a six-month table and against one that
+is entirely pruned. Two cases are the load-bearing ones: an empty table must
+floor at the retention floor, so a fresh install clamps exactly as it did before
+this route existed; and a gateway synced once must report *no* archive at all,
+which is what pinned the retention floor to the sync's own window rather than to
+`today − 89`. The consequence is asserted directly by importing the web app's
+`chargebackMonths` — six billable months on a stored floor against two on a
+retention floor, and never a month starting before the first stored day. The
+mock client is driven at the end to confirm the ordinary case is silent: a
+normal 90-day sync writes one row per day, no gaps, no archive, and the note
+renders nothing. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-coverage.ts`.
+
 `apps/api/scripts/verify-gateway-mix.ts` covers the volume/mix/rate
 decomposition, and it is the one layer where the checks *are* the design: the
 split has to be an identity or the card is three opinions. So the script asserts
@@ -1007,14 +1072,21 @@ missing on this side of the gateway:
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.
-- **Chargeback beyond 90 days.** The statement can only bill months whose first
-  day is still inside the proxy's retention window, so the third month back
-  disappears partway through every month. `gateway_daily` already holds
-  everything the sync has ever seen, but the read route serves the requested
-  range from the table without distinguishing "the proxy no longer has this"
-  from "we never asked" — a month sealed at close (a `gateway_month` snapshot,
-  or simply trusting the stored days) is what would make a statement issuable a
-  year later. Worth doing the first time someone asks for last quarter.
+- **Sealing a month at close.** `GET /api/gateway/coverage` lifted the 90-day
+  clamp — the statement now bills any month whose first day is stored, so a
+  dashboard that has been syncing since February can issue February's bill —
+  but the days it bills are still ordinary `gateway_daily` rows that no sync
+  will ever touch again. Nothing marks a month as *final*, and nothing records
+  which sync last wrote it. A `gateway_month` snapshot taken at close would give
+  a statement a fixed thing to quote and would survive a schema change to the
+  daily tables. Worth doing the first time a statement has to be reproduced
+  months later and match to the cent.
+- **Backfilling a gap.** The coverage note names days that carry no rows, and
+  says which of them are still inside the proxy's window — but the only way to
+  fill them is a full 90-day re-sync, which is also the only sync the service
+  offers. A ranged sync (`POST /api/refresh/gateway?from=&to=`) would let
+  someone repair a gap without re-pulling a quarter, and would make the note
+  actionable rather than only informative.
 - **Cost centres on a gateway line.** A statement bills a team id, a tag or an
   email, not a department: joining those to the org taxonomy the Copilot side
   already has (`lib/metrics/costCentre.ts`) needs the `user`/`team` ids to be

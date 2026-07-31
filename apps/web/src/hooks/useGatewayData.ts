@@ -1,7 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
-import type { DateRange, GatewayBudgets, GatewayProbe, GatewayUsage } from '@dash/shared';
+import type {
+  DateRange,
+  GatewayBudgets,
+  GatewayCoverage,
+  GatewayProbe,
+  GatewayUsage,
+} from '@dash/shared';
 import {
   fetchGatewayBudgets,
+  fetchGatewayCoverage,
   fetchGatewayProbe,
   fetchGatewayStatus,
   fetchGatewayUsage,
@@ -97,6 +104,26 @@ export function useGatewayBudgets(enabled: boolean) {
   return useQuery<GatewayBudgets>({
     queryKey: ['gateway', 'budgets'],
     queryFn: fetchGatewayBudgets,
+    enabled,
+  });
+}
+
+/**
+ * Which days are stored — the query every other gateway query is bounded by.
+ *
+ * It has to answer before the page can honestly clamp its pickers, so it runs
+ * on mount alongside the usage fetch rather than being gated on it. Until it
+ * does, the page falls back to the proxy's retention window, which is the
+ * narrower and therefore safe answer: it can hide stored history for a moment,
+ * but it can never offer a range that has nothing behind it.
+ *
+ * Invalidated by a sync like the usage queries, since a sync is the only thing
+ * that adds a day.
+ */
+export function useGatewayCoverage(enabled: boolean) {
+  return useQuery<GatewayCoverage>({
+    queryKey: ['gateway', 'coverage'],
+    queryFn: fetchGatewayCoverage,
     enabled,
   });
 }

@@ -3,6 +3,7 @@ import type {
   CopilotSeat,
   DateRange,
   GatewayBudgets,
+  GatewayCoverage,
   GatewayProbe,
   GatewaySource,
   GatewayUsage,
@@ -220,6 +221,18 @@ export function fetchGatewayUsage(from: string, to: string): Promise<GatewayUsag
  */
 export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
   return request<GatewayBudgets>('/gateway/budgets');
+}
+
+/**
+ * Which days the dashboard has stored, and which are missing.
+ *
+ * Not a usage call: it describes the table, and it is what tells the page how
+ * far back it may look. The stored history outlives the proxy's retention
+ * window, so a floor computed from `today − 89` in the browser would hide data
+ * the API is holding.
+ */
+export function fetchGatewayCoverage(): Promise<GatewayCoverage> {
+  return request<GatewayCoverage>('/gateway/coverage');
 }
 
 /**

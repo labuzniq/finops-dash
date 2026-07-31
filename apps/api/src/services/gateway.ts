@@ -1,9 +1,15 @@
 import { and, asc, gte, lte } from 'drizzle-orm';
-import { GATEWAY_BUDGET_SCOPES, GATEWAY_DIMENSIONS, summarizeGatewayProbe } from '@dash/shared';
+import {
+  GATEWAY_BUDGET_SCOPES,
+  GATEWAY_DIMENSIONS,
+  summarizeGatewayCoverage,
+  summarizeGatewayProbe,
+} from '@dash/shared';
 import type {
   GatewayBreakdownPoint,
   GatewayBudget,
   GatewayBudgets,
+  GatewayCoverage,
   GatewayDailyPoint,
   GatewayProbe,
   GatewayProbeRoute,
@@ -82,6 +88,39 @@ export async function getGatewayUsage(from: string, to: string): Promise<Gateway
   }
 
   return { daily: days.map(toDailyPoint), breakdowns };
+}
+
+/**
+ * What `gateway_daily` actually holds — the one gateway read that answers a
+ * question about the *table* rather than about the gateway.
+ *
+ * The sync deletes only the dates it re-fetched, so the table is not a rolling
+ * 90-day window: it accumulates every day the scheduler ever pulled, and a
+ * dashboard that has been running six months holds three months the proxy has
+ * already pruned. Without this route the UI has no way to know that, and it
+ * clamps every picker to `today − 89` — refusing to show data it is sitting on.
+ *
+ * The same read answers the opposite question, which only becomes askable once
+ * the clamp is lifted: a stretch when nobody synced is a hole no future sync
+ * will fill, and every derivation on the page zero-fills interior days on the
+ * assumption that a zero is a quiet day. The gaps have to be named, because
+ * from inside a usage payload they are indistinguishable from an idle week.
+ *
+ * Only the date column is read. The table has one row per day keyed on it, so
+ * this is an index-order scan of a few hundred rows however long the gateway
+ * has been running.
+ */
+export async function getGatewayCoverage(): Promise<GatewayCoverage> {
+  const rows = await db
+    .select({ date: gatewayDaily.date })
+    .from(gatewayDaily)
+    .orderBy(asc(gatewayDaily.date));
+
+  const today = new Date().toISOString().slice(0, 10);
+  return summarizeGatewayCoverage(
+    rows.map((row) => row.date),
+    today,
+  );
 }
 
 /**

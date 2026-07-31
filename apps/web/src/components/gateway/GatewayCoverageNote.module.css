@@ -1,0 +1,39 @@
+/**
+ * A caveat strip, not a card: it qualifies the numbers below it rather than
+ * carrying its own, so it takes no card ground and no heading.
+ */
+
+.note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--card2);
+}
+
+.badge {
+  flex: none;
+  font: 600 10px ui-monospace, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 2px 7px;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+}
+
+.text {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 940px;
+}

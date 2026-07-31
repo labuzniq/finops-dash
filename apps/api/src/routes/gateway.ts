@@ -1,7 +1,12 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../env.js';
-import { getGatewayBudgets, getGatewayUsage, probeGateway } from '../services/gateway.js';
+import {
+  getGatewayBudgets,
+  getGatewayCoverage,
+  getGatewayUsage,
+  probeGateway,
+} from '../services/gateway.js';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -27,6 +32,18 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
     return getGatewayUsage(parsed.data.from, parsed.data.to);
   });
+
+  /**
+   * Which days are stored, and which are missing — the shape of the table
+   * rather than the shape of the spend.
+   *
+   * Takes no query parameters because it *is* the answer to "what may I ask
+   * for": the range picker, the comparison window and the chargeback month
+   * list all clamp to `floor`, which is the earliest stored day rather than a
+   * retention window measured from today. An empty table answers with the
+   * retention floor, so a fresh install behaves exactly as it did before.
+   */
+  app.get('/api/gateway/coverage', async () => getGatewayCoverage());
 
   /**
    * Budgets and rate limits as of the last sync — current state, not a range,

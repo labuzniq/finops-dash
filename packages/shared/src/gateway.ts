@@ -470,3 +470,160 @@ export function summarizeGatewayProbe(routes: readonly GatewayProbeRoute[]): {
 
   return { usable, warnings };
 }
+
+/* --------------------------------------------------------------- coverage */
+
+/**
+ * How many days of daily aggregates a LiteLLM proxy keeps.
+ *
+ * The proxy prunes `LiteLLM_SpendLogs` on a retention window and the daily
+ * rollup is bounded with it, so a sync can never reach further back than this.
+ * It is the *proxy's* limit, not the dashboard's: the sync deletes only the
+ * dates it re-fetched, so `gateway_daily` keeps every day it has ever seen and
+ * grows past this window the longer the scheduler runs.
+ */
+export const GATEWAY_RETENTION_DAYS = 90;
+
+/** A run of consecutive days inside the stored span that carry no row at all. */
+export interface GatewayCoverageGap {
+  from: string;
+  to: string;
+  days: number;
+}
+
+/**
+ * What the dashboard has actually stored, as opposed to what the proxy can
+ * still be asked for.
+ *
+ * Every gateway card derives from one range fetch and assumes the days it gets
+ * back are the days that happened — an interior zero is read as a quiet
+ * weekend, deliberately, because that is what it usually is. That reading is
+ * only safe while the range sits inside the window the sync re-pulls nightly.
+ * Past it, two things stop being true at once: history older than the proxy's
+ * retention exists *only* here and can never be re-fetched, and a stretch when
+ * the scheduler was down is a hole nothing will ever fill. Both are facts about
+ * the table rather than about the gateway, so they are reported separately from
+ * usage and never mixed into it.
+ */
+export interface GatewayCoverage {
+  /** Earliest stored day; null when nothing has ever synced. */
+  firstDay: string | null;
+  /** Latest stored day; null when nothing has ever synced. */
+  lastDay: string | null;
+  /** Days carrying a row. */
+  storedDays: number;
+  /** Calendar length of `firstDay..lastDay`, so `storedDays + missingDays` matches it. */
+  spanDays: number;
+  /** Days inside the span with no row — a sync that never ran, not a quiet day. */
+  missingDays: number;
+  /** The runs those missing days form, newest first. */
+  gaps: GatewayCoverageGap[];
+  /** True when `gaps` was cut to a sample; `missingDays` stays the full count. */
+  gapsTruncated: boolean;
+  /**
+   * Earliest day the proxy itself can still be asked for — the first day of the
+   * window the sync pulls, so `today − retentionDays`.
+   */
+  retentionFloor: string;
+  retentionDays: number;
+  /** Stored days older than `retentionFloor` — history only this dashboard now holds. */
+  daysBeyondRetention: number;
+  /**
+   * The earliest day worth offering a reader: the first stored day, or the
+   * retention floor when nothing is stored yet.
+   *
+   * One number rather than three copies of the same `if` in the range picker,
+   * the comparison window and the chargeback month list.
+   */
+  floor: string;
+}
+
+/** How many gap runs are enumerated before the list becomes a sample. */
+const MAX_COVERAGE_GAPS = 12;
+
+const MS_PER_DAY = 86_400_000;
+
+/** `2026-07-31`, `-1` → `2026-07-30`. UTC, so DST never shifts a date. */
+function shiftDay(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + days * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/** Whole days from `a` to `b`, both ISO dates. Negative when `b` precedes `a`. */
+function daysBetween(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / MS_PER_DAY);
+}
+
+/**
+ * Turns the set of stored dates into the coverage read.
+ *
+ * Pure, and shared so the API composes the response with the same arithmetic
+ * the invariant script asserts against. `days` must be distinct and ascending —
+ * which is what `SELECT date … ORDER BY date` yields from a table whose primary
+ * key is the date.
+ *
+ * `todayIso` is passed rather than read from the clock: the retention floor
+ * moves every midnight, and a function that reads `Date.now()` cannot be
+ * asserted against a fixture.
+ */
+export function summarizeGatewayCoverage(
+  days: readonly string[],
+  todayIso: string,
+  retentionDays: number = GATEWAY_RETENTION_DAYS,
+): GatewayCoverage {
+  // The same day the sync asks the proxy for: its window is `retentionDays`
+  // days *ending yesterday*, so it starts at `today − retentionDays` rather
+  // than at `today − (retentionDays − 1)`. Off by one in the other direction
+  // and the first day of every ordinary sync reports as unrepeatable archive.
+  const retentionFloor = shiftDay(todayIso, -retentionDays);
+
+  const firstDay = days[0] ?? null;
+  const lastDay = days[days.length - 1] ?? null;
+
+  if (firstDay === null || lastDay === null) {
+    return {
+      firstDay: null,
+      lastDay: null,
+      storedDays: 0,
+      spanDays: 0,
+      missingDays: 0,
+      gaps: [],
+      gapsTruncated: false,
+      retentionFloor,
+      retentionDays,
+      daysBeyondRetention: 0,
+      floor: retentionFloor,
+    };
+  }
+
+  const gaps: GatewayCoverageGap[] = [];
+  let missingDays = 0;
+  for (let i = 1; i < days.length; i += 1) {
+    const previous = days[i - 1] as string;
+    const current = days[i] as string;
+    const step = daysBetween(previous, current);
+    if (step <= 1) continue;
+    missingDays += step - 1;
+    gaps.push({ from: shiftDay(previous, 1), to: shiftDay(current, -1), days: step - 1 });
+  }
+  gaps.reverse();
+
+  let daysBeyondRetention = 0;
+  for (const day of days) {
+    if (day >= retentionFloor) break;
+    daysBeyondRetention += 1;
+  }
+
+  return {
+    firstDay,
+    lastDay,
+    storedDays: days.length,
+    spanDays: daysBetween(firstDay, lastDay) + 1,
+    missingDays,
+    gaps: gaps.slice(0, MAX_COVERAGE_GAPS),
+    gapsTruncated: gaps.length > MAX_COVERAGE_GAPS,
+    retentionFloor,
+    retentionDays,
+    daysBeyondRetention,
+    floor: firstDay,
+  };
+}

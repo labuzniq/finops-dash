@@ -86,12 +86,18 @@ function shiftMonth(month: MonthKey, back: number): MonthKey {
 /**
  * The months the statement can be issued for, newest first.
  *
- * Bounded by what the proxy retains: a month whose *first* day has fallen out
- * of the 90-day window can no longer be billed from this data at all, and
+ * Bounded by the earliest day that can actually be read back: a month whose
+ * *first* day is not covered can no longer be billed from this data at all, and
  * offering it would produce a statement short by however many days are gone.
  * The month in flight is offered too — as a preview, flagged `complete: false`
  * by `deriveChargeback` — because "where are we so far this month" is the
  * question a mid-month escalation starts from.
+ *
+ * The floor is passed in rather than computed from `todayIso` because the two
+ * answers differ: the proxy prunes its rollup at 90 days, while the sync only
+ * ever replaces the dates it re-fetched, so `gateway_daily` keeps everything it
+ * has seen. `GET /api/gateway/coverage` is what knows which — a floor derived
+ * from today would refuse months the database is holding.
  */
 export function chargebackMonths(todayIso: string, retentionFloorIso: string): MonthKey[] {
   const months: MonthKey[] = [];
