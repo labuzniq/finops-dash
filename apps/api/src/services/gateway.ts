@@ -1,13 +1,17 @@
 import { and, asc, gte, lte } from 'drizzle-orm';
-import { GATEWAY_BUDGET_SCOPES, GATEWAY_DIMENSIONS } from '@dash/shared';
+import { GATEWAY_BUDGET_SCOPES, GATEWAY_DIMENSIONS, summarizeGatewayProbe } from '@dash/shared';
 import type {
   GatewayBreakdownPoint,
   GatewayBudget,
   GatewayBudgets,
   GatewayDailyPoint,
+  GatewayProbe,
+  GatewayProbeRoute,
   GatewayUsage,
 } from '@dash/shared';
 import { db } from '../db/client.js';
+import { env } from '../env.js';
+import { createGatewayClient } from '../gateway/index.js';
 import { gatewayBreakdownDaily, gatewayBudget, gatewayDaily } from '../db/schema.js';
 import type { GatewayBreakdownRow, GatewayDailyRow } from '../db/schema.js';
 import { nanoToDollars } from '../lib/nano.js';
@@ -122,4 +126,87 @@ export async function getGatewayBudgets(): Promise<GatewayBudgets> {
   });
 
   return { budgets };
+}
+
+/**
+ * A live connection check against the configured proxy — the one gateway read
+ * that touches no table.
+ *
+ * Everything else here answers "what did the last sync store"; this answers
+ * "can this credential sync at all, and what will be missing if it does". The
+ * whole integration is a draft written against LiteLLM's published contract, so
+ * the day a real proxy and a real key exist, the first question is whether the
+ * key is scoped to the whole gateway or to one team — and the second is whether
+ * the management routes an analytics key is routinely refused are refused here.
+ * Both are answerable in one round trip and neither is worth discovering by
+ * starting a 90-day sync and reading the job's error string.
+ *
+ * Never throws: a probe of a dead proxy is a successful probe with a dead
+ * proxy in it.
+ */
+export async function probeGateway(): Promise<GatewayProbe> {
+  const checkedAt = new Date().toISOString();
+  const client = createGatewayClient();
+
+  if (client === null) {
+    return {
+      source: env.GATEWAY_SOURCE,
+      configured: false,
+      target: null,
+      checkedAt,
+      probedDay: null,
+      routes: [],
+      usable: false,
+      warnings: ['GATEWAY_SOURCE is off — set it to `mock` or `litellm` and restart the API.'],
+    };
+  }
+
+  // The same day the sync's window ends on. Today is still accumulating and a
+  // proxy reporting nothing for it would read as an outage.
+  const probedDay = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+
+  // The base URL is shown host-only and the API key never appears at all: this
+  // response goes to a browser, and a LiteLLM base URL with credentials in it
+  // is a perfectly ordinary thing to be handed.
+  const target = client.name === 'litellm' ? hostOf(env.LITELLM_BASE_URL) : 'in-process generator';
+
+  let routes: GatewayProbeRoute[];
+  try {
+    routes = await client.probe(probedDay);
+  } catch (error) {
+    // The client is written not to throw here, so this is a bug rather than a
+    // proxy fault — reported as one instead of as a 500 with no context.
+    return {
+      source: env.GATEWAY_SOURCE,
+      configured: true,
+      target,
+      checkedAt,
+      probedDay,
+      routes: [],
+      usable: false,
+      warnings: [`The probe itself failed: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+
+  const { usable, warnings } = summarizeGatewayProbe(routes);
+  return {
+    source: env.GATEWAY_SOURCE,
+    configured: true,
+    target,
+    checkedAt,
+    probedDay,
+    routes,
+    usable,
+    warnings,
+  };
+}
+
+/** `https://litellm.corp:4000/v1` → `litellm.corp:4000`, and never a password. */
+function hostOf(baseUrl: string | undefined): string | null {
+  if (baseUrl === undefined) return null;
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return null;
+  }
 }

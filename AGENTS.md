@@ -125,7 +125,16 @@ key's cap and its team's cap govern the same dollars. The one thing derived on t
 is *pace* — `spend ÷ share of the period elapsed`, linear, null before a sixth of the period has passed
 and null for a counter with no period. **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
-assumptions and open questions. The live client's *wire* behaviour is covered:
+assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
+page) are the affordance for closing them: a live connection check that calls every route the sync needs
+once, for one day, and reports what each answered. It is the one gateway read that touches no table and
+the one place `401/403` is kept apart from `404/405/501` — the sync folds them together because its only
+choice is to skip, but a permission problem is fixable and an absent route is not. It never retries and
+never throws (a dead proxy is a result), and it counts keys per dimension because a route can answer
+`200`, carry rows, and still leave a breakdown card blank. `summarizeGatewayProbe` in `@dash/shared` is
+the single mapping from a route outcome to a *dashboard* consequence, shared by the API, the panel and
+the harness; its load-bearing rule is that an `empty` required route is a warning and not a failure,
+because an idle gateway and a team-scoped credential are indistinguishable from there. The live client's *wire* behaviour is covered:
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP
 server serving the documented envelope (pagination, auth, retry classification, exponent-notation
 spend, absent optional routes, the rule that `/team` and `/tag` never contribute totals, and the

@@ -3,6 +3,7 @@ import type {
   CopilotSeat,
   DateRange,
   GatewayBudgets,
+  GatewayProbe,
   GatewaySource,
   GatewayUsage,
   ImportLogEntry,
@@ -219,6 +220,18 @@ export function fetchGatewayUsage(from: string, to: string): Promise<GatewayUsag
  */
 export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
   return request<GatewayBudgets>('/gateway/budgets');
+}
+
+/**
+ * A live connection check against the proxy — one round trip per route it
+ * depends on, run now rather than read from a table.
+ *
+ * Slower than every other call here (it is bounded by the proxy, not by
+ * Postgres) and deliberately manual: it is a diagnostic someone asks for, not
+ * something a page mounts.
+ */
+export function fetchGatewayProbe(): Promise<GatewayProbe> {
+  return request<GatewayProbe>('/gateway/probe');
 }
 
 /** Whether a gateway source is configured at all — gates the whole view. */

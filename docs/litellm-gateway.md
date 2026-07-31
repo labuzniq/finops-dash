@@ -306,8 +306,73 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | --- | --- | --- |
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and period spend per key and team, keys first, each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
+| `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
+
+## The connection check
+
+`GET /api/gateway/probe`, behind **Test connection** on the `Data sources`
+page (`apps/web/src/components/sources/GatewayProbePanel.tsx`). It calls every
+route the sync depends on — the three activity routes for a single day, then
+`/key/list` and `/team/list` — and reports what each one answered.
+
+It exists because everything else on this page is a draft written against
+published documentation. The day a real proxy and a real credential appear, the
+first questions are the open ones at the bottom of this file, and until now the
+only way to ask them was to start a 90-day sync and read the failed job's error
+string. One round trip per route answers most of them in a couple of seconds,
+before anything is written to Postgres.
+
+Six statuses, and the distinctions between them are the whole point:
+
+| Status | Means |
+| --- | --- |
+| `ok` | Answered, parsed, carried rows. |
+| `empty` | Answered and parsed, reported nothing for the probed day. |
+| `denied` | `401`/`403` — the route exists and this credential may not have it. |
+| `absent` | `404`/`405`/`501` — this proxy does not offer the route at all. |
+| `malformed` | `2xx` with a body this client cannot read. |
+| `unreachable` | Network error, timeout, or any other status. |
+
+`denied` and `absent` are deliberately separate here even though
+`ABSENT_STATUSES` folds them together in the sync: the sync's only choice is to
+skip, so it does not need to care, but one of them is fixed by granting the key
+a permission and the other cannot be fixed at all. Collapsing them makes a
+misconfigured credential look like a proxy without teams.
+
+Three further deliberate differences from a sync. The probe **does not retry** —
+retrying a `503` three times would turn a flaky gateway into a green tick and
+make the button take eight seconds to say so. It **does not throw** — a refused
+route and a dead host are results with statuses on them. And it counts **keys
+per dimension**, because a route can answer `200`, carry rows, and still leave a
+breakdown card blank; the panel shows those counts so the missing dimension is
+visible before someone goes looking for it on the gateway page.
+
+The two summaries — can this sync, and what will be missing if it does — come
+from `summarizeGatewayProbe` in `@dash/shared`, so the API, the panel and the
+contract harness all read one implementation. Two of its rules are worth
+stating:
+
+- An `empty` **required** route is not a failure and is still a warning. A
+  gateway that genuinely saw no traffic yesterday and a credential scoped to one
+  team that saw none are indistinguishable from here — which is open question 1,
+  put in front of someone rather than guessed at.
+- An empty `mcp_server` count is not a gap. It is a strict subset of the
+  traffic, so a gateway with no MCP servers legitimately reports none; every
+  other dimension is on every call, and a zero there means the breakdown did not
+  arrive.
+
+What it cannot answer: whether the numbers it got back are the *whole* gateway.
+A team-scoped key answers `200` with plausible rows. The probe surfaces the
+counts (six API keys, twenty-six users) so a reader can tell whether they look
+like the corporation or like one team, and that judgement is a person's.
+
+Under `GATEWAY_SOURCE=mock` the mock client answers a healthy probe derived from
+its own generated day, so the panel has something to render before anyone has a
+proxy. It cannot be made to fail: every interesting failure is wire-level and
+belongs to the live client, where the contract harness drives them against a
+server that really answers `403`.
 
 ## The view
 
@@ -730,6 +795,16 @@ to 28 February rather than rolling into March), an overrun reads above 100%
 rather than clamped, and a zero cap has no percentage at all. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-litellm-contract.ts`.
 
+A final section covers the **probe**: one attempt per route and no retries (a
+`403` and a `501` are each answered exactly once), the activity routes asked
+about exactly one day, `401/403` classified apart from `404/405/501`, the
+proxy's own refusal message carried through instead of swallowed, a non-JSON
+body and a contract-violating one both landing as `malformed` rather than
+`unreachable`, distinct keys counted per dimension, a proxy answering bare token
+strings reported rather than silently dropped, and the two summary rules — an
+analytics-only credential that can still sync, and an empty `mcp_server` count
+that is not a fault.
+
 It cannot confirm that a real proxy *sends* these shapes — that is still an open
 question below. It is, though, the harness for answering it: drop a captured
 response from the real gateway into a handler and the assertions become a
@@ -741,6 +816,14 @@ disabled. The `Data sources` page carries a matching LiteLLM row with the same
 gating.
 
 ## Open questions for the day we get access
+
+**Start with the connection check.** `Test connection` on the `Data sources`
+page answers 3, 5 (partly — it probes one day, but an `absent` or `empty`
+activity route is the same signal) and 6 outright, shows the *shape* of the ids
+question 2 is about, and gives question 1 the only evidence available without a
+second credential to compare against. It runs before anything is written, which
+is the point: the alternative is starting a 90-day sync and reading the failed
+job's error string.
 
 1. Does the admin key really answer gateway-wide, or does the proxy scope it?
 2. Is `breakdown.entities` on `/user/daily/activity` keyed by user id, and is

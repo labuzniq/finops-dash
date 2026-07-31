@@ -29,8 +29,9 @@ import {
   budgetRemaining,
   budgetUtilization,
   parseBudgetDuration,
+  summarizeGatewayProbe,
 } from '@dash/shared';
-import type { GatewayBudget } from '@dash/shared';
+import type { GatewayBudget, GatewayProbeRoute } from '@dash/shared';
 import { LiteLlmGatewayClient, eachDay } from '../src/gateway/litellm.js';
 import type { GatewayBreakdownSnapshot, GatewaySnapshot } from '../src/gateway/types.js';
 
@@ -826,6 +827,233 @@ check(
   budgetPeriodStart(budget({ resetAt: null })) === null &&
     budgetPeriodStart(budget({ budgetDuration: 'whenever' })) === null,
   'a period start needs both halves and a duration the proxy would accept',
+);
+
+// =====================================================================
+// 8 · probe — the connection check
+// =====================================================================
+//
+// The probe is the one client method whose *failures* are its output: a
+// refused management route and a dead host are results with statuses on them,
+// not exceptions. Three properties matter and none of them are visible from
+// the sync's behaviour — one attempt per route (a sync retries, a probe must
+// not), 401/403 kept apart from 404/405/501 (the sync folds them together
+// because its only choice is to skip), and per-dimension key counts, which
+// decide whether a breakdown card has anything to draw.
+
+console.log('\n8 · probe — one attempt per route, statuses classified, warnings named');
+
+const DAY = '2026-07-04';
+
+function replier(replies: Record<string, Reply>): Handler {
+  return (captured) => replies[captured.path] ?? { status: 404, body: { detail: 'unknown route' } };
+}
+
+const activityDay = (over: Record<string, unknown> = {}) =>
+  envelope([
+    {
+      date: DAY,
+      metrics: metrics({ spend: 12.5, api_requests: 400 }),
+      breakdown: {
+        models: { 'azure/gpt-4o': bucket({ spend: 8 }), 'bedrock/claude': bucket({ spend: 4.5 }) },
+        providers: { azure: bucket({ spend: 8 }), bedrock: bucket({ spend: 4.5 }) },
+        api_keys: { 'hash-a': bucket({ spend: 12.5 }) },
+        mcp_servers: {},
+        entities: { 'ada@corp': bucket({ spend: 12.5 }) },
+        ...over,
+      },
+    },
+  ]);
+
+const healthy = await withProxy(
+  replier({
+    '/user/daily/activity': { status: 200, body: activityDay() },
+    '/team/daily/activity': { status: 200, body: activityDay() },
+    '/tag/daily/activity': { status: 200, body: activityDay() },
+    '/key/list': {
+      status: 200,
+      body: { keys: [keyRow({ token: 'hash-a' }), 'bare-token-no-budget'], total_pages: 1 },
+    },
+    '/team/list': { status: 200, body: [{ team_id: 'platform', team_alias: 'Platform' }] },
+  }),
+  async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
+);
+
+const route = (path: string): GatewayProbeRoute | undefined =>
+  healthy.routes.find((candidate) => candidate.path === path);
+
+check(healthy.calls.length === 5, `one call per route, no retries (${healthy.calls.length})`);
+check(
+  healthy.calls.map((call) => call.path).join(' ') ===
+    '/user/daily/activity /team/daily/activity /tag/daily/activity /key/list /team/list',
+  'routes are probed in dependency order, activity before management',
+);
+check(
+  healthy.calls[0]?.query.get('start_date') === DAY &&
+    healthy.calls[0]?.query.get('end_date') === DAY,
+  'the activity routes are asked about exactly one day',
+);
+check(
+  healthy.routes.every((probed) => probed.status === 'ok'),
+  'a proxy answering everything probes ok on every route',
+);
+check(
+  route('/user/daily/activity')?.required === true &&
+    healthy.routes.filter((probed) => probed.required).length === 1,
+  'only the user activity route is required — everything else costs one dimension',
+);
+
+const coverage = route('/user/daily/activity')?.dimensions ?? [];
+const keysFor = (dimension: string) =>
+  coverage.find((entry) => entry.dimension === dimension)?.keys;
+check(
+  keysFor('model') === 2 && keysFor('provider') === 2 && keysFor('api_key') === 1,
+  `distinct keys are counted per dimension (${keysFor('model')} models, ${keysFor('provider')} providers)`,
+);
+check(keysFor('user') === 1, 'the entities breakdown is counted as the route owns it');
+check(
+  route('/team/daily/activity')?.dimensions.length === 1 &&
+    route('/team/daily/activity')?.dimensions[0]?.dimension === 'team',
+  'a re-slicing route reports only its own entity dimension',
+);
+check(
+  coverage.find((entry) => entry.dimension === 'mcp_server')?.expected === false &&
+    coverage.every((entry) => entry.dimension === 'mcp_server' || entry.expected),
+  'mcp_server is the one dimension an empty count is not a gap in',
+);
+check(
+  (route('/key/list')?.detail ?? '').includes('only 1 identified'),
+  `a proxy answering bare token strings is reported, not silently dropped (${route('/key/list')?.detail})`,
+);
+
+const healthySummary = summarizeGatewayProbe(healthy.routes);
+check(healthySummary.usable, 'a fully answering proxy is usable');
+check(
+  healthySummary.warnings.length === 0,
+  `and warns about nothing (${healthySummary.warnings.join(' | ')})`,
+);
+
+// A realistic analytics-only credential: usage works, teams and tags are not
+// offered, key management is refused. The sync survives all three; the probe's
+// job is to say what each one costs.
+
+const restricted = await withProxy(
+  replier({
+    '/user/daily/activity': { status: 200, body: envelope([]) },
+    '/team/daily/activity': { status: 501, body: { detail: 'not implemented' } },
+    '/tag/daily/activity': { status: 404, body: { detail: 'no such route' } },
+    '/key/list': { status: 403, body: { detail: 'Only proxy admins may list keys' } },
+    '/team/list': { status: 401, body: { detail: 'invalid credentials' } },
+  }),
+  async (proxy) => ({ routes: await client(proxy.baseUrl).probe(DAY), calls: proxy.calls }),
+);
+
+const restrictedRoute = (path: string): GatewayProbeRoute | undefined =>
+  restricted.routes.find((candidate) => candidate.path === path);
+
+check(
+  restricted.calls.length === 5,
+  `a refused or absent route is attempted once, never retried (${restricted.calls.length})`,
+);
+check(
+  restrictedRoute('/team/daily/activity')?.status === 'absent' &&
+    restrictedRoute('/tag/daily/activity')?.status === 'absent',
+  '501 and 404 both read as "this proxy does not offer that"',
+);
+check(
+  restrictedRoute('/key/list')?.status === 'denied' &&
+    restrictedRoute('/team/list')?.status === 'denied',
+  '401 and 403 read as a permission problem, not as an absent route',
+);
+check(
+  (restrictedRoute('/key/list')?.detail ?? '').includes('proxy admins'),
+  "the proxy's own refusal message is carried through, not swallowed",
+);
+check(
+  restrictedRoute('/user/daily/activity')?.status === 'empty' &&
+    restrictedRoute('/user/daily/activity')?.rows === 0,
+  'a 200 with no rows is "empty", which is not the same as broken',
+);
+
+const restrictedSummary = summarizeGatewayProbe(restricted.routes);
+check(
+  restrictedSummary.usable,
+  'a usage-only credential can still sync — every missing route is optional',
+);
+check(
+  restrictedSummary.warnings.some((warning) => warning.includes('scoped to an entity')),
+  'an empty required route says the idle-gateway and scoped-key readings are indistinguishable',
+);
+check(
+  restrictedSummary.warnings.some((warning) => warning.includes('budget card will be empty')),
+  'a refused /key/list warns in the dashboard\'s terms, not in HTTP',
+);
+check(
+  restrictedSummary.warnings.length === 5,
+  `one statement per gap, no more (${restrictedSummary.warnings.length})`,
+);
+
+// The two ways the required route can genuinely fail.
+
+const dead = await withProxy(
+  replier({ '/user/daily/activity': { status: 500, body: { detail: 'boom' } } }),
+  async (proxy) => client(proxy.baseUrl).probe(DAY),
+);
+check(
+  dead[0]?.status === 'unreachable' && dead[0]?.httpStatus === 500,
+  'a 5xx that is not an absent-route status reads as unreachable',
+);
+check(!summarizeGatewayProbe(dead).usable, 'and the gateway cannot sync at all');
+
+const garbled = await withProxy(
+  replier({
+    '/user/daily/activity': { status: 200, body: 'this is not JSON' },
+    '/team/daily/activity': { status: 200, body: { results: 'not an array' } },
+  }),
+  async (proxy) => client(proxy.baseUrl).probe(DAY),
+);
+check(
+  garbled[0]?.status === 'malformed' && (garbled[0]?.detail ?? '').includes('not JSON'),
+  'a 2xx body that is not JSON is malformed, not unreachable',
+);
+check(
+  garbled[1]?.status === 'malformed' && (garbled[1]?.detail ?? '').includes('results'),
+  'a 2xx body that parses but does not match the contract names the field',
+);
+check(!summarizeGatewayProbe(garbled).usable, 'an unreadable required route blocks the sync too');
+
+// A route can answer 200, carry rows, and still leave a card blank.
+
+const blankDimensions = await withProxy(
+  replier({
+    '/user/daily/activity': {
+      status: 200,
+      body: envelope([{ date: DAY, metrics: metrics({ spend: 1 }), breakdown: {} }]),
+    },
+  }),
+  async (proxy) => client(proxy.baseUrl).probe(DAY),
+);
+const blankSummary = summarizeGatewayProbe(blankDimensions);
+// Only /user answers here, so the other four routes 404 and warn as absent —
+// the dimension-shaped warnings are the ones this case is about.
+const blankDimensionWarnings = blankSummary.warnings.filter((warning) =>
+  warning.includes('answered, but carried no'),
+);
+check(
+  blankDimensions[0]?.status === 'ok' && blankDimensions[0]?.rows === 1,
+  'rows with an empty breakdown still count as an answer',
+);
+check(
+  blankSummary.usable && blankDimensionWarnings.length === 4,
+  `each expected-but-empty dimension is named, and mcp_server is not (${blankDimensionWarnings.length})`,
+);
+check(
+  !blankSummary.warnings.some((warning) => warning.toLowerCase().includes('mcp')),
+  'a gateway with no MCP traffic is not reported as a fault',
+);
+check(
+  summarizeGatewayProbe([]).usable === false,
+  'no routes at all is not "usable" by default',
 );
 
 // -------------------------------------------------------------------- done

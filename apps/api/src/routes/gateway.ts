@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../env.js';
-import { getGatewayBudgets, getGatewayUsage } from '../services/gateway.js';
+import { getGatewayBudgets, getGatewayUsage, probeGateway } from '../services/gateway.js';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -35,6 +35,18 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * not allowed to list keys and teams.
    */
   app.get('/api/gateway/budgets', async () => getGatewayBudgets());
+
+  /**
+   * A live connection check — the only gateway route that talks to the proxy
+   * while answering, and the only one that reads no table.
+   *
+   * A GET because it changes nothing, and unrated because it is one round trip
+   * per route behind a button. It always answers `200`: an unreachable proxy,
+   * a refused management route and an unconfigured source are all *results*
+   * carried in the body, and a 5xx would tell the UI only that something went
+   * wrong somewhere.
+   */
+  app.get('/api/gateway/probe', async () => probeGateway());
 
   /** Whether the gateway integration is configured, and with which source. */
   app.get('/api/gateway/status', async () => ({

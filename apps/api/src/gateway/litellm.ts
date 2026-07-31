@@ -33,7 +33,12 @@
  */
 
 import { z } from 'zod';
-import type { GatewayDimension } from '@dash/shared';
+import type {
+  GatewayDimension,
+  GatewayProbeCoverage,
+  GatewayProbeRoute,
+  GatewayProbeStatus,
+} from '@dash/shared';
 import { moduleLogger } from '../log.js';
 import { parseNano } from '../lib/nano.js';
 import { addCounters, ZERO_COUNTERS } from './types.js';
@@ -57,6 +62,29 @@ const MAX_PAGES = 50;
 const RETRY_DELAYS_MS = [500, 1_000, 2_000];
 
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * The probe's own timeout — a third of the sync's, because it runs behind a
+ * button someone is watching, and "slow" is itself the answer they need.
+ */
+const PROBE_TIMEOUT_MS = 10_000;
+
+/** One probe request's outcome. `body` exists only on a 2xx that decoded. */
+interface ProbeAttempt {
+  status: GatewayProbeStatus;
+  httpStatus: number | null;
+  durationMs: number;
+  detail: string | null;
+  body?: unknown;
+}
+
+/** The first few schema complaints, flattened — the same reading the sync throws. */
+function describeIssues(issues: readonly z.ZodIssue[]): string {
+  return issues
+    .slice(0, 3)
+    .map((issue) => `${issue.path.join('.')} ${issue.message}`)
+    .join('; ');
+}
 
 /**
  * `SpendMetrics`. Every field defaults to zero: the proxy omits counters it
@@ -187,13 +215,51 @@ interface DailyEndpoint {
   totals: boolean;
   /** A missing/forbidden optional endpoint is logged and skipped, not fatal. */
   required: boolean;
+  /** What the dashboard loses without it — the probe's wording, not a log line. */
+  purpose: string;
 }
 
 const ENDPOINTS: readonly DailyEndpoint[] = [
-  { path: '/user/daily/activity', entityDimension: 'user', totals: true, required: true },
-  { path: '/team/daily/activity', entityDimension: 'team', totals: false, required: false },
-  { path: '/tag/daily/activity', entityDimension: 'tag', totals: false, required: false },
+  {
+    path: '/user/daily/activity',
+    entityDimension: 'user',
+    totals: true,
+    required: true,
+    purpose:
+      'Gateway-wide spend, tokens and requests come from here, along with the model, provider, API key, MCP server and user dimensions. Without it there is no gateway data at all.',
+  },
+  {
+    path: '/team/daily/activity',
+    entityDimension: 'team',
+    totals: false,
+    required: false,
+    purpose: 'The team dimension will be blank; every other view is unaffected.',
+  },
+  {
+    path: '/tag/daily/activity',
+    entityDimension: 'tag',
+    totals: false,
+    required: false,
+    purpose: 'The tag dimension will be blank; every other view is unaffected.',
+  },
 ];
+
+/**
+ * Which dimensions a probed activity route fills, and which of them an empty
+ * count would be a gap in. `mcp_server` is a subset of the traffic, so nothing
+ * is wrong with a gateway that reports none.
+ */
+function coverageOf(endpoint: DailyEndpoint, counts: Map<GatewayDimension, number>): GatewayProbeCoverage[] {
+  const dimensions: GatewayDimension[] = endpoint.totals
+    ? ['model', 'provider', 'api_key', 'mcp_server']
+    : [];
+  if (endpoint.entityDimension !== null) dimensions.push(endpoint.entityDimension);
+  return dimensions.map((dimension) => ({
+    dimension,
+    keys: counts.get(dimension) ?? 0,
+    expected: dimension !== 'mcp_server',
+  }));
+}
 
 /** Status codes that mean "this proxy does not offer that" rather than "broken". */
 const ABSENT_STATUSES = new Set([401, 403, 404, 405, 501]);
@@ -480,6 +546,234 @@ export class LiteLlmGatewayClient implements GatewayClient {
         rpmLimit: toLimit(row.rpm_limit),
         blocked: row.blocked === true,
       }));
+  }
+
+  /**
+   * Call every route the sync depends on once, for one day, and report what
+   * each answered.
+   *
+   * Three things it deliberately does differently from a sync:
+   *
+   *   - **No retries.** A probe reports the proxy as it is right now; retrying
+   *     a 503 three times would turn a flaky gateway into a green tick and make
+   *     the button take eight seconds to say so.
+   *   - **No throwing.** A refused route, an unreadable body and a dead host
+   *     are all *results* here, each with its own status, where the sync can
+   *     only distinguish "skip" from "fail".
+   *   - **401/403 is not 404.** `ABSENT_STATUSES` folds them together because
+   *     the sync's only choice is to skip; the probe keeps them apart because
+   *     one is fixed by granting the key a permission and the other cannot be
+   *     fixed at all.
+   */
+  async probe(day: string): Promise<GatewayProbeRoute[]> {
+    const routes: GatewayProbeRoute[] = [];
+
+    for (const endpoint of ENDPOINTS) {
+      const url = new URL(`${this.root}${endpoint.path}`);
+      url.searchParams.set('start_date', day);
+      url.searchParams.set('end_date', day);
+      url.searchParams.set('page', '1');
+      url.searchParams.set('page_size', String(PAGE_SIZE));
+      routes.push(await this.probeActivity(endpoint, url));
+    }
+
+    routes.push(await this.probeKeyList());
+    routes.push(await this.probeTeamList());
+
+    log.info(
+      { dash: { statuses: routes.map((route) => `${route.path} ${route.status}`) } },
+      'litellm probe complete',
+    );
+    return routes;
+  }
+
+  private async probeActivity(endpoint: DailyEndpoint, url: URL): Promise<GatewayProbeRoute> {
+    const attempt = await this.probeOnce(url);
+    const base = {
+      path: endpoint.path,
+      purpose: endpoint.purpose,
+      required: endpoint.required,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail, dimensions: [] };
+    }
+
+    const parsed = activityResponseSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return {
+        ...base,
+        status: 'malformed',
+        rows: null,
+        detail: describeIssues(parsed.error.issues),
+        dimensions: [],
+      };
+    }
+
+    // Distinct keys per dimension across the day, which is what decides whether
+    // a breakdown card has anything to draw — a route can answer 200 with rows
+    // and still carry an empty `breakdown`.
+    const counts = new Map<GatewayDimension, number>();
+    const seen = new Map<GatewayDimension, Set<string>>();
+    const note = (dimension: GatewayDimension, buckets: Record<string, Bucket>): void => {
+      const keys = seen.get(dimension) ?? new Set<string>();
+      for (const key of Object.keys(buckets)) if (key !== '') keys.add(key);
+      seen.set(dimension, keys);
+      counts.set(dimension, keys.size);
+    };
+    for (const row of parsed.data.results) {
+      if (endpoint.totals) {
+        note('model', row.breakdown.models);
+        note('provider', row.breakdown.providers);
+        note('api_key', row.breakdown.api_keys);
+        note('mcp_server', row.breakdown.mcp_servers);
+      }
+      if (endpoint.entityDimension !== null) note(endpoint.entityDimension, row.breakdown.entities);
+    }
+
+    const rows = parsed.data.results.length;
+    const spend = parsed.data.results.reduce((sum, row) => sum + row.metrics.spend, 0);
+    return {
+      ...base,
+      status: rows === 0 ? 'empty' : 'ok',
+      rows,
+      detail:
+        rows === 0
+          ? null
+          : `${rows} day(s), $${spend.toFixed(2)} spend${endpoint.totals ? '' : ' (re-sliced, not counted in totals)'}`,
+      dimensions: coverageOf(endpoint, counts),
+    };
+  }
+
+  private async probeKeyList(): Promise<GatewayProbeRoute> {
+    const url = new URL(`${this.root}/key/list`);
+    url.searchParams.set('page', '1');
+    url.searchParams.set('size', String(KEY_PAGE_SIZE));
+    url.searchParams.set('return_full_object', 'true');
+
+    const attempt = await this.probeOnce(url);
+    const base = {
+      path: '/key/list',
+      purpose:
+        'The budget card will be empty for API keys — caps, rate limits and the enforced period counter all come from here.',
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = keyListSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+
+    // A proxy that ignores `return_full_object` answers bare token strings,
+    // which carry no budget and cannot be joined to the api_key dimension. That
+    // is a 200 the sync silently drops every row of, so it is worth its own
+    // reading here rather than a count.
+    const rows = parsed.data.keys.length;
+    const usable = parsed.data.keys.filter(
+      (row) => typeof row !== 'string' && typeof row.token === 'string' && row.token !== '',
+    ).length;
+    return {
+      ...base,
+      status: rows === 0 ? 'empty' : 'ok',
+      rows,
+      detail:
+        rows === 0
+          ? null
+          : usable === rows
+            ? `${rows} key(s), all carrying budgets`
+            : `${rows} key(s), only ${usable} identified — the rest answered as bare tokens and cannot be joined to usage`,
+    };
+  }
+
+  private async probeTeamList(): Promise<GatewayProbeRoute> {
+    const attempt = await this.probeOnce(new URL(`${this.root}/team/list`));
+    const base = {
+      path: '/team/list',
+      purpose: 'The budget card will be empty for teams; API-key budgets are unaffected.',
+      required: false,
+      httpStatus: attempt.httpStatus,
+      durationMs: attempt.durationMs,
+      dimensions: [],
+    };
+    if (attempt.body === undefined) {
+      return { ...base, status: attempt.status, rows: null, detail: attempt.detail };
+    }
+
+    const parsed = teamListSchema.safeParse(attempt.body);
+    if (!parsed.success) {
+      return { ...base, status: 'malformed', rows: null, detail: describeIssues(parsed.error.issues) };
+    }
+    const rows = parsed.data.length;
+    return {
+      ...base,
+      status: rows === 0 ? 'empty' : 'ok',
+      rows,
+      detail: rows === 0 ? null : `${rows} team(s)`,
+    };
+  }
+
+  /**
+   * One GET, one attempt, classified. `body` is present only on a 2xx; every
+   * other outcome carries the status that says why not.
+   */
+  private async probeOnce(url: URL): Promise<ProbeAttempt> {
+    const started = Date.now();
+    const elapsed = () => Date.now() - started;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.apiKey}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      });
+    } catch (error) {
+      return {
+        status: 'unreachable',
+        httpStatus: null,
+        durationMs: elapsed(),
+        detail: String(error instanceof Error ? error.message : error).slice(0, 300),
+      };
+    }
+
+    if (response.ok) {
+      try {
+        return {
+          status: 'ok',
+          httpStatus: response.status,
+          durationMs: elapsed(),
+          detail: null,
+          body: await response.json(),
+        };
+      } catch (error) {
+        return {
+          status: 'malformed',
+          httpStatus: response.status,
+          durationMs: elapsed(),
+          detail: `body is not JSON: ${String(error instanceof Error ? error.message : error).slice(0, 200)}`,
+        };
+      }
+    }
+
+    const text = await response.text().catch(() => '');
+    const status =
+      response.status === 401 || response.status === 403
+        ? 'denied'
+        : ABSENT_STATUSES.has(response.status)
+          ? 'absent'
+          : 'unreachable';
+    return {
+      status,
+      httpStatus: response.status,
+      durationMs: elapsed(),
+      detail: text.trim() === '' ? null : text.slice(0, 300),
+    };
   }
 
   /** Folds one breakdown object into the accumulator. */

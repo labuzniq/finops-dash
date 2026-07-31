@@ -1,6 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import type { DateRange, GatewayBudgets, GatewayUsage } from '@dash/shared';
-import { fetchGatewayBudgets, fetchGatewayStatus, fetchGatewayUsage } from '../api/client.js';
+import type { DateRange, GatewayBudgets, GatewayProbe, GatewayUsage } from '@dash/shared';
+import {
+  fetchGatewayBudgets,
+  fetchGatewayProbe,
+  fetchGatewayStatus,
+  fetchGatewayUsage,
+} from '../api/client.js';
 import type { GatewayStatus } from '../api/client.js';
 import type { ComparisonWindow } from '../lib/metrics/gatewayCompare.js';
 import type { ForecastRange } from '../lib/metrics/gatewayForecast.js';
@@ -86,5 +91,26 @@ export function useGatewayStatus() {
     queryKey: ['gateway', 'status'],
     queryFn: fetchGatewayStatus,
     staleTime: Infinity,
+  });
+}
+
+/**
+ * A live connection check, run on demand.
+ *
+ * The one gateway query that does not run on mount: it costs a round trip to
+ * the proxy per route, so a page that renders it would probe the corporate
+ * gateway every time someone opened Data sources. `refetch()` is the trigger,
+ * and the result stays cached afterwards so the panel survives a navigation
+ * without re-probing — with `staleTime: 0`, since a probe is a statement about
+ * one moment and asking again is the entire point of the button.
+ */
+export function useGatewayProbe() {
+  return useQuery<GatewayProbe>({
+    queryKey: ['gateway', 'probe'],
+    queryFn: fetchGatewayProbe,
+    enabled: false,
+    staleTime: 0,
+    retry: false,
+    gcTime: 5 * 60_000,
   });
 }

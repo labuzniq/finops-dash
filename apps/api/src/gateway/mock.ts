@@ -17,7 +17,7 @@
  * traffic is a subset of the same requests, so it sums to less than the day.
  */
 
-import type { GatewayDimension } from '@dash/shared';
+import type { GatewayDimension, GatewayProbeCoverage, GatewayProbeRoute } from '@dash/shared';
 import { moduleLogger } from '../log.js';
 import { eachDay } from './litellm.js';
 import { addCounters, ZERO_COUNTERS } from './types.js';
@@ -717,6 +717,101 @@ export class MockGatewayClient implements GatewayClient {
 
     log.info({ dash: { budgets: budgets.length } }, 'mock gateway budgets generated');
     return budgets;
+  }
+
+  /**
+   * What a probe of a healthy proxy looks like — every route answering, keyed
+   * off this generator's own output for the probed day rather than off invented
+   * numbers, so the connection panel shows the same key counts the breakdown
+   * cards will.
+   *
+   * There is no way to make the mock fail a route: the interesting failures are
+   * all wire-level (a refused management route, a proxy without teams) and they
+   * belong to the live client, where `verify-litellm-contract.ts` drives them
+   * against a server that really answers 403. Here the value is that the panel
+   * has something to render before anyone has a proxy.
+   */
+  async probe(day: string): Promise<GatewayProbeRoute[]> {
+    const started = Date.now();
+    const usage = await this.fetchUsage(day, day);
+    const budgets = await this.fetchBudgets();
+    const elapsed = Date.now() - started;
+
+    const keysIn = (dimension: GatewayDimension): number =>
+      new Set(usage.breakdowns.filter((row) => row.dimension === dimension).map((row) => row.key))
+        .size;
+
+    const coverage = (dimensions: GatewayDimension[]): GatewayProbeCoverage[] =>
+      dimensions.map((dimension) => ({
+        dimension,
+        keys: keysIn(dimension),
+        expected: dimension !== 'mcp_server',
+      }));
+
+    const days = usage.daily.length;
+    const spend = Number(usage.daily.reduce((sum, row) => sum + row.spendNano, 0n)) / 1e9;
+    const scoped = (scope: 'api_key' | 'team'): number =>
+      budgets.filter((budget) => budget.scope === scope).length;
+
+    return [
+      {
+        path: '/user/daily/activity',
+        purpose:
+          'Gateway-wide spend, tokens and requests come from here, along with the model, provider, API key, MCP server and user dimensions. Without it there is no gateway data at all.',
+        required: true,
+        status: days === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: elapsed,
+        rows: days,
+        detail: days === 0 ? null : `${days} day(s), $${spend.toFixed(2)} spend`,
+        dimensions: coverage(['model', 'provider', 'api_key', 'mcp_server', 'user']),
+      },
+      {
+        path: '/team/daily/activity',
+        purpose: 'The team dimension will be blank; every other view is unaffected.',
+        required: false,
+        status: days === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: days,
+        detail: days === 0 ? null : `${days} day(s) (re-sliced, not counted in totals)`,
+        dimensions: coverage(['team']),
+      },
+      {
+        path: '/tag/daily/activity',
+        purpose: 'The tag dimension will be blank; every other view is unaffected.',
+        required: false,
+        status: days === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: days,
+        detail: days === 0 ? null : `${days} day(s) (re-sliced, not counted in totals)`,
+        dimensions: coverage(['tag']),
+      },
+      {
+        path: '/key/list',
+        purpose:
+          'The budget card will be empty for API keys — caps, rate limits and the enforced period counter all come from here.',
+        required: false,
+        status: scoped('api_key') === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: scoped('api_key'),
+        detail: `${scoped('api_key')} key(s), all carrying budgets`,
+        dimensions: [],
+      },
+      {
+        path: '/team/list',
+        purpose: 'The budget card will be empty for teams; API-key budgets are unaffected.',
+        required: false,
+        status: scoped('team') === 0 ? 'empty' : 'ok',
+        httpStatus: 200,
+        durationMs: 0,
+        rows: scoped('team'),
+        detail: `${scoped('team')} team(s)`,
+        dimensions: [],
+      },
+    ];
   }
 }
 

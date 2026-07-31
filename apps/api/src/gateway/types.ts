@@ -1,4 +1,9 @@
-import type { GatewayBudgetScope, GatewayDimension, GatewaySource } from '@dash/shared';
+import type {
+  GatewayBudgetScope,
+  GatewayDimension,
+  GatewayProbeRoute,
+  GatewaySource,
+} from '@dash/shared';
 
 /**
  * What a gateway source hands the sync — insert-shaped rows, money already in
@@ -81,6 +86,17 @@ export interface GatewayClient {
    * be able to fail a usage sync.
    */
   fetchBudgets(): Promise<GatewayBudgetSnapshot[]>;
+  /**
+   * A connection check: call every route this client depends on once, for a
+   * single day, and report what each answered.
+   *
+   * Deliberately not a sync — it writes nothing, retries nothing, and cannot
+   * fail. Every failure mode is a `GatewayProbeRoute` with a status on it,
+   * because "the proxy refused /team/list" is the *result* of a probe, not an
+   * error in running one. It takes the day rather than reading the clock so a
+   * harness can pin it.
+   */
+  probe(day: string): Promise<GatewayProbeRoute[]>;
 }
 
 export const ZERO_COUNTERS: GatewayCounters = {

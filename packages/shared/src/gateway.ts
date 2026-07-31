@@ -312,3 +312,161 @@ export function budgetPeriodStart(budget: Readonly<GatewayBudget>): string | nul
   start.setUTCDate(Math.min(day, lastDay));
   return start.toISOString();
 }
+
+/* ------------------------------------------------------------------ probe */
+
+/**
+ * A connection check against the live proxy — the one gateway surface that
+ * reads nothing from Postgres.
+ *
+ * Everything else in this file describes data that has already been synced.
+ * This describes whether a sync is *possible*: which of LiteLLM's routes the
+ * configured credential can actually reach, and which of the dashboard's
+ * dimensions and cards that leaves with nothing to draw. It exists because the
+ * whole gateway integration is a draft written against published docs — the day
+ * a real proxy and a real key appear, "does this key see the whole gateway"
+ * is the first question, and answering it by starting a 90-day sync and
+ * reading the job's error string is a poor way to ask.
+ *
+ * It is a live call, not a stored snapshot: nothing about it is written, and
+ * two probes a minute apart may legitimately disagree.
+ */
+export const GATEWAY_PROBE_STATUSES = [
+  /** Answered, parsed, and carried rows. */
+  'ok',
+  /** Answered and parsed, but reported nothing for the probed day. */
+  'empty',
+  /** 401/403 — the route exists and this credential may not have it. */
+  'denied',
+  /** 404/405/501 — this proxy does not offer the route at all. */
+  'absent',
+  /** Answered 2xx with a body this client cannot read. */
+  'malformed',
+  /** Network error, timeout, or a status that is neither of the above. */
+  'unreachable',
+] as const;
+export type GatewayProbeStatus = (typeof GATEWAY_PROBE_STATUSES)[number];
+
+/**
+ * `denied` and `absent` are deliberately separate even though the sync treats
+ * both as "skip this optional route": one is fixed by granting the key a
+ * permission, the other cannot be fixed at all. Collapsing them is what makes a
+ * misconfigured key look like a proxy without teams.
+ */
+export const GATEWAY_PROBE_STATUS_LABELS: Record<GatewayProbeStatus, string> = {
+  ok: 'OK',
+  empty: 'No rows',
+  denied: 'Not permitted',
+  absent: 'Not offered',
+  malformed: 'Unreadable',
+  unreachable: 'Unreachable',
+};
+
+/** How many distinct keys one route answered with, per dimension it fills. */
+export interface GatewayProbeCoverage {
+  dimension: GatewayDimension;
+  keys: number;
+  /**
+   * Whether an empty count is a gap. Every call has a model, a provider and a
+   * key, so a zero there means the breakdown did not arrive; `mcp_server` is a
+   * strict subset of the traffic and a gateway with no MCP servers legitimately
+   * reports none, which is a fact about the gateway rather than about the
+   * credential.
+   */
+  expected: boolean;
+}
+
+export interface GatewayProbeRoute {
+  /** Path as called, without the base URL or any query string. */
+  path: string;
+  /** What the dashboard loses without it, in the dashboard's own terms. */
+  purpose: string;
+  /** A required route failing means no gateway data at all. */
+  required: boolean;
+  status: GatewayProbeStatus;
+  /** Null when nothing answered — a network error has no status. */
+  httpStatus: number | null;
+  durationMs: number;
+  /** Rows (days, keys, teams) the route answered with; null when it did not answer. */
+  rows: number | null;
+  /** The proxy's own message, the parse failure, or a one-line reading of the rows. */
+  detail: string | null;
+  dimensions: GatewayProbeCoverage[];
+}
+
+export interface GatewayProbe {
+  source: GatewaySource;
+  configured: boolean;
+  /** Host only. The credential never leaves the API and neither does a URL carrying one. */
+  target: string | null;
+  /** When the probe ran, ISO. Not stored anywhere — it is true for this response only. */
+  checkedAt: string;
+  /** The single day the probe asked the activity routes about. */
+  probedDay: string | null;
+  routes: GatewayProbeRoute[];
+  /** Every required route answered usably. */
+  usable: boolean;
+  /** What this credential cannot show, one statement per gap. */
+  warnings: string[];
+}
+
+/** Nothing answered usably, and nothing will. */
+const PROBE_FAILED: ReadonlySet<GatewayProbeStatus> = new Set([
+  'denied',
+  'absent',
+  'malformed',
+  'unreachable',
+]);
+
+/**
+ * Turns route results into the two things a reader wants: can this sync, and
+ * what will be missing if it does.
+ *
+ * Pure, and the only place the mapping from a route outcome to a *dashboard*
+ * consequence lives — the API composes the response with it and the contract
+ * harness asserts against it, so the wording cannot drift between them.
+ *
+ * `empty` on a required route is deliberately not a failure and deliberately
+ * still a warning: a proxy that genuinely saw no traffic yesterday and a
+ * credential scoped to one team that saw none are indistinguishable from here,
+ * and pretending otherwise is exactly the open question this probe exists to
+ * put in front of someone.
+ */
+export function summarizeGatewayProbe(routes: readonly GatewayProbeRoute[]): {
+  usable: boolean;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  let usable = routes.some((route) => route.required);
+
+  for (const route of routes) {
+    const label = GATEWAY_PROBE_STATUS_LABELS[route.status].toLowerCase();
+
+    if (PROBE_FAILED.has(route.status)) {
+      if (route.required) usable = false;
+      warnings.push(
+        `${route.path} — ${label}${route.httpStatus === null ? '' : ` (${route.httpStatus})`}. ${route.purpose}`,
+      );
+      continue;
+    }
+
+    if (route.status === 'empty') {
+      warnings.push(
+        route.required
+          ? `${route.path} reported no usage for the probed day. Either the gateway was idle, or this credential is scoped to an entity that was — the proxy answers both the same way.`
+          : `${route.path} reported no rows. ${route.purpose}`,
+      );
+      continue;
+    }
+
+    for (const coverage of route.dimensions) {
+      if (coverage.expected && coverage.keys === 0) {
+        warnings.push(
+          `${route.path} answered, but carried no ${GATEWAY_DIMENSION_LABELS[coverage.dimension].toLowerCase()} keys — that dimension will be blank.`,
+        );
+      }
+    }
+  }
+
+  return { usable, warnings };
+}
