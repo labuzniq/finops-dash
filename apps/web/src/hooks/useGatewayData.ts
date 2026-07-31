@@ -10,6 +10,7 @@ import type {
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
+  GatewaySpendLogs,
   GatewayUsage,
 } from '@dash/shared';
 import {
@@ -22,6 +23,7 @@ import {
   fetchGatewayProbe,
   fetchGatewaySealHistory,
   fetchGatewaySeals,
+  fetchGatewaySpendLogs,
   fetchGatewayStatus,
   fetchGatewayUsage,
 } from '../api/client.js';
@@ -238,6 +240,31 @@ export function useGatewaySealHistory(month: string, enabled: boolean) {
     queryKey: ['gateway', 'months', month, 'revisions'],
     queryFn: () => fetchGatewaySealHistory(month),
     enabled,
+  });
+}
+
+/**
+ * A sample of individual requests for a short window, read on demand.
+ *
+ * The second gateway query that does not run on mount, and for a different
+ * reason from the probe's: this one goes to the proxy live, over the largest
+ * table it has, and a page that mounted it would run that query against the
+ * corporate gateway every time somebody opened this view. `refetch()` is the
+ * trigger.
+ *
+ * Cached under the window so pressing it again for the same days is free, and
+ * kept out of the sync-invalidated tree in spirit — nothing this route reads is
+ * written by a sync — while still sitting under the `gateway` prefix so a sync
+ * clears a sample taken against days that have since been re-fetched.
+ */
+export function useGatewaySpendLogs(window: { from: string; to: string } | null) {
+  return useQuery<GatewaySpendLogs>({
+    queryKey: ['gateway', 'logs', window?.from ?? 'none', window?.to ?? 'none'],
+    queryFn: () => fetchGatewaySpendLogs(window?.from ?? '', window?.to ?? ''),
+    enabled: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+    gcTime: 10 * 60_000,
   });
 }
 

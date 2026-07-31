@@ -12,6 +12,7 @@ import type {
   GatewaySealHistory,
   GatewaySeals,
   GatewaySource,
+  GatewaySpendLogs,
   GatewayUsage,
   ImportLogEntry,
   ModelUsage,
@@ -320,6 +321,26 @@ export function fetchGatewaySeals(): Promise<GatewaySeals> {
  */
 export function fetchGatewaySealHistory(month: string): Promise<GatewaySealHistory> {
   return request<GatewaySealHistory>(`/gateway/months/${month}/revisions`);
+}
+
+/**
+ * A sample of individual requests — the only gateway read that carries every
+ * dimension on one row, and the only one that is fetched from the proxy live.
+ *
+ * Nothing stores these rows: they come from the largest table LiteLLM has, are
+ * pruned on the proxy's own schedule, and may be switched off entirely. The
+ * window is capped at a week upstream and the answer at a few thousand rows, so
+ * what comes back is evidence rather than a ledger — which is also why this is
+ * a manual read rather than something the page mounts.
+ */
+export function fetchGatewaySpendLogs(
+  from: string,
+  to: string,
+  limit?: number,
+): Promise<GatewaySpendLogs> {
+  const query = new URLSearchParams({ from, to });
+  if (limit !== undefined) query.set('limit', String(limit));
+  return request<GatewaySpendLogs>(`/gateway/logs?${query.toString()}`);
 }
 
 /**

@@ -43,6 +43,11 @@ import {
 import type { MetricDelta } from '../../lib/metrics/gatewayCompare.js';
 import { deriveSpendForecast, forecastRange } from '../../lib/metrics/gatewayForecast.js';
 import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
+import {
+  deriveSpendLogs,
+  ledgerRequestsIn,
+  spendLogWindow,
+} from '../../lib/metrics/gatewayLogs.js';
 import { deriveGatewayMix, hasMixSignal } from '../../lib/metrics/gatewayMix.js';
 import { deriveReliability } from '../../lib/metrics/gatewayReliability.js';
 import {
@@ -55,6 +60,7 @@ import {
   useGatewayModels,
   useGatewaySealHistory,
   useGatewaySeals,
+  useGatewaySpendLogs,
   useGatewayData,
   useGatewayForecastData,
   useGatewayStatus,
@@ -81,6 +87,7 @@ import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMixCard } from './GatewayMixCard.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
+import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
 import styles from './GatewayPage.module.css';
 
@@ -228,6 +235,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
    */
   const [billMonth, setBillMonth] = useState<string | null>(null);
   const [billDimension, setBillDimension] = useState<ChargebackDimension>('team');
+  /**
+   * The two axes of the request-log matrix, held apart from the breakdown
+   * switcher because they are a different question: every other card asks "how
+   * does this one dimension divide the money", and this one asks how two of
+   * them cross. `team × model` is the default because it is the pair the
+   * aggregate layer most obviously cannot answer.
+   */
+  const [logRowDimension, setLogRowDimension] = useState<GatewayDimension>('team');
+  const [logColumnDimension, setLogColumnDimension] = useState<GatewayDimension>('model');
 
   const statusQuery = useGatewayStatus();
   const usageQuery = useGatewayData(range);
@@ -526,6 +542,27 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   const health = useMemo(
     () => deriveGatewayHealth(healthQuery.data ?? null, new Date()),
     [healthQuery.data],
+  );
+
+  // The request sample — the page's one *live* read and its only joint-keyed
+  // source. Its window is the tail of the trimmed spine rather than the range
+  // picker's bounds, so the sample is evidence about the days actually on
+  // screen, and it is never fetched until the card's button asks: these rows
+  // come from the largest table the proxy has.
+  const logWindow = useMemo(() => spendLogWindow(summary.daily), [summary.daily]);
+  const logsQuery = useGatewaySpendLogs(logWindow);
+  // The ledger's own request count for the same days, taken from the spine the
+  // page already holds. It is the sample's completeness denominator, and it is
+  // in requests rather than dollars deliberately: a share of gateway *spend*
+  // derived from a capped sample is the one number this layer must not produce.
+  const logs = useMemo(
+    () =>
+      deriveSpendLogs(logsQuery.data ?? null, {
+        rowDimension: logRowDimension,
+        columnDimension: logColumnDimension,
+        ledgerRequests: ledgerRequestsIn(summary.daily, logWindow),
+      }),
+    [logsQuery.data, logRowDimension, logColumnDimension, summary.daily, logWindow],
   );
 
   // The one card that does not follow the dimension switcher: `mcp_server` is
@@ -899,6 +936,26 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           {compared !== null && movers.length > 0 && (
             <GatewayMoversCard rows={movers} dimension={activeDimension} window={compared.window} />
           )}
+
+          {/*
+            Last of the analysis cards, and the only one that fetches on a
+            press: it reads individual requests from the proxy live, which is
+            the one thing that can cross two dimensions — every card above it
+            reads the daily aggregates, where each dimension is reported on its
+            own and a joint key does not exist.
+          */}
+          <div id="gateway-request-log">
+            <GatewayRequestLogCard
+              view={logs}
+              available={summary.availableDimensions}
+              onRowDimension={setLogRowDimension}
+              onColumnDimension={setLogColumnDimension}
+              onRead={() => void logsQuery.refetch()}
+              loading={logsQuery.isFetching}
+              error={logsQuery.error instanceof Error ? logsQuery.error : null}
+              enabled={configured && logWindow !== null}
+            />
+          </div>
 
           {hasMixSignal(mix) && <GatewayMixCard decomposition={mix} />}
 

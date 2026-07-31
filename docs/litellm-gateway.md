@@ -533,7 +533,11 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   (`maximum_spend_logs_retention_period`) and truncated by a row cap. So nothing
   derived from it may be rendered as gateway spend: a total over the sample is a
   floor, the same shape as an `mcp_server` attribution, and a read that hit the
-  cap says so. Nothing stores these rows either — the route is live, because a
+  cap says so. The one completeness figure the view carries is in **requests** —
+  sample requests over the ledger's own count for the same days, clamped at 100%
+  — because that is the counter both layers hold exactly, and because a reader
+  who cannot see how thin the sample is will read the matrix as the window.
+  Nothing stores these rows either — the route is live, because a
   copy of the proxy's request log is not a thing this dashboard should be the
   system of record for.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
@@ -915,9 +919,10 @@ What it shows, and why each one is there:
 | Seal badge on the statement | Whether the month on screen is *final* — recorded at close and quotable — and, when the daily rows have moved since, by how much. Nothing renders for a month still in flight |
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Monthly ledger | Every month that has been **sealed**, newest first: what it cost, what it moved by against the calendar month before it, its tokens, calls and blended $/1M, and the compounded direction across the longest unbroken run — with a strip that draws a closed-but-unsealed month as a marked hole rather than a short bar, and an `archive` mark on the months whose days LiteLLM has since pruned. The only card on the page not bounded by the range picker, because it reads the record rather than the days |
+| Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-four decisions worth keeping:
+Twenty-five decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1383,7 +1388,7 @@ Twenty-four decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because sixteen cards each flagging their own faults means every
+  their findings in one list, because seventeen cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -1596,6 +1601,59 @@ Twenty-four decisions worth keeping:
   longest *unbroken* run ending at the newest sealed month, since a mean of
   month-over-month percentages is dominated by whichever month was smallest and
   a run that jumped a hole is not a run.
+
+- **The request sample is read on a press, framed as a sample, and cut in the
+  view.** It is the page's only *live* read and its only joint-keyed one, and
+  all three of those follow from what the layer is rather than from taste.
+
+  **A button, not a mount.** `/spend/logs` reads the largest table LiteLLM has;
+  a card that fetched on open would run that query against the corporate proxy
+  every time somebody navigated here. The same argument the health card makes
+  for having no refresh button, in the other direction: there, pressing costs
+  money, so the reading is nightly and stored; here, mounting costs the proxy,
+  so the read is manual and stored nowhere.
+
+  **The window is the tail of the trimmed spine, not the range picker's.**
+  Anchoring on the picker would ask for today, which no other card on the page
+  is showing — the same reason the comparison window is measured off the spine.
+  At most seven days, the route's own cap.
+
+  **The completeness figure is in requests.** How thin the sample is matters —
+  a matrix over 0.7% of a window reads very differently from one over 80% — but
+  a share of gateway *spend* taken from a capped sample is precisely what the
+  invariant forbids. Requests are the one counter both layers hold exactly, so
+  the note is `sample ÷ ledger requests`, clamped at 100% because the two are
+  pruned on different schedules and may legitimately disagree.
+
+  **The axes are capped here rather than in `crossTabSpendLogs`.** The shared
+  function is deliberately not allowed to truncate — dropping keys would leave
+  its axis totals disagreeing with the cells that survived — so the view cuts to
+  8 × 6 and *reports* what it cut. The heat scale is taken over the drawn cells
+  only, and is a scale rather than a share: a matrix whose brightest cell sits
+  outside the grid would render every visible one dim, which reads as "nothing
+  here" instead of "cropped".
+
+  **The deployment table is the point, not a detail.** `model_id` is the only
+  join between usage and `gateway_deployment_health`, so this is the one place
+  a *degraded* alias — some deployments failing, the alias still answering,
+  invisible on every other card — becomes a number of requests and dollars. A
+  deployment under a 20-request floor shows no failure rate at all, for the same
+  reason the reliability badge needs a materiality gate: one call gives 0% or
+  100% and neither is a finding.
+
+  **Three silences that all draw an empty table are kept apart**: not read yet,
+  refused (`disable_spend_logs`, a supported way to run a busy gateway rather
+  than a fault), and answered-with-nothing (which on this layer may simply mean
+  the log table's own retention has already pruned those days).
+
+  **It feeds no finding to the attention digest, and that follows from the
+  button.** Every other source the digest reads has answered by the time the
+  page has rendered; this one is unread until somebody asks, so a card that
+  contributed to the digest would either report a blind spot on every visit or
+  quietly make the digest depend on whether a button had been pressed. The
+  findings it *would* raise — a pool refusing behind a healthy-looking alias —
+  the health card already raises from the nightly reading, which is the reading
+  that is always there.
 
 `apps/api/scripts/verify-gateway-history.ts` covers it, and the split is the
 same one the seal-history and budget-history scripts needed: a dev database has
@@ -2227,6 +2285,25 @@ question below. It is, though, the harness for answering it: drop a captured
 response from the real gateway into a handler and the assertions become a
 conformance check of the proxy rather than of the client.
 
+`apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
+that sample, which is a different set of ways to be wrong. Its pure half pins
+the three silences apart (not read, refused, answered-with-nothing), the window
+as the tail of the spine rather than of the picker, the cap being applied in the
+view **and reported** while the totals above it still cover every key, the heat
+scale being taken over the drawn cells only, the completeness figure being in
+requests and clamped at 100%, an untimed request being excluded from the
+percentiles rather than read as 0ms, and the deployment split — the failing pool
+carrying its own rate where the alias-level number averages it away, an
+immaterial deployment comparing nothing, and a request naming no deployment
+counted as *unjoinable* rather than filed under a shared null. Its mock half
+then runs `MockGatewayClient.fetchSpendLogs` through the same derivation the
+page runs, which is what proves the split view finds the refusing PTU pool
+behind an alias that bills normally, that the sample's spend stays a fraction of
+the window's, and that switching axes re-cuts the same rows rather than fetching
+again. Run it with
+`node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-logs-view.ts`
+(no env needed — it touches no database).
+
 The page reads `GET /api/gateway/status` first: with `GATEWAY_SOURCE=off` it
 renders the configuration hint instead of empty charts, and the Sync button is
 disabled. The `Data sources` page carries a matching LiteLLM row with the same
@@ -2437,15 +2514,21 @@ Governance is now rendered end to end across all three scopes
   route to them would be a second source — an export taken before they aged out,
   or the proxy's own database — which is a different integration, not a wider
   window.
-- **A view on the request log.** `GET /api/gateway/logs` and
-  `crossTabSpendLogs` exist and are checked; nothing on the page reads them yet.
-  That is the next step rather than a limit, and the shape is already forced by
-  what the layer is: a *sample*, so no share of gateway spend anywhere on it, no
-  totals presented as the window's, and the truncation stated on the card rather
-  than in a tooltip. What it can show that nothing else can is the joint key
-  (this team's model mix, this key's provider split), latency, and which
-  deployment served the traffic — the last of which is the only thing that turns
-  a `degraded` alias on the health card into a number of dollars.
+- **Anything the request sample could be that costs a second read.** The
+  `Request sample` card now renders the joint key, the latency percentiles and
+  the deployment split (`lib/metrics/gatewayLogs.ts`), and what is *not* built is
+  deliberate rather than pending. There is no request list — a table of
+  individual calls invites reading one row as a fact about the gateway, and the
+  rows carry identifiers (`user`, `session_id`) that a dashboard has no reason
+  to hold on screen. There is no time-of-day or session-length read either:
+  both would need a sample large enough to be representative, and this one is
+  capped at a few thousand rows of a window that is millions. The honest way to
+  those is a widened cap plus a statement about how the sample was drawn, and
+  LiteLLM's route offers no sampling parameter at all — it answers the head of
+  the window, which is a *biased* sample and is only safe for the questions the
+  card asks now (does this pair exist, how slow is it, which deployment served
+  it). Whether the route is even fast enough to keep as a live read is open
+  question 16.
 - **Cost centres on a gateway line.** A statement bills a team id, a tag or an
   email, not a department: joining those to the org taxonomy the Copilot side
   already has (`lib/metrics/costCentre.ts`) needs the `user`/`team` ids to be

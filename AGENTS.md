@@ -356,7 +356,20 @@ aggregates', and are millions a day — which is also why a sum over them is a *
 `crossTabSpendLogs` in `@dash/shared` reports `sampleSpend` and no share column. It is the one schema
 here with *per-row* tolerance (a log line with no id is dropped and counted, where a malformed
 aggregate throws), and the one where `available: false` is a supported configuration rather than a
-fault. **It is a draft against
+fault. `lib/metrics/gatewayLogs.ts` and `GatewayRequestLogCard` are what read it, and every rule on
+that card is the layer's rather than the view's: it is fetched **on a press** and never on mount (a
+card that mounted would run the proxy's largest table on every navigation — the health card's
+no-refresh-button argument in the other direction), its window is the tail of the *trimmed spine* at
+most seven days long, its completeness note is in **requests** against the ledger's own count because
+a share of gateway spend taken from a capped sample is the one number this layer must not produce, and
+the matrix is capped at 8x6 *in the view* — `crossTabSpendLogs` may not truncate, since dropping keys
+would leave its axis totals disagreeing with the cells that survived — with the cut reported and the
+heat scale taken over the drawn cells only. The deployment table under it is the point: `model_id` is
+the only join to `gateway_deployment_health`, so this is where a `degraded` alias becomes a number of
+requests and dollars, a deployment under a 20-request floor shows no rate at all, and a request naming
+no deployment is counted as *unjoinable* rather than filed under a shared null. Not-read-yet, refused
+and answered-with-nothing are three separate states, and only the middle one is even a fault.
+**It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
 page) are the affordance for closing them: a live connection check that calls every route the sync needs
@@ -408,9 +421,12 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   `GET /spend/logs` is the only joint-keyed source and the only one that may be switched off
   (`disable_spend_logs`), pruned on its own retention schedule, or truncated by the row cap — so a
   total over it is a floor, a read that hit the cap says `truncated`, and nothing derived from it may
-  be rendered as gateway spend or as a share of it. Nothing stores those rows either: the route is
-  live, because a copy of the proxy's request log is not something this dashboard should be the system
-  of record for.
+  be rendered as gateway spend or as a share of it. The one completeness figure the view carries is in
+  **requests** (`sampledShare`: sample requests over the ledger's own count for the same days, clamped
+  at 100%) precisely because that is the counter both layers hold exactly, and because a reader who
+  cannot see how thin the sample is will read the matrix as the window. Nothing stores those rows
+  either: the route is live, because a copy of the proxy's request log is not something this dashboard
+  should be the system of record for.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to
