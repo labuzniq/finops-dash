@@ -4,6 +4,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayDeploymentHistory,
   GatewayHealth,
   GatewayModels,
   GatewayNotifications,
@@ -17,6 +18,7 @@ import {
   fetchGatewayBudgetHistory,
   fetchGatewayBudgets,
   fetchGatewayCoverage,
+  fetchGatewayDeploymentHistory,
   fetchGatewayHealth,
   fetchGatewayModels,
   fetchGatewayNotifications,
@@ -171,6 +173,26 @@ export function useGatewayHealth(enabled: boolean) {
   return useQuery<GatewayHealth>({
     queryKey: ['gateway', 'health'],
     queryFn: fetchGatewayHealth,
+    enabled,
+  });
+}
+
+/**
+ * What those deployments read on each of the last `days` days.
+ *
+ * Cached under the day count rather than under dates, exactly like the budget
+ * history: the window is relative to today, the payload is deployments × days,
+ * and it is invalidated by the gateway sync prefix because the sync is the only
+ * thing that appends to it.
+ *
+ * A separate query from the snapshot rather than a widening of it, because the
+ * two answer different questions and the snapshot has to stay cheap: the card
+ * above renders tonight's reading whether or not this one has answered.
+ */
+export function useGatewayDeploymentHistory(days: number, enabled: boolean) {
+  return useQuery<GatewayDeploymentHistory>({
+    queryKey: ['gateway', 'health-history', days],
+    queryFn: () => fetchGatewayDeploymentHistory(days),
     enabled,
   });
 }

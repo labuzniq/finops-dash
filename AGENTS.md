@@ -287,6 +287,16 @@ because splitting asserts a recovery nobody saw exactly as filling it in asserts
 and `STANDING_OUTAGE_READINGS` (3) is its one threshold, the first count that a single evening spanning
 a night cannot explain. `model` is stored as it resolved that day rather than joined at read time, so a
 deployment moved to another alias reads as the change it was.
+`lib/metrics/gatewayHealthHistory.ts` and `GatewayHealthHistoryCard` render it, and like the snapshot
+view they add no rule about the gateway — the shared sequence derivation is the whole statement — only
+three about the drawing: the spine is clamped forward to `recordingSince` (there is no backfill and
+cannot be one, so a 60-day window on a four-day recording draws four days), a night with no reading is
+a **hole** in every strip rather than a healthy cell, and a recording shorter than
+`STANDING_OUTAGE_READINGS` days says so above the numbers, because "none standing" is otherwise a fact
+about how long this dashboard has been watching. It feeds **no** finding to the attention digest: a
+standing fault names the deployment the snapshot card is already reporting as `down` or `degraded`
+tonight, and the digest never carries two findings about one key — what the history adds is the
+evidence under that finding.
 `gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale

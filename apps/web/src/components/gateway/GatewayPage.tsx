@@ -18,6 +18,11 @@ import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.j
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { buildGatewayAlerts } from '../../lib/metrics/gatewayAlerts.js';
 import { deriveGatewayHealth } from '../../lib/metrics/gatewayHealth.js';
+import {
+  deriveHealthHistory,
+  hasHealthHistory,
+  HEALTH_HISTORY_DAYS,
+} from '../../lib/metrics/gatewayHealthHistory.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
@@ -56,6 +61,7 @@ import {
   useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayCoverage,
+  useGatewayDeploymentHistory,
   useGatewayHealth,
   useGatewayModels,
   useGatewaySealHistory,
@@ -79,6 +85,7 @@ import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
 import { GatewayCatalogCard } from './GatewayCatalogCard.js';
 import { GatewayHealthCard } from './GatewayHealthCard.js';
+import { GatewayHealthHistoryCard } from './GatewayHealthHistoryCard.js';
 import { GatewayChargebackCard } from './GatewayChargebackCard.js';
 import { GatewayCoverageNote } from './GatewayCoverageNote.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
@@ -544,6 +551,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [healthQuery.data],
   );
 
+  // The same readings kept — the only thing that separates a pool refusing
+  // tonight from one that has refused every night this week. Its own window
+  // rather than the range picker's, for the same reason the snapshot has none:
+  // these are our readings of the router, not days of gateway usage, and the
+  // recording starts when this dashboard did.
+  const healthHistoryQuery = useGatewayDeploymentHistory(HEALTH_HISTORY_DAYS, configured);
+  const healthHistory = useMemo(
+    () => deriveHealthHistory(healthHistoryQuery.data ?? null),
+    [healthHistoryQuery.data],
+  );
+
   // The request sample — the page's one *live* read and its only joint-keyed
   // source. Its window is the tail of the trimmed spine rather than the range
   // picker's bounds, so the sample is evidence about the days actually on
@@ -903,6 +921,19 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           */}
           <div id="gateway-health">
             {health.answered && !health.isEmpty && <GatewayHealthCard view={health} />}
+          </div>
+
+          {/*
+            Directly under the snapshot, because it is the same reading with a
+            second question asked of it. It stands itself down until a reading
+            has been filed: there is no backfill for this table, so an empty one
+            means the recording has not started rather than that nothing has
+            ever failed — and the digest above already names an unread /health.
+          */}
+          <div id="gateway-health-history">
+            {hasHealthHistory(healthHistory) && (
+              <GatewayHealthHistoryCard view={healthHistory} />
+            )}
           </div>
 
           <div id="gateway-cache">

@@ -949,6 +949,7 @@ What it shows, and why each one is there:
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
+| Deployment health over time | The same nightly readings kept as a sequence — the one thing the snapshot above structurally cannot say: which deployments have been refusing for nights rather than for one evening. A strip per deployment with three states (answering, failing, **no reading filed**), the gateway-wide failing count per night, standing faults first, then anything failing now, then intermittence — every figure a count of **readings**, never a duration or an availability percentage. A recording too short to hold a standing run says so instead of reporting a clean sheet |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
 | Budget history (per row) | Opening a budget row shows what that key or team read on previous days: a strip of the recorded share of cap with a **hole** on every day nobody synced, the changes we caught (period resets, cap and soft-budget moves, rate-limit changes, renames, blocks, and the day it crossed its cap), and the periods that closed inside the record — each labelled *at least*, because the counter is read once a day |
@@ -963,7 +964,7 @@ What it shows, and why each one is there:
 | Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-five decisions worth keeping:
+Twenty-six decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1429,7 +1430,7 @@ Twenty-five decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because seventeen cards each flagging their own faults means every
+  their findings in one list, because eighteen cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -1643,6 +1644,40 @@ Twenty-five decisions worth keeping:
   month-over-month percentages is dominated by whichever month was smallest and
   a run that jumped a hole is not a run.
 
+- **The health history card adds no rule about the gateway, and three about the
+  drawing.** `summarizeDeploymentHistory` in `@dash/shared` is the single
+  statement of what a *sequence* of readings may be read to mean, shared with the
+  API's own verification, exactly as `summarizeDeploymentHealth` is for one
+  reading. `lib/metrics/gatewayHealthHistory.ts` adds only what the card needs:
+
+  **A spine clamped forward to `recordingSince`.** There is no backfill for this
+  table and there never can be — the proxy serves current state only — so a
+  60-day window on a four-day recording is drawn as four days rather than as 56
+  nights nobody looked at. The budget history card clamps for the same reason.
+
+  **Three states per cell, not two.** A night with no reading is hatched, in the
+  per-deployment strip and in the gateway-wide one. This is the one surface where
+  the distinction would be invisible: a green cell and an unread night read
+  equally reassuringly, and drawing the second as the first asserts a success
+  nobody observed — the same invention as splitting a run across an unobserved
+  day, which the shared rule already forbids.
+
+  **A recording too short to hold a standing run says so.** Below
+  `STANDING_OUTAGE_READINGS` recorded days, "none standing" is a fact about how
+  long this dashboard has been watching and not about the gateway, so it is
+  stated above the numbers rather than footnoted. Same family as the health
+  card's staleness flag and `recordingSince` on the route.
+
+  Two things follow from what is *not* here. Nothing converts readings into
+  hours, days down or an availability percentage — a deployment can fail and
+  recover between two nightly readings and leave nothing behind, so a duration
+  would be an invention and a percentage is a duration wearing a hat. And the
+  card feeds **no finding to the attention digest**: a standing fault is the same
+  deployment the snapshot card is already reporting as `down` or `degraded`
+  tonight, and the digest never merges or duplicates two findings about one key.
+  What the history adds is the *evidence* under that finding, which is a reason
+  to open the card rather than a second row at the top of the page.
+
 - **The request sample is read on a press, framed as a sample, and cut in the
   view.** It is the page's only *live* read and its only joint-keyed one, and
   all three of those follow from what the layer is rather than from taste.
@@ -1695,6 +1730,27 @@ Twenty-five decisions worth keeping:
   findings it *would* raise — a pool refusing behind a healthy-looking alias —
   the health card already raises from the nightly reading, which is the reading
   that is always there.
+
+`apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
+does with those readings, and only that: `verify-gateway-health-history.ts`
+already pins the recording and the shared sequence rule. The pure half constructs
+the histories a dev database does not have — a spine clamped forward to
+`recordingSince` and one that must not stretch backwards; a three-state strip
+where the unread night is a hole carrying no error while the failing cell carries
+the proxy's own text; `tooShort` on both sides of its boundary, with "none
+standing" only meaning a clean gateway on the far side of it; every verdict
+against the shared summary that produced it (standing, failing-but-short,
+newly-failing, flapping, recovered, historic, clear) plus the row order taken
+from the shared derivation rather than re-sorted; a five-calendar-day run with
+two readings that must report two, with three unread nights inside it and exactly
+one run; and a second deployment that only appeared mid-window, which must carry
+no missing readings from before it existed while still stacking on the shared
+spine. The Postgres half runs the same derivation over what a sync actually
+stored and checks the two things only real rows can: every row's non-hole cells
+are exactly the readings filed, and **today's snapshot and today's appended
+readings name the same failing deployments** — two tables, one reading. Run it
+with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-health-history-view.ts`.
 
 `apps/api/scripts/verify-gateway-history.ts` covers it, and the split is the
 same one the seal-history and budget-history scripts needed: a dev database has
@@ -2561,12 +2617,14 @@ Governance is now rendered end to end across all three scopes
   route that probes one alias rather than all of them. Both are a decision about
   the proxy's configuration, not about this page.
 
-- **A view on the outage history.** The recording now exists
-  (`gateway_deployment_health_history`, one reading per deployment per day the
-  sync asked, read through `GET /api/gateway/health/history` and
-  `summarizeDeploymentHistory`), so "was this deployment already failing last
-  Tuesday" is answerable — but nothing on the page reads it yet. The health card
-  still renders the snapshot alone.
+- **A view on the outage history.** Built: `Deployment health over time`
+  (`lib/metrics/gatewayHealthHistory.ts` over
+  `GET /api/gateway/health/history`) draws the recording under the snapshot
+  card, so "was this deployment already failing last Tuesday" is now answered on
+  the page. What it cannot do is answer it further back than the first sync that
+  wrote a row — there is no backfill and cannot be one, since the proxy serves
+  current state only, which is why the spine is clamped forward and a short
+  recording says so rather than reporting a clean sheet.
 
   What is *not* coming, and is the limit rather than a gap: a duration. The
   sample is nightly and a deployment that failed and recovered between two

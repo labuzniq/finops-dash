@@ -5,6 +5,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayDeploymentHistory,
   GatewayHealth,
   GatewayModels,
   GatewayNotifications,
@@ -284,6 +285,19 @@ export function fetchGatewayModels(): Promise<GatewayModels> {
  */
 export function fetchGatewayHealth(): Promise<GatewayHealth> {
   return request<GatewayHealth>('/gateway/health');
+}
+
+/**
+ * What those deployments read on each of the last `days` days — our own
+ * recording, not a second read of the proxy.
+ *
+ * The snapshot above is replaced by every full sync, so it can say a pool is
+ * refusing tonight and never that it has been refusing all week. A thinner
+ * sample than the budget history and read as one: a day with no row is a night
+ * nobody looked at, and nothing derived from it is ever a duration.
+ */
+export function fetchGatewayDeploymentHistory(days: number): Promise<GatewayDeploymentHistory> {
+  return request<GatewayDeploymentHistory>(`/gateway/health/history?days=${days}`);
 }
 
 /**
