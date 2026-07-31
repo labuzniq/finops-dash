@@ -97,7 +97,18 @@ spend over gateway spend — and everything under it is scoped by that number. I
 deliberately: a row's share stays gateway-wide like every other card, while concentration (how few users
 are half the bill, and 80% of it) is measured *within* the attributed spend, because unattributed
 dollars would flatten a distribution. "New" means first seen in the window on screen and nothing more,
-so no churn is derived. Everything above is *usage*; `gateway_budget` is the one gateway table that is
+so no churn is derived. `lib/metrics/gatewayCache.ts` is the page's second non-money derivation and the
+only one that reports **tokens and refuses to report dollars**: it reads the two counters LiteLLM carries
+beside spend (`cache_read_input_tokens`, `cache_creation_input_tokens`) to answer "of everything we fed
+the models, how much had we fed them before", which no spend-shaped card can see — a workload re-sending
+the same 6,000-token prompt just reads as busy. It cannot price the saving because the daily aggregate
+carries one `spend` per row covering input, output and both cache operations together with no per-model
+price, and the gateway fronts three backends whose price lists differ; the one weighted figure is
+labelled a *convention* (0.1× read, 1.25× write). Those multipliers give the card its only threshold —
+below `0.25/0.9 ≈ 0.28` reads per token written the cache costs more than not caching — and only that
+`churning` state and a material workload with no cache activity are badged, never "below average". Rows
+rank by uncached input tokens (the size of the opportunity, not of the mistake). Everything above is
+*usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the counter for the period in flight, per key and per team,
 from `/key/list` and `/team/list` rather than the activity routes — replaced wholesale by the same sync

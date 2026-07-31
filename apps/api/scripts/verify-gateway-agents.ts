@@ -193,17 +193,35 @@ check(
   agentPerCall / restPerCall > 1 && agentPerCall / restPerCall < 2.5,
   'attributed cost-per-call is not in the range a tool turn plausibly occupies',
 );
-// Spend follows tokens, not calls: the same dollars-per-token as the rest of
-// the gateway, because an MCP tag changes what a call carries and not what a
-// token costs.
+// Spend follows tokens, not calls: an MCP tag changes what a call carries and
+// not what a token costs, so the attributed rows must be priced exactly like the
+// traffic they were sliced out of.
+//
+// Sliced out of, specifically — *not* like the rest of the gateway. Only the
+// agent-shaped keys carry MCP rows, so the comparison against the remainder is a
+// comparison of two different workload mixes and moves whenever any other key's
+// economics change: the mock's churning document workload alone puts several
+// percent between them, and that is a real difference in what those keys do
+// rather than an artefact of the attribution. Measuring against the source tags
+// is the invariant the uniform scaling actually guarantees, and it holds to
+// rounding regardless of what the rest of the gateway is doing.
+const AGENT_TAGS = new Set(['coding-assistant', 'support']);
+const sourceTraffic = usage.breakdowns.reduce(
+  (total, point) => {
+    if (point.dimension !== 'tag' || !AGENT_TAGS.has(point.key)) return total;
+    return { spend: total.spend + point.spend, tokens: total.tokens + point.totalTokens };
+  },
+  { spend: 0, tokens: 0 },
+);
 const agentPerToken = agents.attributed.spend / agents.attributed.totalTokens;
+const sourcePerToken = sourceTraffic.spend / sourceTraffic.tokens;
 const restPerToken = agents.remainder.spend / agents.remainder.totalTokens;
 console.log(
-  `  $/1M tokens: agent ${(agentPerToken * 1e6).toFixed(3)} vs rest ${(restPerToken * 1e6).toFixed(3)}`,
+  `  $/1M tokens: agent ${(agentPerToken * 1e6).toFixed(3)} vs source keys ${(sourcePerToken * 1e6).toFixed(3)} vs rest ${(restPerToken * 1e6).toFixed(3)}`,
 );
 check(
-  Math.abs(agentPerToken - restPerToken) / restPerToken < 0.05,
-  'attributed traffic is priced at a materially different dollars-per-token than the rest',
+  Math.abs(agentPerToken - sourcePerToken) / sourcePerToken < 0.01,
+  'attributed traffic is priced differently from the keys it was sliced out of — the two scalings are not uniform',
 );
 
 // ---------------------------------------------------------------- adoption

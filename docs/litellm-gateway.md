@@ -284,6 +284,22 @@ a caveat. The roster ramp clamps at fully-onboarded in late 2026, after which
 `new users` reads zero: a horizon of the generator, fixed by lengthening the
 rosters rather than by changing the derivation.
 
+**Prompt-cache behaviour** is the fifth planted shape, and the only one that
+costs money continuously rather than in an incident. It is a per-workload
+profile (`CACHE_PROFILES`), because on a real gateway caching is a property of
+how a workload builds its prompts and not of the proxy: a long-lived system
+prompt re-read all day reads back ~11 tokens per token written, short chat turns
+have little worth caching, `risk-doc-analysis` **churns** — every document is a
+different prompt, so it commits a fresh cache entry on nearly every call and
+reads back ~0.19 per write, below the ~0.28 break-even, which makes it *more*
+expensive than not caching at all — and `sandbox-experiments` never enables
+caching. The churn is deliberately invisible everywhere else on the page: that
+key simply reads as busy, and it takes the two token counters to tell "expensive
+because it does a lot" from "expensive because it re-sends the same input". The
+payload settles the claim rather than asserting it — the churning key runs
+$3.26 per million input tokens against $2.18 gateway-wide, which
+`verify-gateway-cache.ts` checks.
+
 ## Endpoints
 
 | Method | Path | Answer |
@@ -318,8 +334,9 @@ What it shows, and why each one is there:
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
+| Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
 
-Eleven decisions worth keeping:
+Twelve decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -501,6 +518,47 @@ Eleven decisions worth keeping:
   called the week before the range starts is indistinguishable here from someone
   who never has, so no churn number is derived at all.
 
+- **The prompt-cache card reports tokens and refuses to report dollars.**
+  `lib/metrics/gatewayCache.ts` reads the two counters LiteLLM carries beside
+  spend — `cache_read_input_tokens` and `cache_creation_input_tokens` — and
+  answers the one question on this page with a cheap fix attached: of everything
+  we fed the models, how much had we fed them before. It is the page's second
+  non-money derivation and it exists for the same reason the reliability card
+  does — a workload re-posting a 6,000-token system prompt on every call has no
+  owner to escalate to and produces no anomaly to flag. It just reads as *busy*
+  on every spend-shaped surface here.
+
+  It cannot report dollars, and the reason is structural rather than fastidious:
+  the proxy's daily aggregate carries one `spend` per row covering input, output,
+  cache reads and cache writes together, with no per-model price anywhere in the
+  payload. Splitting that back apart means assuming a price list, and this
+  gateway fronts three backends whose lists differ. The single weighted figure
+  the card does show — the share of the input bill the cache is keeping off it —
+  is labelled as the pricing **convention** it is (0.1× to read, 1.25× to write,
+  which is what Anthropic publishes and Bedrock mirrors; Azure OpenAI's cached
+  discount is shallower, so the figure is the optimistic end).
+
+  Those same two multipliers give the card its only real threshold. Writing `W`
+  tokens costs `0.25·W` over sending them plain; reading `R` back saves `0.9·R`;
+  so a cache is ahead of not caching at all above `R/W = 0.278` reads per write.
+  A row below that line is **churning** — paying the write premium and
+  collecting almost none of the discount — and that is a fault under any of the
+  three backends' price lists, which is what makes it worth a badge when "below
+  the gateway average" is not. Only two states are badged, `churning` and a
+  material workload with no cache activity at all; everything else is
+  unremarkable by design. Iteration 10's reliability badge is the precedent:
+  flagging every row under the mean flags half of them by construction.
+
+  Rows rank by **uncached input tokens**, the size of the opportunity, not by
+  hit rate — ranking by rate puts a 0%-cached key that sent nine thousand tokens
+  above the workload re-sending millions a day. Headroom levels each row up to
+  the gateway's *own* rate rather than to the best row's or to 100%, so it is a
+  floor rather than a target nobody hits. The card follows the dimension
+  switcher, and reading it through two dimensions is itself informative: on the
+  mock, headroom by `api_key` is ~277M tokens and by `model` it is ~6M, because
+  every model serves every workload — cache behaviour is a property of how a
+  workload builds its prompts, not of the deployment it routes to.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -615,6 +673,28 @@ rows stands the card down instead of reporting zero users of a real bill, a
 4-day spine reports no trend and flags nobody as new, and an empty spine derives
 nulls rather than dividing by zero. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-adoption.ts`.
+
+`apps/api/scripts/verify-gateway-cache.ts` covers the prompt-cache layer. The
+split first, since every other number rests on it: cached + uncached equals
+input on every day and every row, the days sum to the range totals, every
+full-coverage dimension reconstitutes the gateway-wide split while `mcp_server`
+stays a strict subset, and the shares of uncached input sum to 1 so the column
+is a decomposition of the opportunity rather than a decoration. Then the
+break-even is re-derived from the two published multipliers and checked to
+separate the mock's three cache regimes — the churning document workload badged,
+the sandbox read as untouched headroom, and the workloads whose caches pay for
+themselves badged as neither. The badge is a claim about money, so the script
+settles it in dollars the payload actually carries: the churning key's spend per
+input token must exceed the gateway's, which is the whole argument for the card
+(on a spend-shaped surface that key is indistinguishable from a busy one).
+Headroom is checked to be the row-by-row levelling it claims — never negative,
+never larger than the uncached tokens it comes out of, and exactly zero when
+every row already sits at the gateway rate. The edges cover an empty spine, a
+gateway with no prompt cache at all (both counters zero: a real 0%, not an
+unknown, and the card stands down), a key too small to badge, and a write-only
+key, which must read as `churning` on a zero reuse rather than falling through
+to `unused` on the strength of its zero hit rate. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache.ts`.
 
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a

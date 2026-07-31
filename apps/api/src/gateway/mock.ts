@@ -238,6 +238,43 @@ const KEYS: readonly MockKey[] = [
   },
 ];
 
+/**
+ * How each workload uses the providers' prompt cache, as fractions of the
+ * prompt tokens it sends: `read` is served from cache, `write` is committed to
+ * it at a premium.
+ *
+ * The fifth planted shape, and the only one that costs money continuously
+ * rather than in an incident: cache behaviour is a property of how a workload
+ * builds its prompts, and a corporate gateway carries all three regimes at once.
+ *
+ * - A long-lived system prompt re-read all day (the default) reads back roughly
+ *   eleven tokens per token written — the cache pays for itself many times over.
+ * - Short chat turns have little worth caching, so both numbers are small and
+ *   the ratio still works out.
+ * - **Document intelligence churns**: every document is a different prompt, so
+ *   the workload commits a fresh cache entry on nearly every call and almost
+ *   never reads one back. At ~0.19 reads per write it sits below the break-even
+ *   of ~0.28 that `lib/metrics/gatewayCache.ts` derives from the providers'
+ *   own multipliers, which makes it *more* expensive than not caching at all —
+ *   the exact fault the cache card's `churning` badge exists to name, and one
+ *   that no spend-shaped card can distinguish from a workload that is simply
+ *   busy.
+ * - **The sandbox never enables caching at all**, which is the other state worth
+ *   rendering: not a fault, just untouched headroom.
+ */
+interface CacheProfile {
+  read: number;
+  write: number;
+}
+
+const DEFAULT_CACHE_PROFILE: CacheProfile = { read: 0.34, write: 0.031 };
+
+const CACHE_PROFILES: Readonly<Record<string, CacheProfile>> = {
+  chat: { read: 0.05, write: 0.005 },
+  'document-intelligence': { read: 0.03, write: 0.16 },
+  experiment: { read: 0, write: 0 },
+};
+
 /** MCP servers the agents call through the gateway — a small, flat dimension. */
 const MCP_SERVERS = ['github', 'jira', 'confluence', 'snowflake'] as const;
 
@@ -511,9 +548,11 @@ export class MockGatewayClient implements GatewayClient {
           const promptPerRequest = key.tag === 'chat' ? 900 : key.tag === 'batch' ? 6_200 : 2_400;
           const promptTokens = Math.round(successful * promptPerRequest * (0.7 + random() * 0.6));
           const completionTokens = Math.round(promptTokens * (0.12 + random() * 0.18));
-          // Long-lived system prompts get cached; short chat turns rarely do.
-          const cacheReadTokens = Math.round(promptTokens * (key.tag === 'chat' ? 0.05 : 0.34));
-          const cacheCreationTokens = Math.round(cacheReadTokens * 0.09);
+          // Prompt-cache behaviour is a property of the workload, not of the
+          // gateway — see CACHE_PROFILES.
+          const cache = CACHE_PROFILES[key.tag] ?? DEFAULT_CACHE_PROFILE;
+          const cacheReadTokens = Math.round(promptTokens * cache.read);
+          const cacheCreationTokens = Math.round(promptTokens * cache.write);
 
           const billedPromptTokens = Math.max(0, promptTokens - cacheReadTokens);
           const spend =

@@ -1,0 +1,300 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 3px;
+  max-width: 720px;
+}
+
+.headline {
+  text-align: right;
+}
+
+.headlineValue {
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.headlineNote {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 2px;
+}
+
+/* Cached against sent-again — the one legitimate partition of input tokens. */
+.split {
+  padding: 0 20px 12px;
+}
+
+.splitTrack {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--chart-fill);
+  border: 1px solid var(--border2);
+  overflow: hidden;
+}
+
+.splitCached {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: 6px;
+}
+
+.splitLegend {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.swatchCached {
+  background: var(--accent);
+}
+
+.swatchUncached {
+  background: var(--chart-fill);
+  border: 1px solid var(--border2);
+}
+
+/* The day strip is a rate profile, not a volume one — see the component. */
+.strip {
+  padding: 0 20px 12px;
+}
+
+.stripBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 44px;
+}
+
+.stripSlot {
+  flex: 1 1 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.stripBar {
+  width: 100%;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in oklab, var(--accent) 62%, transparent);
+}
+
+.stripNote {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 6px;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  padding: 0 20px 16px;
+}
+
+.stat {
+  min-width: 0;
+}
+
+.statLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+
+.statValue {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.statSub {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-top: 2px;
+}
+
+/* Same grid family as the breakdown and reliability cards. */
+.row {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 100px 120px 110px 100px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 20px;
+  font-size: 12.5px;
+  border-left: 2px solid transparent;
+  padding-left: 18px;
+}
+
+.rowFlagged {
+  background: var(--card2);
+  border-left-color: var(--neg);
+}
+
+.headerStrip {
+  background: var(--card2);
+  border-top: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border2);
+  font-weight: 600;
+  font-size: 10.5px;
+  color: var(--faint);
+  letter-spacing: 0.06em;
+}
+
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.key {
+  font: 500 12px ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sublabel {
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trackCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.track {
+  flex: 1 1 auto;
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--muted) var(--chart-fill), transparent);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--accent) 70%, var(--card));
+}
+
+.badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.badgeBad {
+  color: var(--neg);
+  border-color: color-mix(in oklab, var(--neg) 40%, transparent);
+}
+
+.right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.bad {
+  color: var(--neg);
+  font-weight: 600;
+}
+
+.good {
+  color: var(--pos);
+}
+
+.share {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.empty,
+.footer {
+  padding: 14px 20px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.empty {
+  padding: 24px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row {
+    grid-template-columns: 160px minmax(0, 1fr) 90px 110px;
+  }
+
+  .row > :nth-child(5),
+  .row > :nth-child(6) {
+    display: none;
+  }
+}

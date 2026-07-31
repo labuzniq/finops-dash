@@ -16,6 +16,7 @@ import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.j
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
+import { deriveGatewayCache, hasCacheActivity } from '../../lib/metrics/gatewayCache.js';
 import { buildGatewayChartGeometry } from '../../lib/metrics/gatewayChart.js';
 import {
   comparisonWindow,
@@ -45,6 +46,7 @@ import { GatewayAgentsCard } from './GatewayAgentsCard.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
+import { GatewayCacheCard } from './GatewayCacheCard.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
 import { GatewayKeyDetail } from './GatewayKeyDetail.js';
 import { GatewayMoversCard } from './GatewayMoversCard.js';
@@ -305,6 +307,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.daily, usageQuery.data, activeDimension],
   );
 
+  // Cache efficiency follows the switcher too — "who is re-sending the same
+  // input" is a question about a slice, and it reads differently by model (does
+  // this deployment cache at all) than by key (does this workload build its
+  // prompts so it can).
+  const cache = useMemo(
+    () => deriveGatewayCache(summary.daily, usageQuery.data?.breakdowns ?? [], activeDimension),
+    [summary.daily, usageQuery.data, activeDimension],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -560,6 +571,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           />
 
           <GatewayReliabilityCard summary={reliability} />
+
+          {hasCacheActivity(cache) && <GatewayCacheCard summary={cache} />}
 
           {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
 
