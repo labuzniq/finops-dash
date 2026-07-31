@@ -523,7 +523,16 @@ and each half pooled rather than averaged (the nights' denominators differ by or
 mean of nightly shares lets a quiet Sunday outvote a Wednesday), in percentage points and withheld under
 `SLOW_RESPONSE_TREND_MIN_DAYS`. Its window ends **yesterday**, unlike the two other history routes,
 because today can never carry a reading and a window ending on it would report a gap on the newest night
-forever. Nothing renders it yet and no finding travels from it.
+forever. `lib/metrics/gatewaySlowResponseHistory.ts` and `GatewaySlowResponseHistoryCard` render it
+directly under the live card, and like the health-history view they add no rule about the gateway — the
+shared roll-up is the whole statement — only three about the drawing: the spine is clamped forward to
+`recordingSince` (there is no backfill and cannot be, since the sweep asks about one settled day), a
+night with no sweep is a **hole** in every strip rather than a clean cell, with the gateway strip drawn
+at height for the night's pooled share and *opacity* for how many endpoints reported it, and a recording
+shorter than `SLOW_RESPONSE_TREND_MIN_DAYS` says so above the numbers, because a withheld direction
+would otherwise read as "no change". No finding travels from it: a hang alert would need a threshold on
+a count against a duration nobody here can see, which is the open question the stored trend exists to
+answer.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`

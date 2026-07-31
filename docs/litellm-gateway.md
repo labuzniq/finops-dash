@@ -1351,6 +1351,7 @@ What it shows, and why each one is there:
 | Why calls failed | The only card that says what the failures *were*, read live on a button press: the window's exceptions rolled up **by class with the party that can act on each one named** (a quota, a credential, a cap this proxy enforces, a provider fault, a caller sending something the model would not take), and by **deployment** — the resolution the aggregates do not have — with each row joined to tonight's health reading where the key matches. Every share is a share of what was *recorded*; the ledger's own failure count sits beside the total as a disagreement between two tables rather than as coverage, and an alias the capped sweep did not reach is reported as **unread**, never as clean |
 | How slowly the backends answered | The page's only card about **time**, read live on a button press, and the only one whose unit has to be spelled out: seconds per completion token, averaged per request, so nothing on it is a request duration, a percentile or an SLA figure — the one re-reading is its reciprocal, tokens per second. A per-day median across the keys that reported (a median, never a sum: rates do not add) with a thin day drawn dim rather than short, and the deployment keys ranked slowest first with each row's ratio to the gateway median, its fastest and slowest day, and the gate that stopped a badge where one did not land. Every row is joined to tonight's health reading — and because this route keys a row by its `api_base` alone, a base fronting deployments the reading disagrees about reads **mixed** rather than being attributed to either |
 | How many calls hung | The last of the four questions about one window of traffic, read live on a button press: how many requests ran past **the proxy's own alerting threshold** — a number the response does not carry, so no figure on the card carries a duration and two proxies' counts are not comparable. Every share is taken against the route's **own** denominator (request-log rows, cache hits excluded upstream), with the ledger's count for the same days beside it as a disagreement between two tables and never as a divisor. Endpoints rank by hangs, each with its rate, its ratio to the gateway, the aliases that routed to it, the gate that stopped a badge where one did not land, and tonight's health verdict — except the `api_base`-less bucket, which takes **no** verdict: it is not an endpoint, so there is nothing to look it up by |
+| Hangs over time | The same nightly sweeps kept — the only one of the four live reads that has a history, and the only one that may have one, because counts of disjoint request-log rows are the one thing here that adds across nights. The window's pooled hang rate with a **half-over-half trend in percentage points** (pooled, never a mean of nightly shares: the denominators differ by orders of magnitude), a per-night strip where height is the rate and *opacity* is how many endpoints reported it, and a strip per endpoint with three states (clean, hangs, **no sweep filed**). Every claim is the shared roll-up's — the badge is the live card's own two gates over the pooled counts — and a recording too short to split says so instead of drawing a flat direction |
 | Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
 | Deployment health over time | The same nightly readings kept as a sequence — the one thing the snapshot above structurally cannot say: which deployments have been refusing for nights rather than for one evening. A strip per deployment with three states (answering, failing, **no reading filed**), the gateway-wide failing count per night, standing faults first, then anything failing now, then intermittence — every figure a count of **readings**, never a duration or an availability percentage. A recording too short to hold a standing run says so instead of reporting a clean sheet |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
@@ -1367,7 +1368,7 @@ What it shows, and why each one is there:
 | Request sample | The one card that reads *individual requests*, live and on a button press: a **row dimension × column dimension** matrix — the joint key the daily aggregates cannot express — plus the sample's latency percentiles, and which deployment served each alias's traffic. Everything on it is framed as a sample: a completeness figure in **requests** against the ledger's own count, a truncation flag, and no share of gateway spend anywhere |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-nine decisions worth keeping:
+Thirty decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1833,7 +1834,7 @@ Twenty-nine decisions worth keeping:
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
   history, anomalies, reliability, cache, coverage, deployment health — and puts
-  their findings in one list, because twenty-one cards each flagging their own faults means every
+  their findings in one list, because twenty-two cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -2275,6 +2276,46 @@ Twenty-nine decisions worth keeping:
 
   **Three silences again**, and **it feeds no finding to the attention digest**
   — the button's reason, the same as the latency card's.
+
+- **The hang history is the same sweep asked whether that number is the usual
+  one.** `lib/metrics/gatewaySlowResponseHistory.ts` and
+  `GatewaySlowResponseHistoryCard` read `gateway_slow_response_daily` through
+  `summarizeSlowResponseHistory`, directly under the live card. It exists because
+  the live read answers whatever window it is asked for and nothing else: a
+  reader who presses the button sees 0.6% and has no way to know whether last
+  week was 0.2% or 1.4%. It is the only one of the four live reads that *can*
+  have a history — counts of disjoint request-log rows with their own
+  denominator add across nights, where a mean of per-request ratios and a total
+  with no denominator do not.
+
+  Like both other history cards it adds **no rule about the gateway**: the
+  summary is passed through verbatim (asserted as such in the harness), the badge
+  is the live card's own two gates over the pooled counts, and the trend is the
+  shared one. Three rules about the *drawing* are its own.
+
+  **The spine is clamped forward to `recordingSince`.** There is no backfill for
+  this table and cannot be — the sweep asks the proxy about one settled day and
+  files the answer — so a 60-night window on a four-night recording draws four
+  nights rather than 56 nights nobody read.
+
+  **A night with no sweep is a hole**, in the gateway strip and in every
+  endpoint's own strip. A refusal, `disable_spend_logs`, a backfill and a missed
+  run all leave the same absence behind, and none of them is a night on which
+  nothing hung. The gateway strip carries a second channel for the same reason
+  the latency strip does: height is the night's pooled share, opacity is how many
+  endpoints reported it, because a night two endpoints answered has a valid share
+  that describes almost nothing.
+
+  **Under `SLOW_RESPONSE_TREND_MIN_DAYS` observed nights the direction is
+  withheld and the card says why.** The trend is the one thing this card adds
+  over the live read, and drawing no direction on a four-night recording would
+  read as "no change" — a fact about the age of the recording rather than about
+  the gateway, exactly as "none standing" is on the health history.
+
+  It **feeds no finding to the digest**, and unlike the live card the reason is
+  not the button: the finding it would raise needs a threshold on a count against
+  a line this dashboard cannot see, which is the open question the stored trend
+  exists to answer once a real proxy is behind it.
 
 `apps/api/scripts/verify-gateway-health-history-view.ts` covers what the *page*
 does with those readings, and only that: `verify-gateway-health-history.ts`
@@ -3196,6 +3237,32 @@ table exists for, since a month-long window averages them into the provider's
 ordinary rate. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-response-history.ts`.
 
+`apps/api/scripts/verify-gateway-slow-response-history-view.ts` covers what the
+*card* does with those stored nights, and nothing the shared roll-up already
+states. The **pure** half asserts the summary is passed through verbatim (deep
+equality against `summarizeSlowResponseHistory`, so the "no rule about the
+gateway" claim is checked rather than conventional), keeps the two silences apart
+(a query in flight claims nothing; an empty table has *answered* and stands the
+card down rather than drawing the strip a quiet gateway would draw), pins the
+spine in both directions (a 60-night window on a four-night recording draws four;
+a recording older than the window leaves the window alone and its unread nights
+are counted as missed), and drives the three cell states including the one that
+matters — an unread night carries no share and no denominator, and the same hole
+appears in the gateway strip. Two aliases behind one endpoint on one night are
+asserted to *add* into one cell, and every row to pool to exactly what its own
+cells carry, so the strip and the number cannot disagree. `tooShort` is checked
+on both sides of `SLOW_RESPONSE_TREND_MIN_DAYS` and against a sparse window,
+where the gate counts nights *read* rather than nights elapsed. All four badge
+branches are driven on a fixture whose baseline keys carry the traffic — the trap
+iterations 42, 43, 45 and 46 each hit — with `hangBadgeReason` asserted to
+produce four distinct sentences, since "not badged" means "inside the noise",
+"not material" or "barely seen". The **mock** half simulates twelve nightly syncs
+exactly as `readSlowResponses` does and draws the result: one cell per drawn
+night on every row, the rows pooling to their cells and the nights to the window,
+the refusing PTU pool the only badged endpoint, and the worst night one of the
+two the mock plants a regional incident on. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-response-history-view.ts`.
+
 `apps/api/scripts/verify-gateway-logs-view.ts` covers what the *page* does with
 that sample, which is a different set of ways to be wrong. Its pure half pins
 the three silences apart (not read, refused, answered-with-nothing), the window
@@ -3557,16 +3624,19 @@ Governance is now rendered end to end across all four scopes
   layers are still on the wrong side of — there is now a *table* for
   `services/gateway-notify.ts` to assess after a sync.
 
-  What is not built on top of it is the two things that would use it: nothing
-  renders the history (the card still reads the live route for the window on
-  screen), and no finding travels. The second is the one with a real question
-  under it rather than a missing file: an episode key would have to be
+  The view now exists too: `GatewaySlowResponseHistoryCard` draws the stored
+  nights under the live card, with the trend, the per-night strip and a
+  three-state strip per endpoint. What is still not built is the thing that
+  crosses the boundary — **no finding travels**, and that is a real question
+  rather than a missing file. An episode key would have to be
   `slow-responses:model:<endpoint>` to obey the one-per-episode rule, and the
   first thing a hang alert raises is whether a corporate gateway's hang rate is
   stable enough night to night that a change in it is a finding — or whether it
   moves with the workload, so a team shipping a long-context job would page
-  somebody for working as designed. Both need a real proxy, and the trend the
-  history already computes is the evidence that would answer it.
+  somebody for working as designed. That needs a real proxy, and the trend the
+  card now renders is the evidence that would answer it. It is also why the card
+  raises nothing on the digest yet: a finding there would need a threshold on a
+  count against a duration nobody here can see.
 
   What structurally cannot come from this route however it is stored: a
   duration, a percentile, a comparison against another proxy's counts, a share

@@ -14,6 +14,7 @@ import type {
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
+  GatewaySlowResponseHistory,
   GatewaySlowResponses,
   GatewaySource,
   GatewaySpendLogs,
@@ -407,6 +408,25 @@ export function fetchGatewaySlowResponses(
 ): Promise<GatewaySlowResponses> {
   const query = new URLSearchParams({ from, to });
   return request<GatewaySlowResponses>(`/gateway/slow-responses?${query.toString()}`);
+}
+
+/**
+ * The nightly hang sweeps kept — our own recording, not a second read of the
+ * proxy.
+ *
+ * The only history any of the four live reads has, and the only one any of them
+ * may have: this route answers counts of disjoint request-log rows beside their
+ * own denominator, and counts add across nights where an average
+ * (`/model/metrics`) and a denominator-less total (`/model/metrics/exceptions`)
+ * do not. Read on mount unlike the live sweep above it, because it is a table of
+ * ours rather than a round trip per alias into the proxy's request log.
+ *
+ * Its window ends *yesterday*, unlike the two other history routes: the sweep
+ * covers the day usage has settled for, so today can never carry a reading and a
+ * window ending on it would report a gap on the newest night forever.
+ */
+export function fetchGatewaySlowResponseHistory(days: number): Promise<GatewaySlowResponseHistory> {
+  return request<GatewaySlowResponseHistory>(`/gateway/slow-responses/history?days=${days}`);
 }
 
 /**

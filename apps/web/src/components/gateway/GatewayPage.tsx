@@ -57,6 +57,11 @@ import {
   deriveGatewaySlowResponses,
   slowResponseWindow,
 } from '../../lib/metrics/gatewaySlowResponses.js';
+import {
+  SLOW_RESPONSE_HISTORY_DAYS,
+  deriveSlowResponseHistory,
+  hasSlowResponseHistory,
+} from '../../lib/metrics/gatewaySlowResponseHistory.js';
 import { deriveLedger, hasLedger } from '../../lib/metrics/gatewayHistory.js';
 import {
   deriveSpendLogs,
@@ -75,6 +80,7 @@ import {
   useGatewayExceptions,
   useGatewayHealth,
   useGatewayLatency,
+  useGatewaySlowResponseHistory,
   useGatewaySlowResponses,
   useGatewayModels,
   useGatewaySealHistory,
@@ -109,6 +115,7 @@ import { GatewayMoversCard } from './GatewayMoversCard.js';
 import { GatewayExceptionCard } from './GatewayExceptionCard.js';
 import { GatewayLatencyCard } from './GatewayLatencyCard.js';
 import { GatewaySlowResponseCard } from './GatewaySlowResponseCard.js';
+import { GatewaySlowResponseHistoryCard } from './GatewaySlowResponseHistoryCard.js';
 import { GatewayReliabilityCard } from './GatewayReliabilityCard.js';
 import { GatewayRequestLogCard } from './GatewayRequestLogCard.js';
 import { GatewayTrendCard } from './GatewayTrendCard.js';
@@ -653,6 +660,19 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [slowQuery.data, summary.daily, slowRead, healthQuery.data],
   );
 
+  // The same sweeps kept — the only one of the four live reads that has a
+  // history, and the only one that may: this route answers counts of disjoint
+  // request-log rows beside their own denominator, and counts add across nights
+  // where a mean of per-request ratios and a denominator-less total do not. Its
+  // own window rather than the range picker's, like the two other history cards,
+  // because these are our nightly readings rather than days of gateway usage —
+  // and unlike the live read above it, it runs on mount: it is a table of ours.
+  const slowHistoryQuery = useGatewaySlowResponseHistory(SLOW_RESPONSE_HISTORY_DAYS, configured);
+  const slowHistory = useMemo(
+    () => deriveSlowResponseHistory(slowHistoryQuery.data ?? null),
+    [slowHistoryQuery.data],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -1034,6 +1054,20 @@ export function GatewayPage({ sync }: GatewayPageProps) {
               error={slowQuery.error instanceof Error ? slowQuery.error : null}
               enabled={configured && slowRead !== null}
             />
+          </div>
+
+          {/*
+            Directly under the live read, because it is the same sweep with the
+            question a single window cannot answer asked of it: "how many hung"
+            is only ever readable next to "how many usually do". It stands itself
+            down until a night has been filed — there is no backfill for this
+            table, so an empty one means the recording has not started rather
+            than that nothing has ever hung.
+          */}
+          <div id="gateway-slow-response-history">
+            {hasSlowResponseHistory(slowHistory) && (
+              <GatewaySlowResponseHistoryCard view={slowHistory} />
+            )}
           </div>
 
           {/*

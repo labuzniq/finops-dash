@@ -13,6 +13,7 @@ import type {
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
+  GatewaySlowResponseHistory,
   GatewaySlowResponses,
   GatewaySpendLogs,
   GatewayUsage,
@@ -30,6 +31,7 @@ import {
   fetchGatewayProbe,
   fetchGatewaySealHistory,
   fetchGatewaySeals,
+  fetchGatewaySlowResponseHistory,
   fetchGatewaySlowResponses,
   fetchGatewaySpendLogs,
   fetchGatewayStatus,
@@ -353,6 +355,25 @@ export function useGatewaySlowResponses(window: { from: string; to: string } | n
     staleTime: 5 * 60_000,
     retry: false,
     gcTime: 10 * 60_000,
+  });
+}
+
+/**
+ * What those sweeps recorded on each of the last `days` nights.
+ *
+ * The counterpart of the read above and the opposite of it in every practical
+ * way: that one is a round trip per alias into the proxy's largest table and is
+ * fetched on a press, this one is a table of ours and runs on mount like the two
+ * other history queries. Cached under the day count rather than under dates —
+ * the window is relative to today, the payload is endpoints × nights, and the
+ * gateway sync prefix invalidates it because the sync is the only thing that
+ * appends to it.
+ */
+export function useGatewaySlowResponseHistory(days: number, enabled: boolean) {
+  return useQuery<GatewaySlowResponseHistory>({
+    queryKey: ['gateway', 'slow-response-history', days],
+    queryFn: () => fetchGatewaySlowResponseHistory(days),
+    enabled,
   });
 }
 
