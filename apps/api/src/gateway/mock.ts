@@ -21,6 +21,7 @@ import {
   budgetCounterResets,
   deploymentExceptionKey,
   latencyDeploymentKey,
+  slowResponseDeploymentKey,
   SPEND_LOG_ROW_CAP,
 } from '@dash/shared';
 import type {
@@ -44,6 +45,8 @@ import type {
   GatewayLatencyPage,
   GatewayLatencyRecord,
   GatewayModelSnapshot,
+  GatewaySlowResponsePage,
+  GatewaySlowResponseRecord,
   GatewaySnapshot,
   GatewaySpendLogPage,
   GatewaySpendLogRecord,
@@ -661,6 +664,45 @@ function latencySecondsPerToken(
   // sample gives it.
   return base * (incident ? 1.6 : 1) * (onPtu ? 1.9 : 1);
 }
+
+/**
+ * What share of a request ends up in the window `/model/metrics/slow_responses`
+ * groups over.
+ *
+ * Deliberately below 1, and for a different reason than `ERROR_LOG_COVERAGE`:
+ * this route reads the request log rather than a separate table, and its query
+ * excludes cache hits (`cache_hit != 'True'`). So its denominator is smaller
+ * than the ledger's request count on any gateway with a warm prompt cache, and a
+ * card that read a hang share as a share of gateway traffic would be quietly
+ * wrong. The mock refuses to let the two agree.
+ */
+const SLOW_RESPONSE_COVERAGE = 0.88;
+
+/** Baseline share of uncached calls that run past the proxy's alerting threshold. */
+const SLOW_RESPONSE_BASE_RATE = 0.0022;
+
+/**
+ * The reasoning deployment's own rate. Materially above the baseline because a
+ * long chain of thought genuinely takes minutes, and deliberately far enough
+ * below the refusing pool that it is a fact about the workload rather than a
+ * finding — it also shares an `api_base` with the two chat deployments, so it
+ * is diluted into their key before anything can badge it.
+ */
+const SLOW_RESPONSE_REASONING_RATE = 0.0061;
+
+/**
+ * The refusing reserved pool hangs before it gives up. A PTU quota under
+ * pressure does not reject instantly — it queues, and the calls that are
+ * eventually failed over spent minutes waiting first, which is the one payload
+ * where that wait is a number.
+ */
+const SLOW_RESPONSE_PTU_RATE = 0.026;
+
+/** Share of the multi-deployment alias's traffic the reserved pool served. */
+const PTU_TRAFFIC_SHARE = 0.35;
+
+/** How much worse a degraded region's tail is on the two incident days. */
+const SLOW_RESPONSE_INCIDENT_MULTIPLIER = 6;
 
 /** A stable non-negative hash of a string. Deterministic across processes. */
 function dayHash(value: string): number {
@@ -1475,6 +1517,115 @@ export class MockGatewayClient implements GatewayClient {
       'mock gateway model latency generated',
     );
     return { rows, apiBases: [...apiBases].sort(), available: true };
+  }
+
+  /**
+   * How many calls hung — what `GET /model/metrics/slow_responses` counts, and
+   * the only place in this generator where a *duration* is a number.
+   *
+   * Built from the same planted faults as every other route, and shaped by the
+   * one property that makes this route different from its two neighbours: it
+   * groups on `api_base` alone. So the three Azure deployments answer under one
+   * key, the two Azure AI ones under another, and **every Bedrock deployment of
+   * every alias collapses into a single unnamed bucket**, because those are
+   * addressed by region and carry no URL. That is the proxy's own `GROUP BY`
+   * and there is nothing here to undo it with — it is reproduced rather than
+   * repaired, since a mock that split them would hide the route's coarsest trap.
+   *
+   * Three shapes are planted:
+   *
+   *  - **The refusing PTU pool hangs.** The reserved deployment behind
+   *    `azure/gpt-4o` queues under quota pressure before the router fails a call
+   *    over, so it reads roughly an order of magnitude worse than the rest of
+   *    the gateway on its own key — a third independent payload naming the
+   *    deployment `/health` calls failing, the error log calls rate-limited and
+   *    `/model/metrics` calls slow.
+   *  - **The incident days hang and then average away.** The degraded region's
+   *    tail is six times worse on the 17th and 18th, which over a month's window
+   *    lifts its key well short of the badge. The same lesson the reliability
+   *    card learned: a two-day incident is a per-day finding and never a
+   *    per-key one.
+   *  - **The reasoning deployment is legitimately slow.** `azure/o4-mini` runs
+   *    long on purpose, and it shares a key with two chat deployments, so it is
+   *    diluted rather than badged — which is what stops the badge from being a
+   *    list of everything above the mean.
+   *
+   * The denominator is the route's own, not the ledger's: cache hits are
+   * excluded upstream, so `total` is deliberately short of the day's requests.
+   * Deterministic arithmetic rather than a draw from the shared stream, the same
+   * rule the exception and latency generators follow.
+   */
+  async fetchModelSlowResponses(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewaySlowResponsePage> {
+    const dates = eachDay(from, to);
+    if (models.length === 0 || dates.length === 0) return { rows: [], available: true };
+
+    const incidentDays = dates.filter((date) =>
+      INCIDENT_DAYS_OF_MONTH.has(Number(date.slice(8, 10))),
+    ).length;
+
+    const rows: GatewaySlowResponseRecord[] = [];
+
+    for (const alias of models) {
+      const model = MODELS.find((candidate) => candidate.id === alias);
+      // An alias this proxy never routed wrote no request log, which is not the
+      // same as nothing hanging on it.
+      if (model === undefined) continue;
+
+      const perDay = BASE_REQUESTS_PER_DAY * model.weight * SLOW_RESPONSE_COVERAGE;
+      const rate =
+        model.id === 'azure/o4-mini' ? SLOW_RESPONSE_REASONING_RATE : SLOW_RESPONSE_BASE_RATE;
+      // A wobble small enough to leave every planted ordering intact and large
+      // enough that two keys never land on the same number by accident.
+      const wobble = 0.95 + (dayHash(`${from} ${to} ${alias} slow`) % 110) / 1000;
+
+      const ptuShare = model.id === MULTI_DEPLOYMENT_MODEL ? PTU_TRAFFIC_SHARE : 0;
+      const ordinaryDays = dates.length - (model.provider === INCIDENT_PROVIDER ? incidentDays : 0);
+      const degradedDays = model.provider === INCIDENT_PROVIDER ? incidentDays : 0;
+
+      const total = perDay * dates.length * (1 - ptuShare);
+      const slow =
+        perDay *
+        rate *
+        wobble *
+        (1 - ptuShare) *
+        (ordinaryDays + degradedDays * SLOW_RESPONSE_INCIDENT_MULTIPLIER);
+
+      rows.push({
+        model: alias,
+        key: slowResponseDeploymentKey(deploymentApiBase(model.provider, 'weu')),
+        total: Math.round(total),
+        slow: Math.round(slow),
+      });
+
+      if (ptuShare > 0) {
+        const ptuTotal = perDay * dates.length * ptuShare;
+        rows.push({
+          model: alias,
+          key: slowResponseDeploymentKey(deploymentApiBase('azure', 'neu-ptu')),
+          total: Math.round(ptuTotal),
+          slow: Math.round(ptuTotal * SLOW_RESPONSE_PTU_RATE * wobble),
+        });
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          keys: new Set(rows.map((row) => row.key)).size,
+          slow: rows.reduce((sum, row) => sum + row.slow, 0),
+          total: rows.reduce((sum, row) => sum + row.total, 0),
+        },
+      },
+      'mock gateway slow responses generated',
+    );
+    return { rows, available: true };
   }
 
   /**

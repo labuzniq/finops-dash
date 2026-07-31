@@ -13,6 +13,7 @@ import { getGatewayNotifications } from '../services/gateway-notify.js';
 import {
   EXCEPTION_MAX_WINDOW_DAYS,
   LATENCY_MAX_WINDOW_DAYS,
+  SLOW_RESPONSE_MAX_WINDOW_DAYS,
   SPEND_LOG_MAX_WINDOW_DAYS,
   SPEND_LOG_ROW_CAP,
 } from '@dash/shared';
@@ -26,6 +27,7 @@ import {
   getGatewayHealth,
   getGatewayLatency,
   getGatewayModels,
+  getGatewaySlowResponses,
   getGatewaySpendLogs,
   getGatewayUsage,
   probeGateway,
@@ -316,6 +318,43 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
     try {
       return await getGatewayLatency(from, to);
+    } catch (error) {
+      if (error instanceof GatewayLogsUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * How many calls hung over a window, per endpoint.
+   *
+   * Live and storing nothing, like `/logs`, `/exceptions` and `/latency`. It is
+   * the only reading of *wall clock* the proxy will aggregate: a count of
+   * requests that ran past the proxy's own alerting threshold, beside the
+   * requests it counted them out of. The threshold itself is not in the
+   * response, so the count travels without one.
+   *
+   * The window is capped at a month for the same two reasons the other two
+   * per-alias sweeps are: the proxy's own default here is a month, and the table
+   * underneath is the request log's rather than the aggregates'.
+   */
+  app.get('/api/gateway/slow-responses', async (request, reply) => {
+    const parsed = rangeQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    const { from, to } = parsed.data;
+    const days = Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1,
+    );
+    if (days > SLOW_RESPONSE_MAX_WINDOW_DAYS) {
+      return reply.code(400).send({
+        error: `Hanging requests may be read ${SLOW_RESPONSE_MAX_WINDOW_DAYS} days at a time — asked for ${days}.`,
+      });
+    }
+    try {
+      return await getGatewaySlowResponses(from, to);
     } catch (error) {
       if (error instanceof GatewayLogsUnavailableError) {
         return reply.code(503).send({ error: error.message });

@@ -519,6 +519,88 @@ compute and no significance to claim. The badge is a materiality statement and
 the minimum-days gate is the only evidence gate available. The day-level reading
 is a **median across the keys that reported**, never a sum: rates do not add.
 
+### The hang counter (the only wall-clock reading there is)
+
+The three routes above between them say how many calls failed, why they failed
+and how many seconds per completion token the rest averaged. None of them can
+see a call that answered correctly after four minutes: it is a success in the
+ledger, wrote no error log, and — if the answer was long — read at a perfectly
+ordinary per-token rate. That request is the one somebody was actually waiting
+on, and there is exactly one route that counts it:
+
+```
+GET /model/metrics/slow_responses?_selected_model_group=&startTime=&endTime=
+  → [ { "api_base": "https://nocturne-weu.openai.azure.com/",
+        "total_count": 40000, "slow_count": 84 },
+      { "api_base": "", "total_count": 900, "slow_count": 3 } ]
+```
+
+A **ninth envelope**, and the plainest one here: the handler returns Prisma's
+rows unwrapped, so the body is a **bare array** with no wrapper at all — or
+`null` when the query matched nothing, exactly like `/model/metrics`. Upstream
+it is
+
+```sql
+SELECT api_base, COUNT(*) AS total_count,
+       SUM(CASE WHEN ("endTime" - "startTime") >= INTERVAL '1 SECOND' * $1
+                THEN 1 ELSE 0 END) AS slow_count
+FROM "LiteLLM_SpendLogs"
+WHERE "model_group" = $2 AND "cache_hit" != 'True'
+  AND "startTime" >= $3 AND "startTime" <= $4
+GROUP BY api_base ORDER BY slow_count DESC
+```
+
+Four things about it are load-bearing, and three of them are traps:
+
+- **The threshold is the proxy's, and it is not in the response.** `$1` is
+  `proxy_logging_obj.slack_alerting_instance.alerting_threshold`, falling back to
+  `DEFAULT_SLACK_ALERTING_THRESHOLD` — 300 seconds unless somebody configured the
+  proxy's Slack alerting otherwise. The payload carries neither number, so the
+  count means "requests at or past the proxy's own alerting threshold" and
+  **nothing derived from it may be rendered with a number of seconds attached**.
+  `SLOW_RESPONSE_DEFAULT_THRESHOLD_SECONDS` in `@dash/shared` exists to describe
+  the default in prose and never to label a reading.
+- **It carries its own denominator, and it is not the ledger's.** `total_count`
+  is the request-log rows this query grouped: same window, same alias, cache hits
+  excluded. That makes a slow *share* computable, which is the one thing the
+  exception layer cannot do and the reason this is the only per-alias sweep whose
+  badge can afford a significance test beside a materiality ratio. It is
+  emphatically not a share of gateway requests — the ledger counts cached answers
+  and lives in another table on another retention schedule.
+- **The key is the `api_base` alone.** Coarser than either sibling:
+  `/model/metrics/exceptions` keys by `model-api_base` (both parts) and
+  `/model/metrics` falls back to the backend model string where there is no base,
+  but this route selects `api_base`, groups on it, and coalesces a null to `""`.
+  So every deployment addressed by region rather than by URL — the whole Bedrock
+  fleet — is **one row per alias**, with nothing in the payload to split it.
+  `slowResponseDeploymentKey(apiBase)` in `@dash/shared` is the third
+  one-directional join key here, and `UNKEYED_DEPLOYMENT` is what that bucket is
+  called so nothing renders it as a blank row or treats it as an addressable
+  backend.
+- **The counts come from `COUNT(*)` and `SUM(...)`.** Postgres types those as
+  `bigint` and `numeric`, and a driver handing a bigint back as a string is
+  ordinary rather than malformed — so both are accepted. A row whose
+  `total_count` does not read as a non-negative integer is *dropped* rather than
+  zero-filled (the total is this layer's only denominator, and a zero one would
+  render every hang as an infinite share), and a `slow_count` past the total is
+  clamped, since the SQL cannot produce one.
+
+What it shares with the request log rather than with the aggregates is the whole
+of `/model/metrics`'s last paragraph: it scans `LiteLLM_SpendLogs`, so
+`disable_spend_logs` empties it, its retention is the log's, and cache hits are
+excluded upstream — a cached answer was never slow.
+
+`summarizeGatewaySlowResponses` rolls a sweep up **per key** rather than per
+(alias, key) pair, which is the opposite of the latency layer's choice and is
+forced by the route: one endpoint answering four aliases comes back four times
+with four disjoint counts of the same deployment's traffic, and those are counts
+of requests, so — unlike a rate — they may be added. The aliases are kept beside
+the row. The badge has **both gates**: `wilsonScoreLowerBound` against the
+gateway-wide share for evidence, `SLOW_RESPONSE_ELEVATED_RATIO` (1.5×) and
+`SLOW_RESPONSE_MIN_COUNT` (5) for size. This is the only live read that can
+afford both, for the reason stated above — and the ranking is by hangs first,
+because that is the number somebody acts on.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -792,6 +874,18 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   aggregates, so `disable_spend_logs` empties it, cache hits are excluded
   upstream, and a deployment with no completion tokens is absent rather than
   instant.
+- **A hang count is against a threshold nobody here can see.**
+  `/model/metrics/slow_responses` compares `endTime - startTime` against the
+  proxy's own `alerting_threshold` (300 seconds unless configured) and does not
+  report which number it used — so the count may never be rendered with a
+  duration attached to it, and two proxies' counts are not comparable. It does
+  carry its own denominator (`total_count`, the request-log rows it grouped with
+  cache hits excluded), which makes it the only live read whose badge may use a
+  significance test — and that denominator is *not* the ledger's request count,
+  so a hang share may never be rendered as a share of gateway traffic. Its
+  grouping key is the `api_base` alone, with no fallback to a model string, so
+  every deployment without a URL is one bucket per alias and is named as such
+  rather than left blank.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
@@ -1056,6 +1150,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/logs?from=&to=&limit=` | `{ from, to, rows, available, truncated, fetchedAt }` — a sample of individual requests, fetched **live** from `/spend/logs` and stored nowhere. The joint-keyed evidence layer: every dimension on one row, plus the deployment that served it and how long it took. Window capped at 7 days, rows at 5,000 (`limit` may lower it, never raise it); `400` for a wider window or an inverted one, `503` while the source is `off`. `available: false` means the proxy keeps no logs, which is a supported way to run one — not an error, and not "no requests". |
 | `GET` | `/api/gateway/exceptions?from=&to=` | `{ from, to, models, skippedModels, deployments, available, fetchedAt }` — why the failed calls in a window failed, per deployment, fetched **live** from `/model/metrics/exceptions` and stored nowhere. One proxy call per alias (the route has no wildcard), aliases taken from the window's own `model` usage ranked by spend and capped at `EXCEPTION_MODEL_CAP` (12) with the rest reported as `skippedModels`. Window capped at `EXCEPTION_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. `available: false` means the route was refused or is absent; an empty answer means no errors were *recorded*, which on a proxy running `disable_error_logs` is a different claim from none happening. |
 | `GET` | `/api/gateway/latency?from=&to=` | `{ from, to, models, skippedModels, series, apiBases, available, fetchedAt }` — how slowly each deployment answered, per day, fetched **live** from `/model/metrics` and stored nowhere. One proxy call per alias like the exception sweep, aliases taken from the window's own `model` usage ranked by spend and capped at `LATENCY_MODEL_CAP` (12). Window capped at `LATENCY_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. Values are **seconds per completion token**, never durations; keys are `api_base`-shaped, so the alias is carried beside them. `available: false` means refused, absent, or a proxy running `disable_spend_logs` — never "the gateway was fast". |
+| `GET` | `/api/gateway/slow-responses?from=&to=` | `{ from, to, models, skippedModels, rows, available, fetchedAt }` — how many calls **hung**, per endpoint, fetched **live** from `/model/metrics/slow_responses` and stored nowhere. The only wall-clock reading the proxy aggregates: a count of requests that ran past the proxy's own `alerting_threshold` (which the response does not carry, so neither does this route) beside the requests it counted them out of. One proxy call per alias like both other sweeps, capped at `SLOW_RESPONSE_MODEL_CAP` (12); window capped at `SLOW_RESPONSE_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. Keys are the `api_base` **alone**, so every deployment without a URL arrives as one `UNKEYED_DEPLOYMENT` bucket. `available: false` means refused, absent, or `disable_spend_logs` — never "nothing hung".
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -2724,6 +2819,19 @@ are kept apart at the end: a bare `null` body and an empty envelope are both
 down after one call — `disable_spend_logs` empties this route too — and a
 malformed envelope still throws rather than reporting a fast gateway.
 
+`/model/metrics/slow_responses` gets a section beside it, and what it pins is
+the envelope this integration has not seen before: a **bare array**, so an
+enveloped `{"data": []}` throws rather than reading as an empty answer, while a
+bare `null` and an empty array are both *available with nothing to report*. Then
+the route's own rules — `_selected_model_group` on every call for the third
+time, the window as datetimes, a count handed back as the string a `bigint`
+driver produces read as the number it is, a row with no `total_count` dropped
+because the total is this layer's only denominator, a `slow_count` past the
+total clamped since the SQL cannot produce one, a null `api_base` landing in
+`UNKEYED_DEPLOYMENT` with a name rather than a blank key, and the `/openai/` cut
+landing on the same key a health row rebuilds. 401/403/404/405/501 stand the
+sweep down after one call, exactly as on its two siblings.
+
 A section then checks the pure budget arithmetic in `@dash/shared`,
 because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
 `1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
@@ -2855,6 +2963,30 @@ makes the badge a finding), a Bedrock deployment's worst day is an incident day,
 both key branches appear in one payload, and the same window asked twice answers
 identically. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-latency.ts`.
+
+`apps/api/scripts/verify-gateway-slow-responses.ts` covers the hang counter in
+the same two halves. The **pure** half pins the key rule
+(`slowResponseDeploymentKey` reproduces the route's own `api_base or ""`
+grouping, including the `/openai/` cut, a non-URL base that is still a key, and
+the unnamed bucket that has no equivalent on either sibling), the roll-up (two
+aliases behind one endpoint are one row with both aliases kept and their counts
+*added*, since these are disjoint request counts rather than rates; the
+gateway-wide share is the sweep's own and never the ledger's; a key the route
+grouped nothing under is dropped rather than rendered as 0% of no calls), and
+both badge gates from both sides: a key five times the gateway rate over twenty
+thousand calls is badged, one hang out of three calls clears the ratio by two
+orders of magnitude and is refused by the minimum-count floor, and a key that is
+*certainly* worse by four hundredths of a point clears the interval and is
+refused by the ratio. The **mock** half drives `fetchModelSlowResponses` and
+checks the three planted shapes: the refusing reserved pool queues before it
+gives up and is the one key badged, several times the gateway rate; the whole
+Bedrock fleet arrives as a single unnamed row because the proxy grouped it that
+way, with the two-day incident inside it averaging away below the badge exactly
+as it does on the reliability card; and the reasoning deployment is diluted into
+the endpoint it shares rather than flagged. The sweep's denominator is checked
+against the ledger's request count and must be *short* of it, since cache hits
+are excluded upstream. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-slow-responses.ts`.
 
 `apps/api/scripts/verify-gateway-exceptions-view.ts` covers what the *page* does
 with those rows. Its **pure** half keeps the three silences apart (unread,
@@ -3081,6 +3213,25 @@ job's error string.
     slow one". Whether the corporate mix is uniform enough that the ranking
     reads sensibly anyway is a question for a real payload.
 
+21. **What is this proxy's `alerting_threshold`, and has anybody set one?**
+    `/model/metrics/slow_responses` compares against
+    `slack_alerting_instance.alerting_threshold` and falls back to 300 seconds,
+    and the response says nothing about which was used. A gateway whose Slack
+    alerting was never configured is therefore counting five-minute calls, which
+    on a corporate proxy fronting reasoning models may be a handful a month or
+    may be a whole workload. The number is knowable from the proxy's config
+    rather than from the API, so it is a question to ask the person who runs it
+    — and until somebody has, nothing on this side may print a duration beside
+    the count.
+
+22. **Does `api_base`-only grouping leave anything unnamed that matters?** Every
+    deployment without a URL collapses into one bucket per alias, which on this
+    draft's mock means the entire Bedrock fleet. If the real gateway's Bedrock
+    and Vertex traffic is a large share of the bill, the most interesting row on
+    the card is also the one row that cannot be attributed to a deployment — and
+    the only routes that can split it (`/spend/logs`' `model_id`, `/health`'s own
+    rows) are a sample and a snapshot rather than a window.
+
 ## Not yet built
 
 Governance is now rendered end to end across all four scopes
@@ -3236,6 +3387,25 @@ Governance is now rendered end to end across all four scopes
   averaged the per-request ratios before answering, and the sample that does
   carry real durations (`/spend/logs`) is the head of the window rather than a
   draw from it.
+
+- **A view on the hang counter.** `GET /api/gateway/slow-responses` is read
+  end to end on the API side and nothing renders it yet. The shape the layer
+  already forces on that card is worth stating before it is written, because
+  three of its rules are not negotiable. It may not put a number of seconds
+  anywhere: the threshold is the proxy's `alerting_threshold` and is not in the
+  response, so the reading is "past the proxy's own alerting threshold" and
+  nothing more. It may not express a hang count as a share of gateway traffic:
+  the denominator here excludes cache hits and comes from another table, so the
+  only honest share is of this route's own total. And its rows are endpoints
+  rather than deployments — every Bedrock deployment of every alias is one
+  bucket — so a health verdict joined onto a row can only ever be a verdict
+  about the whole endpoint, which is the `mixed` state the latency card already
+  needed for a coarser reason.
+
+  What it *can* do that no existing card can: name a deployment that is failing
+  nothing, billing normally and answering after minutes. That is the one fault
+  the reliability, exception and latency cards are each structurally blind to,
+  and it is why the badge here gets both gates rather than one.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

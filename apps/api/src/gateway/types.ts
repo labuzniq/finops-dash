@@ -238,6 +238,36 @@ export interface GatewayLatencyPage {
   available: boolean;
 }
 
+/**
+ * One `api_base` group's hang count for one alias, as
+ * `GET /model/metrics/slow_responses` counted it.
+ *
+ * `total` is the route's own denominator — request-log rows for that alias and
+ * endpoint with cache hits excluded — and never the ledger's request count.
+ * `slow` is how many of them ran at or past the proxy's `alerting_threshold`,
+ * which the response does not carry, so neither does this record.
+ */
+export interface GatewaySlowResponseRecord {
+  /** The alias the read was scoped to — the query parameter, not the row. */
+  model: string;
+  /** The `api_base`, cut at `/openai/`, or `UNKEYED_DEPLOYMENT` for a null. */
+  key: string;
+  total: number;
+  slow: number;
+}
+
+/**
+ * What one `/model/metrics/slow_responses` sweep answered.
+ *
+ * `available: false` is a first-class result for the same reason it is on
+ * `/model/metrics`: this route scans the same `LiteLLM_SpendLogs`, so a proxy
+ * running `disable_spend_logs` bills perfectly and reports nothing hanging.
+ */
+export interface GatewaySlowResponsePage {
+  rows: GatewaySlowResponseRecord[];
+  available: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -320,6 +350,24 @@ export interface GatewayClient {
     to: string,
     models: readonly string[],
   ): Promise<GatewayLatencyPage>;
+  /**
+   * How many calls hung, per `api_base`, for the aliases named.
+   *
+   * The third per-alias sweep and the only reading of *wall clock* the proxy
+   * will aggregate: `/model/metrics` answers seconds per completion token, which
+   * a long answer at an ordinary rate satisfies while somebody waits four
+   * minutes for it. This route counts the requests that ran past the proxy's own
+   * alerting threshold, beside the requests it counted them out of.
+   *
+   * Live and stored nowhere, one call per alias, and optional like every other
+   * request-log read: it scans `LiteLLM_SpendLogs`, so `disable_spend_logs`
+   * answers `available: false` on a gateway that is working perfectly.
+   */
+  fetchModelSlowResponses(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewaySlowResponsePage>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

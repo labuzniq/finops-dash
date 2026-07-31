@@ -479,6 +479,26 @@ deployments the reading disagrees about, so the slow number belongs to neither o
 `unread` for a deployment the reading does not name at all. It feeds no digest finding, for the
 button's reason rather than the exception card's: a source unread until somebody presses it would
 report a blind spot on every visit.
+`GET /api/gateway/slow-responses?from=&to=` is the fourth live read and the last thing the gateway will
+say about a request that did not fail: `/model/metrics/slow_responses` over the same
+`LiteLLM_SpendLogs`, counting the calls whose wall clock reached the proxy's own `alerting_threshold`
+beside the calls it counted them out of. A **ninth envelope**, and the plainest — a bare array, or
+`null` for "nothing matched", so it goes through `getJsonResult` like the latency read. Four of its
+rules are load-bearing: the threshold is the proxy's and is **not in the response** (300s unless
+configured), so the count travels with no duration attached and two proxies' counts are not comparable;
+`total_count` is its own denominator (request-log rows, cache hits excluded upstream) and never the
+ledger's request count, which is what makes this the one live read whose badge can afford a
+significance test — `summarizeGatewaySlowResponses` uses `wilsonScoreLowerBound` *and*
+`SLOW_RESPONSE_ELEVATED_RATIO` (1.5×) with a `SLOW_RESPONSE_MIN_COUNT` floor, the reliability card's
+two gates rather than the latency card's one; the key is the `api_base` **alone** with no fallback to
+a model string (`slowResponseDeploymentKey`, the third one-directional join and the coarsest), so every
+deployment addressed by region rather than URL is a single `UNKEYED_DEPLOYMENT` bucket per alias; and
+the counts arrive from `COUNT(*)`/`SUM(...)`, so a `bigint` handed back as a string is ordinary while a
+row with no total is dropped rather than zero-filled. The roll-up is per *key* rather than per
+(alias, key) pair — the opposite of the latency layer, and forced by the route, since one endpoint
+answering four aliases returns four disjoint request counts of one deployment's traffic and counts,
+unlike rates, may be added. The API side is read end to end; the card is not built, and the shape the
+layer forces on it is recorded in `docs/litellm-gateway.md`.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
@@ -551,6 +571,15 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   across keys and never a sum, because rates do not add; and it reads the request log rather than the
   aggregates, so `disable_spend_logs` empties it and a deployment with no completion tokens is absent
   rather than instant.
+- **A hang count is against a threshold nobody here can see.**
+  `/model/metrics/slow_responses` counts requests whose wall clock reached the proxy's own
+  `alerting_threshold` (300s unless configured) and never reports which number it used, so nothing
+  derived from it may carry a duration and two proxies' counts are not comparable. It does carry its
+  own denominator — `total_count`, the request-log rows it grouped with cache hits excluded — which
+  makes it the only live read whose badge may use a significance test, and that denominator is not the
+  ledger's request count, so a hang share may never be rendered as a share of gateway traffic. Its key
+  is the `api_base` alone with no fallback to a model string, so every deployment without a URL is one
+  `UNKEYED_DEPLOYMENT` bucket per alias.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to

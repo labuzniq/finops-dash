@@ -35,7 +35,7 @@
  */
 
 import { z } from 'zod';
-import { SPEND_LOG_ROW_CAP } from '@dash/shared';
+import { SPEND_LOG_ROW_CAP, slowResponseDeploymentKey } from '@dash/shared';
 import type {
   GatewayDimension,
   GatewayProbeCoverage,
@@ -57,6 +57,8 @@ import type {
   GatewayLatencyPage,
   GatewayLatencyRecord,
   GatewayModelSnapshot,
+  GatewaySlowResponsePage,
+  GatewaySlowResponseRecord,
   GatewaySnapshot,
   GatewaySpendLogPage,
   GatewaySpendLogRecord,
@@ -110,6 +112,14 @@ const EXCEPTION_TIMEOUT_MS = 30_000;
  * sweep is one call per alias and a stalled first call must not hold the rest.
  */
 const LATENCY_TIMEOUT_MS = 60_000;
+
+/**
+ * `/model/metrics/slow_responses` scans the same `LiteLLM_SpendLogs` as the
+ * latency sweep and does strictly less with it — one `COUNT(*)` and one summed
+ * `CASE`, grouped by `api_base` with no per-day breakdown — so it is given the
+ * same room and no more.
+ */
+const SLOW_RESPONSE_TIMEOUT_MS = 60_000;
 
 /** One probe request's outcome. `body` exists only on a 2xx that decoded. */
 interface ProbeAttempt {
@@ -631,6 +641,34 @@ const modelLatencySchema = z.object({
   all_api_bases: z.array(z.string()).default([]),
 });
 
+/**
+ * `GET /model/metrics/slow_responses?_selected_model_group&startTime&endTime` —
+ * a ninth envelope, and the plainest one here: the handler returns whatever
+ * Prisma's `query_raw` produced, so the body is a **bare array** of
+ * `{api_base, total_count, slow_count}` with no wrapper at all, or `null` when
+ * the query matched nothing.
+ *
+ * Two decisions in the schema rather than in the parse:
+ *
+ *   - **The counts are read as numbers *or* numeric strings.** They come from
+ *     `COUNT(*)` and `SUM(CASE …)`, which Postgres types as `bigint` and
+ *     `numeric`; a driver that hands a bigint back as a string is the ordinary
+ *     behaviour rather than a malformed answer, so both are accepted and
+ *     anything else is dropped by `toSlowResponseRecord`.
+ *   - **`api_base` is optional and nullable.** The proxy already coalesces a
+ *     null to `""` before answering, but the column is nullable and the
+ *     coalescing lives in a post-processing loop that only runs when the query
+ *     returned rows — so an empty or absent base is a supported answer and means
+ *     "deployments this route cannot name", not a broken row.
+ */
+const slowResponseRowSchema = z.object({
+  api_base: z.string().nullish(),
+  total_count: z.union([z.number(), z.string()]).nullish(),
+  slow_count: z.union([z.number(), z.string()]).nullish(),
+});
+
+const modelSlowResponsesSchema = z.array(slowResponseRowSchema);
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -1120,6 +1158,53 @@ function toLatencyRecords(row: Record<string, unknown>, model: string): GatewayL
     records.push({ model, key: key.slice(0, 400), date, secondsPerToken: value });
   }
   return records;
+}
+
+/**
+ * One `/model/metrics/slow_responses` row → a hang count for one endpoint.
+ *
+ * The rules the payload forces:
+ *
+ *   - a row whose `total_count` does not read as a non-negative integer is
+ *     dropped rather than defaulted, because the total is this layer's *only*
+ *     denominator and a zero-filled one would render every hang as an infinite
+ *     share;
+ *   - `slow_count` is clamped into `[0, total]` — the SQL cannot produce more
+ *     hangs than rows, so a value past the total is a driver artefact rather
+ *     than a reading, and clamping keeps a share inside 0..1 without inventing
+ *     one; and
+ *   - the key runs through `slowResponseDeploymentKey`, which is where the
+ *     `/openai/` cut and the unnamed bucket live. The proxy applies the cut
+ *     itself, so doing it again is a no-op on a real answer and the one thing
+ *     that keeps a *fixture* honest.
+ */
+function toSlowResponseRecord(
+  row: z.infer<typeof slowResponseRowSchema>,
+  model: string,
+): GatewaySlowResponseRecord | null {
+  const total = toCount(row.total_count);
+  if (total === null) return null;
+
+  const slow = toCount(row.slow_count) ?? 0;
+  return {
+    model,
+    key: slowResponseDeploymentKey(row.api_base ?? null).slice(0, 400),
+    total,
+    slow: Math.min(total, slow),
+  };
+}
+
+/**
+ * A Postgres count as it arrives — a number, or the string a driver hands back
+ * for a `bigint`. Anything else, and anything negative or fractional, is null.
+ */
+function toCount(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  // `Number('')` is 0, so an empty cell would otherwise read as a genuine zero.
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.round(parsed);
 }
 
 /**
@@ -1896,6 +1981,86 @@ export class LiteLlmGatewayClient implements GatewayClient {
       'litellm model latency fetched',
     );
     return { rows, apiBases: [...apiBases].sort(), available };
+  }
+
+  /**
+   * `GET /model/metrics/slow_responses` — how many calls ran past the proxy's
+   * own alerting threshold, per endpoint, for one window.
+   *
+   * The fourth live read and the third per-alias sweep, sharing the shape of the
+   * other two and differing in four ways that all come from the route:
+   *
+   *   - **A bare array, not an envelope.** The handler returns Prisma's rows
+   *     unwrapped, so there is no `data` key to reach through — and `null` when
+   *     the query matched nothing, which is why this read needs `getJsonResult`
+   *     exactly as `/model/metrics` does.
+   *   - **`_selected_model_group` is always sent**, same as both siblings: its
+   *     upstream default is the literal `"gpt-4-32k"`.
+   *   - **The key is the `api_base` alone.** No fallback to a model string, so
+   *     every deployment without a URL is one `GROUP BY` bucket per alias and is
+   *     named `UNKEYED_DEPLOYMENT` rather than left blank.
+   *   - **The threshold is invisible.** The SQL compares against the proxy's
+   *     `alerting_threshold` and the response says nothing about it, so this
+   *     method carries the counts and never a number of seconds.
+   *
+   * Absent handling matches both sweeps: the first alias answering a "not
+   * offered" status stands the whole route down.
+   */
+  async fetchModelSlowResponses(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewaySlowResponsePage> {
+    if (models.length === 0) return { rows: [], available: true };
+
+    const rows: GatewaySlowResponseRecord[] = [];
+    let available = true;
+
+    for (const model of models) {
+      const url = new URL(`${this.root}/model/metrics/slow_responses`);
+      url.searchParams.set('_selected_model_group', model);
+      url.searchParams.set('startTime', `${from}T00:00:00`);
+      url.searchParams.set('endTime', `${to}T23:59:59`);
+
+      const result = await this.getJsonResult(url, true, SLOW_RESPONSE_TIMEOUT_MS);
+      if (result.absent) {
+        available = false;
+        break;
+      }
+      // The proxy's own "nothing matched" answer — an alias with no request log
+      // in the window, which is a fact about the alias rather than the route.
+      if (result.body === null || result.body === undefined) continue;
+
+      const parsed = modelSlowResponsesSchema.safeParse(result.body);
+      if (!parsed.success) {
+        throw new Error(
+          `LiteLLM /model/metrics/slow_responses returned an unexpected shape: ${describeIssues(
+            parsed.error.issues,
+          )}`,
+        );
+      }
+
+      for (const entry of parsed.data) {
+        const record = toSlowResponseRecord(entry, model);
+        if (record !== null) rows.push(record);
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          available,
+          keys: new Set(rows.map((row) => row.key)).size,
+          slow: rows.reduce((sum, row) => sum + row.slow, 0),
+          total: rows.reduce((sum, row) => sum + row.total, 0),
+        },
+      },
+      'litellm slow responses fetched',
+    );
+    return { rows, available };
   }
 
   /**

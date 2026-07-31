@@ -35,8 +35,10 @@ import {
   parseBudgetDuration,
   resolveDeploymentModel,
   resolveModelPrice,
+  slowResponseDeploymentKey,
   summarizeDeploymentHealth,
   summarizeGatewayProbe,
+  UNKEYED_DEPLOYMENT,
 } from '@dash/shared';
 import type {
   GatewayBudget,
@@ -2587,6 +2589,172 @@ try {
   latencyThrew = String(error).includes('unexpected shape');
 }
 check(latencyThrew, 'a malformed envelope throws rather than reporting a fast gateway');
+
+// ----------------------------------- GET /model/metrics/slow_responses
+//
+// The ninth envelope and the plainest one: the handler returns Prisma's rows
+// unwrapped, so the body is a bare array of `{api_base, total_count,
+// slow_count}` — or `null` when the query matched nothing, exactly like
+// `/model/metrics`. Four things it does that no sibling does: it groups on
+// `api_base` *alone* (no fallback to a model string, so every deployment
+// without a URL is one bucket), it carries its own denominator beside the
+// count, its counts come from `COUNT(*)`/`SUM(...)` and may therefore arrive as
+// strings, and the threshold that decides what "slow" means is the proxy's
+// `alerting_threshold` and is nowhere in the response.
+
+const SLOW_FROM = '2026-06-01';
+const SLOW_TO = '2026-06-30';
+
+const slowRows: Record<string, unknown[]> = {
+  'azure/gpt-4o': [
+    { api_base: 'https://nocturne-weu.openai.azure.com/', total_count: 40_000, slow_count: 84 },
+    // A bigint handed back as a string by the driver: ordinary, not malformed.
+    { api_base: 'https://nocturne-neu-ptu.openai.azure.com/', total_count: '20000', slow_count: '520' },
+    // The proxy coalesces a null base to "" before answering; both shapes are
+    // the unnamed bucket and neither is a broken row.
+    { api_base: null, total_count: 900, slow_count: 3 },
+    // No denominator, so no reading: this layer's only denominator is this one.
+    { api_base: 'https://nocturne-eus.openai.azure.com/', total_count: null, slow_count: 12 },
+    // More hangs than rows cannot happen upstream; clamped rather than trusted.
+    { api_base: 'https://nocturne-sea.openai.azure.com/', total_count: 10, slow_count: 99 },
+  ],
+  'bedrock/claude': [
+    // The path the proxy takes when the deployment has a URL with /openai/ in
+    // it — the cut is applied upstream and again here, so a fixture that skips
+    // it still lands on the same key.
+    { api_base: 'https://x.openai.azure.com/openai/deployments/gpt-4o', total_count: 5_000, slow_count: 9 },
+  ],
+};
+
+const slowSweep = await withProxy(
+  (captured) =>
+    captured.path === '/model/metrics/slow_responses'
+      ? { status: 200, body: slowRows[captured.query.get('_selected_model_group') ?? ''] ?? [] }
+      : { status: 404, body: { detail: 'unknown route' } },
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, [
+      'azure/gpt-4o',
+      'bedrock/claude',
+    ]);
+    return { page, calls: [...proxy.calls] };
+  },
+);
+
+check(
+  slowSweep.calls.length === 2 &&
+    slowSweep.calls.every((call) => call.path === '/model/metrics/slow_responses'),
+  `one call per alias — the third route with a model_group filter and no wildcard (${slowSweep.calls.length})`,
+);
+check(
+  slowSweep.calls[0]?.query.get('_selected_model_group') === 'azure/gpt-4o' &&
+    slowSweep.calls[1]?.query.get('_selected_model_group') === 'bedrock/claude',
+  'every call names its model group here too — the "gpt-4-32k" default is the same trap on this route',
+);
+check(
+  slowSweep.calls[0]?.query.get('startTime') === `${SLOW_FROM}T00:00:00` &&
+    slowSweep.calls[0]?.query.get('endTime') === `${SLOW_TO}T23:59:59`,
+  'the window is sent as datetimes, ending at the end of the last day',
+);
+
+const weuSlow = slowSweep.page.rows.find(
+  (row) => row.key === 'https://nocturne-weu.openai.azure.com/',
+);
+check(
+  slowSweep.page.available && weuSlow?.total === 40_000 && weuSlow?.slow === 84,
+  'a bare array is the envelope — the counts come off the row with no wrapper to reach through',
+);
+check(
+  weuSlow?.model === 'azure/gpt-4o',
+  'the alias comes from the query, since the row carries an api_base and two counts and nothing else',
+);
+const ptuSlow = slowSweep.page.rows.find(
+  (row) => row.key === 'https://nocturne-neu-ptu.openai.azure.com/',
+);
+check(
+  ptuSlow?.total === 20_000 && ptuSlow?.slow === 520,
+  'a count handed back as a string is read as the bigint it is, not dropped as a wrong type',
+);
+const unnamedSlow = slowSweep.page.rows.find((row) => row.key === UNKEYED_DEPLOYMENT);
+check(
+  unnamedSlow?.total === 900 && unnamedSlow.slow === 3,
+  'a null api_base is the unnamed bucket, with a name rather than a blank key',
+);
+check(
+  !slowSweep.page.rows.some((row) => row.key.includes('eus')),
+  'a row with no total is dropped — the total is this layer\'s only denominator and may not be zero-filled',
+);
+check(
+  slowSweep.page.rows.find((row) => row.key.includes('sea'))?.slow === 10,
+  'and a slow count past the total is clamped to it, since the SQL cannot produce one',
+);
+check(
+  slowSweep.page.rows.some((row) => row.key === 'https://x.openai.azure.com') &&
+    slowResponseDeploymentKey('https://x.openai.azure.com/openai/deployments/gpt-4o') ===
+      'https://x.openai.azure.com',
+  'the /openai/ cut lands on the same key the health row rebuilds — the join runs one way only',
+);
+
+const slowNull = await withProxy(
+  replier({ '/model/metrics/slow_responses': { status: 200, body: null } }),
+  async (proxy) => client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, ['azure/gpt-4o']),
+);
+check(
+  slowNull.available && slowNull.rows.length === 0,
+  'a bare null body is "nothing matched" on this route too — available, with no rows',
+);
+
+const slowEmpty = await withProxy(
+  replier({ '/model/metrics/slow_responses': { status: 200, body: [] } }),
+  async (proxy) => client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, ['azure/gpt-4o']),
+);
+check(
+  slowEmpty.available && slowEmpty.rows.length === 0,
+  'and so is an empty array — neither is a refusal, and neither means nothing hung',
+);
+
+const slowNoAliases = await withProxy(
+  replier({ '/model/metrics/slow_responses': { status: 200, body: [] } }),
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, []);
+    return { page, calls: proxy.calls.length };
+  },
+);
+check(
+  slowNoAliases.calls === 0 && slowNoAliases.page.available,
+  'no aliases fetches nothing rather than everything, exactly as on the other two sweeps',
+);
+
+for (const status of [401, 403, 404, 405, 501]) {
+  const refused = await withProxy(
+    replier({ '/model/metrics/slow_responses': { status, body: { detail: 'no' } } }),
+    async (proxy) => {
+      const page = await client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, [
+        'azure/gpt-4o',
+        'bedrock/claude',
+      ]);
+      return { page, calls: proxy.calls.length };
+    },
+  );
+  check(
+    !refused.page.available && refused.page.rows.length === 0 && refused.calls === 1,
+    `${status} stands the slow-response sweep down after one call — this route reads the request log too`,
+  );
+}
+
+let slowThrew = false;
+try {
+  await withProxy(
+    replier({ '/model/metrics/slow_responses': { status: 200, body: { data: [] } } }),
+    async (proxy) =>
+      client(proxy.baseUrl).fetchModelSlowResponses(SLOW_FROM, SLOW_TO, ['azure/gpt-4o']),
+  );
+} catch (error) {
+  slowThrew = String(error).includes('unexpected shape');
+}
+check(
+  slowThrew,
+  'an enveloped body throws rather than reading as empty — this route answers a bare array and only that',
+);
 
 // -------------------------------------------------------------------- done
 

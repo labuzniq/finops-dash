@@ -24,6 +24,7 @@ import type {
   GatewayModels,
   GatewayProbe,
   GatewayProbeRoute,
+  GatewaySlowResponses,
   GatewaySpendLog,
   GatewaySpendLogs,
   GatewayUsage,
@@ -656,7 +657,7 @@ export async function getGatewayLatency(from: string, to: string): Promise<Gatew
   // two different readings.
   const series = new Map<string, { model: string; key: string; points: { date: string; secondsPerToken: number }[] }>();
   for (const row of page.rows) {
-    const id = `${row.model} ${row.key}`;
+    const id = `${row.model}\u0000${row.key}`;
     const existing = series.get(id);
     if (existing === undefined) {
       series.set(id, {
@@ -676,6 +677,73 @@ export async function getGatewayLatency(from: string, to: string): Promise<Gatew
     skippedModels,
     series: [...series.values()],
     apiBases: page.apiBases,
+    available: page.available,
+    fetchedAt,
+  };
+}
+
+/**
+ * How many aliases one slow-response sweep will ask about.
+ *
+ * The third separately-named cap over the same number, and named separately for
+ * the same reason as the other two: the routes are capped independently because
+ * they cost different things. This one scans the request log like the latency
+ * sweep, but does strictly less with each row — no per-day grouping — so if any
+ * of the three is widened first it is this one.
+ */
+export const SLOW_RESPONSE_MODEL_CAP = 12;
+
+/**
+ * How many calls hung, per endpoint, over a window — fetched live and stored
+ * nowhere.
+ *
+ * The fourth read here that talks to the proxy while the caller waits, and the
+ * one that closes the loop the other three leave open. `failed_requests` counts
+ * the calls that failed; `/model/metrics/exceptions` says why they failed;
+ * `/model/metrics` says how many seconds per completion token the rest averaged.
+ * None of them can see a call that answered correctly after four minutes — a
+ * long answer at an ordinary per-token rate is exactly that, and it is the
+ * request a user is actually waiting on.
+ *
+ * Two things are the route's rather than this function's, and both leave here
+ * unrepaired. The threshold that decides what "slow" means is the proxy's own
+ * `alerting_threshold` and is not in the response, so nothing downstream may
+ * attach a number of seconds to the count. And the grouping key is the
+ * `api_base` alone, so every deployment without a URL is one bucket — reported
+ * under `UNKEYED_DEPLOYMENT` rather than as a blank row.
+ *
+ * Aliases are chosen the same way the other two sweeps choose them: the window's
+ * own `model` usage ranked by spend, capped, with the ones left out reported.
+ */
+export async function getGatewaySlowResponses(
+  from: string,
+  to: string,
+): Promise<GatewaySlowResponses> {
+  const fetchedAt = new Date().toISOString();
+  const client = createGatewayClient();
+  if (client === null) {
+    throw new GatewayLogsUnavailableError(
+      'GATEWAY_SOURCE is off — hanging requests are counted by the proxy and there is nothing to read.',
+    );
+  }
+
+  const ranked = await rankModelsBySpend(from, to);
+  const models = ranked.slice(0, SLOW_RESPONSE_MODEL_CAP);
+  const skippedModels = ranked.slice(SLOW_RESPONSE_MODEL_CAP);
+
+  const page = await client.fetchModelSlowResponses(from, to, models);
+
+  return {
+    from,
+    to,
+    models,
+    skippedModels,
+    rows: page.rows.map((row) => ({
+      model: row.model,
+      key: row.key,
+      total: row.total,
+      slow: row.slow,
+    })),
     available: page.available,
     fetchedAt,
   };
