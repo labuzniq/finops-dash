@@ -88,8 +88,17 @@ because `mcp_server` is a strict subset: `remainder = totals − attributed` is 
 subtraction the overlapping dimensions permit, so the page can compare agent-shaped traffic against
 everything else on $/call and tokens/call and read adoption half-over-half. It is wired to the constant
 `mcp_server`, never to the dimension switcher, and it says "MCP-attributed" rather than "agents"
-because the proxy only tags calls that routed through a server — the number is a floor. Everything above
-is *usage*; `gateway_budget` is the one gateway table that is not. It is a snapshot of the proxy's
+because the proxy only tags calls that routed through a server — the number is a floor.
+`lib/metrics/gatewayAdoption.ts` is the page's only *population* read and is pinned to the constant
+`user` for the same reason the agent card is pinned to `mcp_server` — "how many people, how evenly" has
+no meaning read through `model`. It is the one dimension that need not reconstitute the totals (a
+service key acting on nobody's behalf carries no user), so the card leads with **coverage** — attributed
+spend over gateway spend — and everything under it is scoped by that number. It carries two denominators
+deliberately: a row's share stays gateway-wide like every other card, while concentration (how few users
+are half the bill, and 80% of it) is measured *within* the attributed spend, because unattributed
+dollars would flatten a distribution. "New" means first seen in the window on screen and nothing more,
+so no churn is derived. Everything above is *usage*; `gateway_budget` is the one gateway table that is
+not. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the counter for the period in flight, per key and per team,
 from `/key/list` and `/team/list` rather than the activity routes — replaced wholesale by the same sync
 and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means *no such limit*

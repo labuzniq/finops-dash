@@ -12,6 +12,7 @@ import type { DateRange, GatewayBudgetScope, GatewayDimension } from '@dash/shar
 import { cx } from '../../lib/cx.js';
 import { compactCount, count, EMPTY, percent, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.js';
+import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.js';
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
@@ -39,6 +40,7 @@ import type { UseSyncJob } from '../../hooks/useCopilotData.js';
 import { spendRangeBounds } from '../../hooks/useSpendData.js';
 import { Card } from '../Card.js';
 import { DateRangePicker } from '../DateRangePicker.js';
+import { GatewayAdoptionCard } from './GatewayAdoptionCard.js';
 import { GatewayAgentsCard } from './GatewayAgentsCard.js';
 import { GatewayAnomalyCard } from './GatewayAnomalyCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
@@ -312,6 +314,15 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.daily, usageQuery.data],
   );
 
+  // The page's other card that is pinned to a constant dimension rather than
+  // the switcher: `user` is the only slice that is a population rather than a
+  // workload, and the questions it answers — how many people, how evenly — have
+  // no meaning read through `model` or `provider`.
+  const adoption = useMemo(
+    () => deriveAdoption(summary.daily, usageQuery.data?.breakdowns ?? []),
+    [summary.daily, usageQuery.data],
+  );
+
   const selectedDaily = useMemo(
     () =>
       selectedRow === null
@@ -551,6 +562,8 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           <GatewayReliabilityCard summary={reliability} />
 
           {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
+
+          {hasAdoption(adoption) && <GatewayAdoptionCard summary={adoption} />}
 
           <GatewayBreakdownCard
             rows={summary.breakdowns[activeDimension]}

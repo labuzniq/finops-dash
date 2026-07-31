@@ -108,7 +108,22 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-platform',
     teamAlias: 'Platform Engineering',
     tag: 'coding-assistant',
-    users: ['ana.kovacs@corp.example', 'liam.silva@corp.example', 'maya.haugen@corp.example'],
+    users: [
+      'ana.kovacs@corp.example',
+      'liam.silva@corp.example',
+      'maya.haugen@corp.example',
+      'tomas.brandt@corp.example',
+      'iris.delacroix@corp.example',
+      'omar.haddad@corp.example',
+      'greta.lindqvist@corp.example',
+      'pavel.dvorak@corp.example',
+      'yuki.tanabe@corp.example',
+      'dario.esposito@corp.example',
+      'freya.nilsen@corp.example',
+      'samir.bhatt@corp.example',
+      'clara.wagner@corp.example',
+      'jonas.ferreira@corp.example',
+    ],
     weight: 0.31,
     // The gateway's biggest consumer, deliberately uncapped: it is the one
     // workload nobody will let a budget stop mid-sprint. Rate-limited instead.
@@ -121,7 +136,18 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-cx',
     teamAlias: 'Customer Experience',
     tag: 'support',
-    users: ['noah.okafor@corp.example', 'ivy.meyer@corp.example'],
+    users: [
+      'noah.okafor@corp.example',
+      'ivy.meyer@corp.example',
+      'ruben.castillo@corp.example',
+      'hana.oyelaran@corp.example',
+      'petra.simek@corp.example',
+      'louis.bertrand@corp.example',
+      'aisha.rahman@corp.example',
+      'stefan.kruger@corp.example',
+      'mira.antonova@corp.example',
+      'diego.rojas@corp.example',
+    ],
     weight: 0.22,
     limits: { maxBudget: 1_800, softBudget: 1_440, budgetDuration: '1mo', rpmLimit: 6_000 },
     teamLimits: { maxBudget: 2_200, budgetDuration: '1mo' },
@@ -132,7 +158,17 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-risk',
     teamAlias: 'Risk & Compliance',
     tag: 'document-intelligence',
-    users: ['owen.tanaka@corp.example', 'zoe.novak@corp.example', 'eli.fischer@corp.example'],
+    users: [
+      'owen.tanaka@corp.example',
+      'zoe.novak@corp.example',
+      'eli.fischer@corp.example',
+      'anneke.visser@corp.example',
+      'rafael.pinto@corp.example',
+      'nadia.chowdhury@corp.example',
+      'viktor.horvath@corp.example',
+      'mei.lin@corp.example',
+      'bruno.almeida@corp.example',
+    ],
     weight: 0.18,
     limits: { maxBudget: 1_800, softBudget: 1_440, budgetDuration: '1mo' },
     teamLimits: { maxBudget: 2_000, budgetDuration: '1mo' },
@@ -143,7 +179,10 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-data',
     teamAlias: 'Data Platform',
     tag: 'batch',
-    users: ['ruth.iqbal@corp.example', 'marc.moreau@corp.example'],
+    // A batch platform is machine traffic wearing three people's names: the
+    // roster stays small no matter how big the bill gets, which is what makes
+    // the per-user table's heaviest rows service accounts rather than humans.
+    users: ['ruth.iqbal@corp.example', 'marc.moreau@corp.example', 'etl-service@corp.example'],
     weight: 0.14,
     // Sized for ordinary ETL traffic, so the twice-monthly re-embedding batch
     // walks it through its soft budget and into overrun — the state a budget
@@ -157,7 +196,20 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-it',
     teamAlias: 'Corporate IT',
     tag: 'chat',
-    users: ['nina.larsen@corp.example', 'theo.petrov@corp.example', 'lena.santos@corp.example'],
+    users: [
+      'nina.larsen@corp.example',
+      'theo.petrov@corp.example',
+      'lena.santos@corp.example',
+      'harald.bjornson@corp.example',
+      'sofia.marchetti@corp.example',
+      'kwame.mensah@corp.example',
+      'julia.novotna@corp.example',
+      'arjun.deshpande@corp.example',
+      'elin.vestergaard@corp.example',
+      'matteo.rossi@corp.example',
+      'chiara.bianchi@corp.example',
+      'tobias.hummel@corp.example',
+    ],
     weight: 0.1,
     limits: { maxBudget: 1_200, softBudget: 960, budgetDuration: '1mo', rpmLimit: 3_000 },
     teamLimits: { maxBudget: 1_400, budgetDuration: '1mo' },
@@ -168,7 +220,14 @@ const KEYS: readonly MockKey[] = [
     teamId: 'team-innovation',
     teamAlias: 'Innovation Lab',
     tag: 'experiment',
-    users: ['kofi.weber@corp.example', 'sara.nakamura@corp.example'],
+    users: [
+      'kofi.weber@corp.example',
+      'sara.nakamura@corp.example',
+      'lucas.mendes@corp.example',
+      'annika.roth@corp.example',
+      'hugo.laurent@corp.example',
+      'priya.venkatesan@corp.example',
+    ],
     weight: 0.05,
     // A weekly experiment budget, already spent through and the key blocked.
     // `blocked` is a separate state from an exhausted budget on a real proxy —
@@ -218,6 +277,89 @@ function mcpShare(date: string): number {
   const day = Number(date.slice(8, 10));
   const months = (year - MCP_SHARE_EPOCH_YEAR) * 12 + (month - 1) + (day - 1) / 31;
   return Math.min(0.55, Math.max(0.05, MCP_SHARE_BASE + MCP_SHARE_PER_MONTH * months));
+}
+
+/**
+ * How unevenly a key's traffic is spread across its people, flattening month
+ * over month.
+ *
+ * `index = ⌊n · u^p⌋` over a uniform draw `u` gives index `k` a probability of
+ * `((k+1)/n)^(1/p) − (k/n)^(1/p)`, so `p` is the skew dial: at `p = 2.4` the
+ * first name on a 12-person roster takes ~35% of that key's rows and the last
+ * takes under 1%; at `p = 1` every name is equally likely.
+ *
+ * The dial is what carries adoption here, rather than a growing roster. A
+ * corporate gateway does not onboard people so much as *broaden*: the first
+ * months are a handful of enthusiasts running agents all day, and as the
+ * endpoint becomes the default the same population starts calling it. Both the
+ * daily active count and the concentration read move on that broadening, where
+ * a roster that merely grew would leave the tail unreached — the number of rows
+ * a key emits per day is bounded by the models it routes to, not by how many
+ * people it has.
+ *
+ * Keyed off the calendar month for the same reason the MCP ramp and the batch
+ * burst are: a re-sync must reproduce history rather than redraw it, so the
+ * same date must read the same in a 30-day pull and a 90-day one. Clamped at
+ * both ends, so a range far from the epoch stays a plausible gateway rather
+ * than an inverted one.
+ */
+const SKEW_EPOCH_YEAR = 2026;
+const SKEW_AT_EPOCH = 2.6;
+const SKEW_PER_MONTH = 0.115;
+const SKEW_FLOOR = 1.35;
+
+/**
+ * How much of a key's roster has been onboarded, climbing month over month.
+ *
+ * The skew dial above decides how unevenly the *onboarded* population is
+ * loaded; this one decides how many of them there are. Both are needed and
+ * neither substitutes for the other: broadening alone never produces a user who
+ * was not there last month, and a growing roster alone leaves the newcomers
+ * invisible because the head of the distribution keeps taking the rows.
+ *
+ * Clamped at 1, which the ramp reaches in late 2026 — past that the mock's
+ * population stops growing and `new users` reads zero. That is a horizon of the
+ * generator, not of the derivation, and extending it means lengthening the
+ * rosters rather than changing the card.
+ */
+const ROSTER_AT_EPOCH = 0.35;
+const ROSTER_PER_MONTH = 0.07;
+
+function rosterShare(date: string): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const months = (year - SKEW_EPOCH_YEAR) * 12 + (month - 1) + (day - 1) / 31;
+  return Math.min(1, Math.max(0.2, ROSTER_AT_EPOCH + ROSTER_PER_MONTH * months));
+}
+
+function userSkew(date: string): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  const day = Number(date.slice(8, 10));
+  const months = (year - SKEW_EPOCH_YEAR) * 12 + (month - 1) + (day - 1) / 31;
+  return Math.min(SKEW_AT_EPOCH, Math.max(SKEW_FLOOR, SKEW_AT_EPOCH - SKEW_PER_MONTH * months));
+}
+
+/**
+ * Which of a key's users carries a row.
+ *
+ * One draw, deliberately: the Lehmer stream is consumed sequentially, so
+ * spending a second random number here would shift every value after it and
+ * silently redraw the burst, the incident and the MCP ramp.
+ */
+function pickUser(key: MockKey, date: string, draw: number): string {
+  // Service accounts neither broaden nor grow — a batch platform runs under the
+  // same two or three identities no matter how big its bill gets, which is what
+  // makes the heaviest rows of the per-user table the ones with the fewest
+  // people behind them.
+  const service = key.tag === BURST_TAG;
+  const size = service
+    ? key.users.length
+    : Math.max(1, Math.round(key.users.length * rosterShare(date)));
+  const skew = service ? 1 : userSkew(date);
+  const index = Math.min(size - 1, Math.floor(size * draw ** skew));
+  return key.users[index] ?? key.users[0]!;
 }
 
 /** Requests per day at the start of the window, before growth and weekday shape. */
@@ -402,9 +544,11 @@ export class MockGatewayClient implements GatewayClient {
           add(date, 'tag', key.tag, null, counters);
 
           // One user of the key carries the row — over a window every user
-          // shows up, which is what the per-user table needs.
-          const user = key.users[Math.floor(random() * key.users.length)] ?? key.users[0]!;
-          add(date, 'user', user, null, counters);
+          // shows up, which is what the per-user table needs. The pick is skewed
+          // towards the head of the roster and the skew flattens month over
+          // month, so the adoption card reads a population that is both unevenly
+          // loaded and broadening, which is what a real one is.
+          add(date, 'user', pickUser(key, date, random()), null, counters);
 
           // MCP traffic is a subset of the same requests, attributed to the
           // server the agent called. Only agent-shaped workloads have any.

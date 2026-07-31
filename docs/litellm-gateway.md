@@ -263,6 +263,27 @@ is what the agent card's unit-economics contrast reads; scaling spend without
 scaling tokens (which is what the generator originally did) makes
 tokens-per-call a pure artefact of the scaling.
 
+**People** are the fourth planted shape, and they carry two dials rather than
+one, because neither alone produces a usable population. Each key has a roster
+(fourteen names on `copilot-agents`, three service identities on
+`data-platform-etl`), and which name carries a row is drawn as
+`index = ⌊n · u^p⌋` over a uniform draw — a **skew** dial where `p = 1` is a
+uniform pick and `p = 2.6` gives the first name on a twelve-person roster ~35% of
+that key's rows. Real gateway usage is heavily skewed and a uniform pick would
+have made the concentration card report a property of `Math.random`. The skew
+**flattens** ~0.115 a month and the onboarded share of each roster **grows** ~7
+points a month, both keyed off the calendar month like the burst and the MCP
+ramp. Both are needed: broadening alone never produces a user who was not there
+last month, and a growing roster alone leaves the newcomers invisible, because
+the number of rows a key emits per day is bounded by the models it routes to,
+not by how many people it has. The batch key is exempt from both — a batch
+platform runs under the same few service identities however big its bill gets,
+which is why the mock's heaviest per-user row is `etl-service@corp.example` and
+the card's footnote about shared service keys reads as a live example rather than
+a caveat. The roster ramp clamps at fully-onboarded in late 2026, after which
+`new users` reads zero: a horizon of the generator, fixed by lengthening the
+rosters rather than by changing the derivation.
+
 ## Endpoints
 
 | Method | Path | Answer |
@@ -296,8 +317,9 @@ What it shows, and why each one is there:
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
+| People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 
-Ten decisions worth keeping:
+Eleven decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -449,6 +471,36 @@ Ten decisions worth keeping:
   it is neither), while a `max_budget` of `0` renders as **blocked**, next to the
   administratively disabled keys it behaves like.
 
+- **The adoption card reads the gateway as a population, and says how much of
+  the bill that population accounts for before it says anything else.**
+  `lib/metrics/gatewayAdoption.ts` is pinned to the `user` dimension the way the
+  agent card is pinned to `mcp_server`, and for a related reason: `user` is the
+  only slice that is a *population* rather than a workload, and "how many people
+  and how evenly" has no meaning read through `model` or `provider`. Its
+  headline constraint is **coverage**. LiteLLM carries a user on a call only if
+  the caller passed one, so unlike `model` and `provider` the user rows are not
+  obliged to reconstitute the gateway total — a service key acting on nobody's
+  behalf carries no user at all. The card therefore leads with attributed spend
+  over gateway spend, because a per-user table at 40% coverage is describing a
+  minority of the money and reading it as the whole is the single mistake this
+  card is most able to cause. That is also why it uses **two denominators**: a
+  row's `share` stays gateway-wide, comparable with the breakdown table, while
+  concentration is measured *within* the attributed spend, since "how unevenly
+  is usage spread" is a question about a distribution and unattributed dollars
+  would flatten it artificially. Concentration is reported as **counts of
+  users** — "5 users are half the attributed spend, 15 are 80% of it" — rather
+  than as a Gini coefficient, for the same reason the budget card counts objects:
+  a number someone can act on beats an index that needs a paragraph first. The
+  two readings it produces are genuinely different arguments — a gateway whose
+  top decile carries half the bill is a chargeback conversation with three
+  teams; one where the spend is spread broadly is a per-seat economics
+  conversation with finance. Two limits are stated on the card rather than
+  hidden: a row is whatever the caller passed as an end-user id, so a shared
+  service key reads as one very heavy "user" (in the mock it is the top row by
+  design), and **"new" is bounded by the window on screen** — someone who last
+  called the week before the range starts is indistinguishable here from someone
+  who never has, so no churn number is derived at all.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -539,6 +591,30 @@ both regimes — a month one day in projects nothing, half a month at $600 again
 a $1,000 cap projects $1,200 and is flagged as pacing over, and every projection
 that does answer is exactly `spend ÷ elapsed`. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-budgets.ts`.
+
+`apps/api/scripts/verify-gateway-adoption.ts` covers the population layer. The
+reconciliation first: the ranked user rows sum to the attributed totals, the
+attributed totals never exceed the gateway's (the bound that makes `coverage` a
+share rather than a ratio of two unrelated numbers), the shares of attributed
+spend sum to 1 while the gateway-wide shares sum to coverage, and the cumulative
+column is monotone and ends at 100%. Then the claim the card makes in words:
+every concentration count is checked to be the *smallest* count reaching its
+mark, read off the same cumulative column the table renders, so the sentence and
+the rows under it cannot disagree. Daily actives are checked against the
+payload's own distinct user keys per day, and a user with a row but no request
+does not count as active. The planted shapes are checked as shapes — the
+heaviest user carries more than twice an even split (the skew is real, not a
+property of `Math.random`), and an equal-length window later in the range holds a
+larger population than one earlier in it, which is the onboarding ramp and
+nothing else. That comparison is deliberately made **within one pull**: the
+mock's Lehmer stream is consumed from the window start, so the same calendar day
+draws a different user in a 20-day pull than in a 60-day one, and only the
+date-keyed *structure* — how much of each roster is onboarded, how skewed the
+pick is — is stable across windows. Finally the edges: a payload with no user
+rows stands the card down instead of reporting zero users of a real bill, a
+4-day spine reports no trend and flags nobody as new, and an empty spine derives
+nulls rather than dividing by zero. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-adoption.ts`.
 
 `apps/api/scripts/verify-litellm-contract.ts` is the odd one out: it is the only
 script that exercises the **live** client rather than the mock. It stands up a
