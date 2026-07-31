@@ -820,6 +820,7 @@ What it shows, and why each one is there:
 | Unusual spend | Days that ran away from their trailing 14-day median, biggest overrun first; selecting one attributes the overrun across the currently selected dimension |
 | Month-end forecast | This calendar month's spend to date and where it lands, projecting each remaining day at what that weekday has been costing |
 | Reliability | Failure rate per day as a strip, plus the current dimension's keys ranked by failures **above** the gateway-wide rate, with the ones that are significantly and materially worse badged |
+| Deployment health | Which of the deployments behind each public alias are answering, from the reading the last full sync took: the aliases worst-first with their deployments and the proxy's own error text under them, the provider rollup beside it, and the reading's **age** on the card — a nightly snapshot, never a live call |
 | Agent traffic | MCP-attributed spend against everything else — the split, its unit economics ($/call and tokens/call vs the remainder), the daily share strip, half-over-half adoption, and the MCP servers ranked by share **of agent spend** |
 | Budgets and limits | Every governed key or team (a switcher, one scope at a time): its state, the proxy's own counter against its cap with the owner's soft budget marked on the bar, what remains, where the current pace lands by the period's end, and its TPM/RPM ceilings |
 | Budget history (per row) | Opening a budget row shows what that key or team read on previous days: a strip of the recorded share of cap with a **hole** on every day nobody synced, the changes we caught (period resets, cap and soft-budget moves, rate-limit changes, renames, blocks, and the day it crossed its cap), and the periods that closed inside the record — each labelled *at least*, because the counter is read once a day |
@@ -832,7 +833,7 @@ What it shows, and why each one is there:
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty-two decisions worth keeping:
+Twenty-three decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1297,8 +1298,8 @@ Twenty-two decisions worth keeping:
 - **The digest at the top owns no threshold, and never reads silence as
   health.** `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of
   derivations*: it takes the already-derived summaries — budgets, budget
-  history, anomalies, reliability, cache, coverage — and puts their findings in
-  one list, because fourteen cards each flagging their own faults means every
+  history, anomalies, reliability, cache, coverage, deployment health — and puts
+  their findings in one list, because fifteen cards each flagging their own faults means every
   fault is below the fold. It never re-reads the payload and never decides
   anything is interesting: it can only surface a state a source module already
   flagged, with that module's own numbers. A digest that could disagree with the
@@ -1442,6 +1443,39 @@ Twenty-two decisions worth keeping:
   footnote — a violation does not make the numbers approximate, it makes them
   measured against the wrong total.
 
+- **The health card leads with the reading's age, and its findings are the
+  two states the alias list can be in.** `gateway_deployment_health` is a
+  *snapshot* of something that changes in minutes, taken once a night, because
+  `/health` issues a live test call to every deployment while answering it — so
+  the card renders the stored reading and says how old it is, rather than
+  fetching on open and costing a token per deployment per visit.
+  `lib/metrics/gatewayHealth.ts` adds no rule about the gateway at all
+  (`summarizeDeploymentHealth` in `@dash/shared` is the single up/degraded/down
+  statement, shared with the API's own checks); everything it derives is about
+  the *reading*: how old it is, whether one has ever been taken, and whether it
+  is older than a working nightly sync would leave it.
+
+  Those three are deliberately not the same answer. A reading older than
+  `HEALTH_STALE_HOURS` (36 — one missed run plus the slack a retry needs) still
+  reports every finding it holds, because the data is old rather than absent;
+  what it adds is a **blind spot** on the digest, since a deployment that failed
+  since is not on the list and a late scheduler says nothing about the gateway.
+  A reading that has never been taken produces no finding and no card at all —
+  a backfill skips `/health` and a failed read is swallowed rather than failing
+  the sync, so an empty alias table and a gateway with nothing failing look
+  identical and must not read the same.
+
+  On the digest the two states are two findings, not one severity scale.
+  **Down** is `critical` — every deployment behind the alias is failing, so
+  calls are being rejected now, and the usage payload will show it as failures
+  tomorrow; the card is merely the earlier answer. **Degraded** is `warning` and
+  is the finding nothing else on the page can make: the alias still answers on
+  the deployments that are left, so it bills normally, fails nothing, and is
+  invisible on every spend-shaped and failure-shaped card. The unnamed bucket is
+  eligible for both — a deployment the catalogue could not name is still a
+  deployment that can fail, and filing it under a near-match is the one thing
+  this table refuses to do.
+
 `apps/api/scripts/verify-gateway-catalog-view.ts` covers that derivation, and
 splits into the three things the mock can and cannot show. It **can** show the
 join and the arithmetic: coverage measured against the gateway total, the one
@@ -1463,6 +1497,26 @@ Postgres half runs the same derivation over what a sync stored, which is what
 proves a null price is still null in the shape the card reads — a `$0.00/M`
 coming back would render as a 100% discount. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-catalog-view.ts`.
+
+`apps/api/scripts/verify-gateway-health-view.ts` covers what the page does with
+that reading, which is the half `verify-litellm-contract.ts` (the wire and the
+pure rule) and `verify-gateway-health.ts` (the alias join, the blast radius, and
+the proof that a degraded alias is invisible elsewhere) leave open. Its centre is
+the staleness boundary, checked on both sides — a reading exactly
+`HEALTH_STALE_HOURS` old is not stale and a minute older is, a reading dated
+*ahead* of the browser clamps to zero age rather than rendering as "in 3h", and
+staleness changes nothing about what the reading says. Then the two kinds of
+silence, which produce the same empty list and mean opposite things: an
+unanswered query and a never-taken reading each yield no finding and their own
+named blind spot, while a stale reading yields the same findings as a fresh one
+*plus* a blind spot. The digest half is two-directional like
+`verify-gateway-alerts.ts` — every finding traces to an alias the summary holds
+in that state, every alias in that state produces exactly one finding, an `up`
+alias produces none, and a failing unnamed deployment is still reported under its
+own bucket. The Postgres half re-derives over what a sync stored, which is what
+proves a null alias survives as a null rather than collapsing into a string. Run
+it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-health-view.ts`.
 
 `apps/api/scripts/verify-gateway-cache-value.ts` covers the priced panel, and
 its centre is the identity: over constructed rows where both bills are known,
@@ -2151,16 +2205,15 @@ Governance is now rendered end to end across all three scopes
   so a substitution suggestion needs a quality signal the proxy does not export,
   and the card deliberately stops at reporting rates rather than recommending
   routes.
-- **The health *view*.** `gateway_deployment_health` is fetched, resolved,
-  stored and served (`GET /api/gateway/health`), and `summarizeDeploymentHealth`
-  in `@dash/shared` is the pure up/degraded/down reading a card would render —
-  but no card renders it yet. That is the next step and the shape is settled:
-  the alias list worst-first with each alias's deployments under it, the provider
-  rollup beside it (a whole cloud going dark is a different incident from one
-  model), the reading's own age on it, and the digest picking up `down` as
-  critical and `degraded` as a warning. What it must not do is present itself as
-  live: the reading is nightly, so a card that does not lead with *when* it was
-  taken would be read as current.
+- **Pressing health on demand.** The card renders the *stored* nightly reading
+  and there is deliberately no refresh button on it, because `/health` without
+  `background_health_checks` issues a live test call to every deployment while
+  answering: a button would bill a token per deployment per click, on production
+  inference for the whole corporation. The honest versions of "check it now" are
+  upstream — turning on the proxy's own background checks, at which point
+  `/health` reads a cache and syncing more often becomes cheap — or a second
+  route that probes one alias rather than all of them. Both are a decision about
+  the proxy's configuration, not about this page.
 
 - **History of an outage.** Health is a snapshot like budgets were before
   iteration 23, so "was this deployment already failing last Tuesday" is

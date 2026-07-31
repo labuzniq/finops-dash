@@ -45,8 +45,10 @@
  */
 import { MockGatewayClient } from '../src/gateway/mock.js';
 import { nanoToDollars } from '../src/lib/nano.js';
-import { summarizeGatewayCoverage } from '@dash/shared';
+import { resolveDeploymentModel, summarizeGatewayCoverage } from '@dash/shared';
 import type {
+  GatewayDeployment,
+  GatewayHealth,
   GatewayBreakdownPoint,
   GatewayBudget,
   GatewayBudgetHistory,
@@ -66,6 +68,7 @@ import { detectSpendAnomalies } from '../../web/src/lib/metrics/gatewayAnomaly.j
 import { deriveBudgetHistory } from '../../web/src/lib/metrics/gatewayBudgetHistory.js';
 import { deriveBudgets } from '../../web/src/lib/metrics/gatewayBudgets.js';
 import { deriveGatewayCache } from '../../web/src/lib/metrics/gatewayCache.js';
+import { deriveGatewayHealth } from '../../web/src/lib/metrics/gatewayHealth.js';
 import { deriveReliability } from '../../web/src/lib/metrics/gatewayReliability.js';
 
 const DAYS = 60;
@@ -176,6 +179,28 @@ for (let offset = -95; offset <= 0; offset++) {
 }
 const coverage: GatewayCoverage = summarizeGatewayCoverage(storedDays, iso(0));
 
+// The stored `/health` reading, joined to the catalogue the way the sync joins
+// it — `/health` reports routing strings and never public aliases.
+const catalogue = await client.fetchModels();
+const checkedAt = new Date().toISOString();
+const healthPayload: GatewayHealth = {
+  checkedAt,
+  deployments: (await client.fetchHealth()).map(
+    (row): GatewayDeployment => ({
+      id: row.id,
+      backend: row.backend,
+      model: resolveDeploymentModel(catalogue, row.backend),
+      provider: row.provider,
+      apiBase: row.apiBase,
+      healthy: row.healthy,
+      error: row.error,
+      errorStatus: row.errorStatus,
+      checkedAt,
+    }),
+  ),
+};
+const health = deriveGatewayHealth(healthPayload, new Date());
+
 const inputs = {
   budgets,
   budgetsLoaded: true,
@@ -184,6 +209,7 @@ const inputs = {
   reliability,
   cache,
   coverage,
+  health,
 };
 
 const digest = buildGatewayAlerts(inputs, NO_CAP);
@@ -257,6 +283,18 @@ for (const entry of digest.alerts) {
       check(
         cache.rows.some((row) => row.key === key && row.state === 'churning'),
         `cache-churn names ${key}, which is not churning`,
+      );
+      break;
+    }
+    case 'deployment-down':
+    case 'deployment-degraded': {
+      const name = entry.subject.slice('model:'.length);
+      const model = health.summary.models.find(
+        (row) => (row.model ?? 'unnamed deployments') === name,
+      );
+      check(
+        model?.state === (entry.kind === 'deployment-down' ? 'down' : 'degraded'),
+        `${entry.kind} names ${name}, which the health summary does not hold in that state`,
       );
       break;
     }
@@ -335,6 +373,15 @@ check(
     (entry) => entry.kind === 'budget-crossed' && entry.subject === `api_key:${CROSSED_KEY}`,
   ),
   'the planted crossing is not the key that was planted',
+);
+
+check(
+  countOf('deployment-down') === health.summary.down.length,
+  `${countOf('deployment-down')} down findings against ${health.summary.down.length} down aliases`,
+);
+check(
+  countOf('deployment-degraded') === health.summary.degraded.length,
+  `${countOf('deployment-degraded')} degraded findings against ${health.summary.degraded.length} degraded aliases`,
 );
 
 // ------------------------------------------------ 3. the two self-consistency rules
@@ -465,6 +512,7 @@ const quiet = {
   reliability: deriveReliability([], [], 'model'),
   cache: deriveGatewayCache([], [], 'api_key'),
   coverage: null,
+  health: deriveGatewayHealth(null, now),
 };
 const quietDigest = buildGatewayAlerts(quiet);
 check(quietDigest.total === 0, 'an unread gateway produced findings');
@@ -511,6 +559,18 @@ const healthy: GatewayAlertDigest = buildGatewayAlerts({
   coverage: summarizeGatewayCoverage(
     summary.daily.map((day) => day.date),
     iso(0),
+  ),
+  health: deriveGatewayHealth(
+    {
+      checkedAt,
+      deployments: healthPayload.deployments.map((row) => ({
+        ...row,
+        healthy: true,
+        error: null,
+        errorStatus: null,
+      })),
+    },
+    new Date(),
   ),
 });
 check(

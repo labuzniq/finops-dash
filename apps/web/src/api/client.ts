@@ -5,6 +5,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayHealth,
   GatewayModels,
   GatewayNotifications,
   GatewayProbe,
@@ -269,6 +270,19 @@ export function fetchGatewayNotifications(days: number): Promise<GatewayNotifica
  */
 export function fetchGatewayModels(): Promise<GatewayModels> {
   return request<GatewayModels>('/gateway/models');
+}
+
+/**
+ * Per-deployment health as the last full sync read it.
+ *
+ * A *stored* reading rather than a live call, and the distinction is the whole
+ * shape of the card: `/health` on the proxy issues a test call to every
+ * deployment while answering, so it is taken once a night and rendered with its
+ * own age on it. No date range — like the budget snapshot and the price list,
+ * it is current state replaced wholesale by every full sync.
+ */
+export function fetchGatewayHealth(): Promise<GatewayHealth> {
+  return request<GatewayHealth>('/gateway/health');
 }
 
 /**

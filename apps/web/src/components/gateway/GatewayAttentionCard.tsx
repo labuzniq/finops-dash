@@ -31,6 +31,7 @@ const SOURCE_ANCHOR: Record<AlertSource, string> = {
   reliability: 'gateway-reliability',
   cache: 'gateway-cache',
   coverage: 'gateway-coverage',
+  health: 'gateway-health',
 };
 
 const SOURCE_LABEL: Record<AlertSource, string> = {
@@ -39,6 +40,7 @@ const SOURCE_LABEL: Record<AlertSource, string> = {
   reliability: 'Reliability',
   cache: 'Prompt cache',
   coverage: 'Coverage',
+  health: 'Deployment health',
 };
 
 function scrollTo(anchor: string): void {

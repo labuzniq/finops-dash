@@ -9,15 +9,18 @@ import type { SpendAnomaly } from './gatewayAnomaly.js';
 import type { BudgetHistorySummary } from './gatewayBudgetHistory.js';
 import type { BudgetRow, BudgetSummary } from './gatewayBudgets.js';
 import type { CacheSummary } from './gatewayCache.js';
+import { HEALTH_STALE_HOURS } from './gatewayHealth.js';
+import type { HealthView } from './gatewayHealth.js';
 import type { ReliabilitySummary } from './gatewayReliability.js';
 
 /**
  * What on this page needs somebody, in one list.
  *
- * The gateway page now carries fourteen cards, each of which decides for itself
+ * The gateway page now carries fifteen cards, each of which decides for itself
  * what is worth flagging — a budget past its cap, a day that ran away from its
- * trailing median, a deployment failing above the gateway rate, a workload
- * writing to a cache it never reads, a fortnight the scheduler missed. Every one
+ * trailing median, a key failing above the gateway rate, an alias serving on
+ * fewer deployments than it has, a workload writing to a cache it never reads,
+ * a fortnight the scheduler missed. Every one
  * of those findings is already derived and already on screen, and every one of
  * them is below the fold. This module reads the *derived summaries* and puts
  * their findings in one place at the top.
@@ -61,7 +64,7 @@ import type { ReliabilitySummary } from './gatewayReliability.js';
 export type AlertSeverity = 'critical' | 'warning' | 'info';
 
 /** Which card explains the finding — what the row scrolls to. */
-export type AlertSource = 'budget' | 'anomaly' | 'reliability' | 'cache' | 'coverage';
+export type AlertSource = 'budget' | 'anomaly' | 'reliability' | 'cache' | 'coverage' | 'health';
 
 export type AlertKind =
   | 'budget-blocked'
@@ -69,8 +72,10 @@ export type AlertKind =
   | 'budget-soft'
   | 'budget-pacing'
   | 'budget-crossed'
+  | 'deployment-down'
   | 'spend-anomaly'
   | 'reliability-elevated'
+  | 'deployment-degraded'
   | 'coverage-gap'
   | 'cache-churn'
   | 'coverage-pruned';
@@ -90,8 +95,10 @@ export const KIND_ORDER: readonly AlertKind[] = [
   'budget-soft',
   'budget-pacing',
   'budget-crossed',
+  'deployment-down',
   'spend-anomaly',
   'reliability-elevated',
+  'deployment-degraded',
   'coverage-gap',
   'cache-churn',
   'coverage-pruned',
@@ -104,8 +111,15 @@ export const KIND_SEVERITY: Record<AlertKind, AlertSeverity> = {
   // disagree about how urgent the same state is.
   ...GATEWAY_BUDGET_ALERT_SEVERITY,
   'budget-crossed': 'warning',
+  // An alias with no deployment left answering is rejecting calls right now,
+  // which is the same urgency as a key the proxy is refusing on its budget.
+  'deployment-down': 'critical',
   'spend-anomaly': 'warning',
   'reliability-elevated': 'warning',
+  // Degraded is a capacity finding: the alias still answers, so nothing is
+  // failing and somebody has to decide whether the remaining deployments carry
+  // the load.
+  'deployment-degraded': 'warning',
   'coverage-gap': 'warning',
   'cache-churn': 'info',
   'coverage-pruned': 'info',
@@ -117,6 +131,8 @@ const KIND_SOURCE: Record<AlertKind, AlertSource> = {
   'budget-soft': 'budget',
   'budget-pacing': 'budget',
   'budget-crossed': 'budget',
+  'deployment-down': 'health',
+  'deployment-degraded': 'health',
   'spend-anomaly': 'anomaly',
   'reliability-elevated': 'reliability',
   'coverage-gap': 'coverage',
@@ -181,6 +197,15 @@ export interface AlertInputs {
   cache: CacheSummary;
   /** Null until `GET /api/gateway/coverage` answers. */
   coverage: GatewayCoverage | null;
+  /**
+   * The stored `/health` reading, already derived.
+   *
+   * Unlike every other source here this one is a *snapshot* rather than a read
+   * of the window on screen, so its findings do not move when the range picker
+   * does — and its age is a blind spot rather than a finding, because a stale
+   * reading says nothing about the gateway and everything about the sync.
+   */
+  health: HealthView;
 }
 
 export interface AlertOptions {
@@ -416,6 +441,59 @@ function fromCache(summary: CacheSummary): GatewayAlert[] {
 }
 
 /**
+ * Aliases that have lost deployments, in `summarizeDeploymentHealth`'s own order.
+ *
+ * The two states are two different findings rather than one severity scale.
+ * **Down** is calls being rejected now — the usage payload will show it as
+ * failures tomorrow, so the digest is merely the earlier answer. **Degraded**
+ * is the answer nothing else on the page has at all: the alias still serves on
+ * the deployments that are left, bills normally and fails nothing, so no
+ * spend-shaped or failure-shaped card can see it.
+ *
+ * The unnamed bucket is deliberately eligible: a deployment the catalogue could
+ * not name is still a deployment that is failing, and filing it under a
+ * near-match is the one thing the health table refuses to do.
+ */
+function fromHealth(view: HealthView): GatewayAlert[] {
+  if (!view.answered || view.neverChecked) return [];
+
+  const alerts: GatewayAlert[] = [];
+  const name = (model: string | null): string => model ?? 'unnamed deployments';
+  const errors = (model: { errors: string[] }): string =>
+    model.errors.length === 0
+      ? 'The proxy reported no error text — it is configured to strip the detail.'
+      : model.errors[0] ?? '';
+
+  for (const model of view.summary.down) {
+    alerts.push(
+      alert(
+        'deployment-down',
+        `model:${name(model.model)}`,
+        `${name(model.model)} · deployment`,
+        'Every deployment behind it is failing',
+        `${model.deployments} of ${model.deployments} failing across ${
+          model.providers.length === 0 ? 'an unknown backend' : model.providers.join(', ')
+        }. ${errors(model)}`,
+      ),
+    );
+  }
+
+  for (const model of view.summary.degraded) {
+    alerts.push(
+      alert(
+        'deployment-degraded',
+        `model:${name(model.model)}`,
+        `${name(model.model)} · deployment`,
+        'Serving on fewer deployments than it has',
+        `${model.unhealthy} of ${model.deployments} failing; the alias still answers on the rest, so it bills normally and fails nothing. ${errors(model)}`,
+      ),
+    );
+  }
+
+  return alerts;
+}
+
+/**
  * Days the record is missing, split by whether anything can still be done.
  *
  * The split is the finding: a run newer than the retention floor is a Fill
@@ -504,6 +582,26 @@ function blindSpotsOf(inputs: AlertInputs): string[] {
     spots.push('No requests in this range, so nothing was read for reliability.');
   }
 
+  // Health is the one source whose *age* matters: it is a nightly snapshot of
+  // something that can change in minutes, so an old reading is unread rather
+  // than reassuring. A never-taken reading and a stale one are the same
+  // consequence — nobody knows which deployments are answering right now.
+  if (!inputs.health.answered) {
+    spots.push('Deployment health has not answered yet — no alias was checked for lost capacity.');
+  } else if (inputs.health.neverChecked) {
+    spots.push(
+      'No /health reading has ever been stored, so an alias failing over silently onto its last deployment cannot be seen.',
+    );
+  } else if (inputs.health.stale) {
+    spots.push(
+      `The deployment reading is over ${HEALTH_STALE_HOURS}h old — a deployment that has failed since is not on this list.`,
+    );
+  } else if (inputs.health.isEmpty) {
+    spots.push(
+      'The proxy reported no deployment at all, so nothing was checked for lost capacity.',
+    );
+  }
+
   return spots;
 }
 
@@ -526,6 +624,7 @@ export function buildGatewayAlerts(
     ...fromAnomalies(inputs.anomalies),
     ...fromReliability(inputs.reliability),
     ...fromCache(inputs.cache),
+    ...fromHealth(inputs.health),
     ...fromCoverage(inputs.coverage),
   ];
 

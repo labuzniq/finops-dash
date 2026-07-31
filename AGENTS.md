@@ -250,7 +250,19 @@ something* — without `background_health_checks` it issues a live test call to
 every deployment while answering, which is why a backfill skips it, why its
 timeout is three minutes, why a failure there is swallowed rather than failing
 the sync, and why the connection check probes the free `/health/readiness`
-instead. `gateway_budget` is the other. It is a snapshot of the proxy's
+instead. `lib/metrics/gatewayHealth.ts` and `GatewayHealthCard` are what render
+it, and the module adds no rule about the gateway at all — the up/degraded/down
+statement is the shared one — only three about the *reading*: how old it is,
+whether one has ever been taken, and whether it is older than a working nightly
+sync would leave it (`HEALTH_STALE_HOURS`, 36). The card therefore leads with
+the reading's age and carries no refresh button, since pressing `/health` bills
+a token per deployment; a stale reading still reports every finding it holds
+(the data is old, not absent) and adds a *blind spot* to the digest, while a
+reading that has never been taken stands the card down entirely rather than
+rendering an empty alias list a healthy gateway would produce too. On the digest
+`down` is `critical` (calls are being rejected now; the usage payload shows it
+as failures tomorrow) and `degraded` is a `warning` no other card can raise.
+`gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
 by the same sync and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means
@@ -289,9 +301,9 @@ window is clamped forward to `recordingSince` rather than padded with empty days
 standing spend produces a crossing with no spend at all, which is why a crossing is measured against the
 previous reading's own cap and sits on the same day as the cap change explaining it.
 `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of derivations* and the reason the other
-fourteen cards are findable: it reads the already-derived summaries — budgets, budget history,
-anomalies, reliability, cache, coverage — and lists their findings at the top with a button that scrolls
-to the card that made each one. It **adds no threshold of its own**; it can only repeat a state a source
+fifteen cards are findable: it reads the already-derived summaries — budgets, budget history,
+anomalies, reliability, cache, coverage, deployment health — and lists their findings at the top with a
+button that scrolls to the card that made each one. It **adds no threshold of its own**; it can only repeat a state a source
 already flagged, with that source's own numbers, because a digest able to disagree with the card it
 points at gives the reader two answers and no way to choose. Severity is editorial (`critical` is calls
 being rejected or money already past a line, `warning` is a decision somebody owes, `info` is a standing

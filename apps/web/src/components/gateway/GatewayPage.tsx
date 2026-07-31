@@ -17,6 +17,7 @@ import { breakdownDailySeries, deriveGateway } from '../../lib/metrics/gateway.j
 import { deriveAdoption, hasAdoption } from '../../lib/metrics/gatewayAdoption.js';
 import { deriveAgentTraffic, hasAgentTraffic } from '../../lib/metrics/gatewayAgents.js';
 import { buildGatewayAlerts } from '../../lib/metrics/gatewayAlerts.js';
+import { deriveGatewayHealth } from '../../lib/metrics/gatewayHealth.js';
 import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewayAnomaly.js';
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
@@ -49,6 +50,7 @@ import {
   useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayCoverage,
+  useGatewayHealth,
   useGatewayModels,
   useGatewaySealHistory,
   useGatewaySeals,
@@ -69,6 +71,7 @@ import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
 import { GatewayCatalogCard } from './GatewayCatalogCard.js';
+import { GatewayHealthCard } from './GatewayHealthCard.js';
 import { GatewayChargebackCard } from './GatewayChargebackCard.js';
 import { GatewayCoverageNote } from './GatewayCoverageNote.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
@@ -503,6 +506,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.breakdowns.model, catalogQuery.data, summary.totals],
   );
 
+  // Deployment health — a snapshot like the catalogue and the budget list, and
+  // the only reading keyed *below* the model alias. It is deliberately not
+  // scoped to the range picker: `/health` describes the router as it is now (or
+  // rather, as it was when the sync last asked), and the card carries the
+  // reading's own age instead of pretending otherwise.
+  const healthQuery = useGatewayHealth(configured);
+  const health = useMemo(
+    () => deriveGatewayHealth(healthQuery.data ?? null, new Date()),
+    [healthQuery.data],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -535,8 +549,18 @@ export function GatewayPage({ sync }: GatewayPageProps) {
         reliability,
         cache,
         coverage,
+        health,
       }),
-    [budgets, budgetsQuery.isPending, budgetHistory, anomalies, reliability, cache, coverage],
+    [
+      budgets,
+      budgetsQuery.isPending,
+      budgetHistory,
+      anomalies,
+      reliability,
+      cache,
+      coverage,
+      health,
+    ],
   );
 
   const selectedDaily = useMemo(
@@ -810,6 +834,18 @@ export function GatewayPage({ sync }: GatewayPageProps) {
 
           <div id="gateway-reliability">
             <GatewayReliabilityCard summary={reliability} />
+          </div>
+
+          {/*
+            Under reliability on purpose: that card counts calls that failed,
+            and this one is the capacity behind them — a degraded alias fails
+            nothing at all, which is exactly why it needs its own card. It
+            stands itself down when no reading has ever been stored — a proxy
+            that never answered /health is a blind spot on the digest above
+            rather than an empty table here.
+          */}
+          <div id="gateway-health">
+            {health.answered && !health.isEmpty && <GatewayHealthCard view={health} />}
           </div>
 
           <div id="gateway-cache">

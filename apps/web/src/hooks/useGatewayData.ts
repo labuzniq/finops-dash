@@ -4,6 +4,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayHealth,
   GatewayModels,
   GatewayNotifications,
   GatewayProbe,
@@ -15,6 +16,7 @@ import {
   fetchGatewayBudgetHistory,
   fetchGatewayBudgets,
   fetchGatewayCoverage,
+  fetchGatewayHealth,
   fetchGatewayModels,
   fetchGatewayNotifications,
   fetchGatewayProbe,
@@ -150,6 +152,23 @@ export function useGatewayModels(enabled: boolean) {
   return useQuery<GatewayModels>({
     queryKey: ['gateway', 'models'],
     queryFn: fetchGatewayModels,
+    enabled,
+  });
+}
+
+/**
+ * Per-deployment health, cached exactly like the price list: no date range, no
+ * history, replaced wholesale by every full sync.
+ *
+ * The stored reading rather than a live call — `/health` bills a test call per
+ * deployment on the proxy, so pressing a refresh here would cost money. It is
+ * therefore invalidated by a sync like every other snapshot, and the card
+ * renders the reading's own age instead of pretending to be live.
+ */
+export function useGatewayHealth(enabled: boolean) {
+  return useQuery<GatewayHealth>({
+    queryKey: ['gateway', 'health'],
+    queryFn: fetchGatewayHealth,
     enabled,
   });
 }
