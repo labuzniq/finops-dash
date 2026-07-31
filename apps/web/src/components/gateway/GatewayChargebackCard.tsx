@@ -1,4 +1,5 @@
-import { GATEWAY_DIMENSION_LABELS } from '@dash/shared';
+import { GATEWAY_DIMENSION_LABELS, sealDrift } from '@dash/shared';
+import type { GatewaySeal } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { compactCount, EMPTY, percent, usd } from '../../lib/format.js';
 import { downloadChargebackCsv } from '../../lib/exportCsv.js';
@@ -44,6 +45,13 @@ interface GatewayChargebackCardProps {
   onDimension: (dimension: ChargebackDimension) => void;
   /** The dimensions the proxy actually answered for this window. */
   available: readonly ChargebackDimension[];
+  /**
+   * The seal for this month, when it has one — the totals as they were recorded
+   * at month close. Null for a month still running, and for a closed month the
+   * sync has not sealed (a hole in it, or a gateway that has only just started
+   * storing days).
+   */
+  seal: GatewaySeal | null;
   loading: boolean;
 }
 
@@ -53,6 +61,7 @@ export function GatewayChargebackCard({
   onMonth,
   onDimension,
   available,
+  seal,
   loading,
 }: GatewayChargebackCardProps) {
   const dimensionLabel = GATEWAY_DIMENSION_LABELS[statement.dimension];
@@ -70,16 +79,33 @@ export function GatewayChargebackCard({
     statement.priorPartial && statement.through !== null
       ? `first ${Number(statement.through.slice(8, 10))} days of ${shortMonthLabel(statement.priorMonth)}`
       : shortMonthLabel(statement.priorMonth);
+  // The seal is compared against the derivation on screen rather than shown in
+  // its place: one statement, plus the evidence that it is still the one that
+  // was issued. A month whose daily rows have been revised since is the only
+  // case worth interrupting the reader for.
+  const drift = seal === null ? null : sealDrift(seal, statement.total);
 
   return (
     <Card padded={false} className={styles.card}>
       <div className={styles.header}>
         <div>
-          <div className={styles.title}>Chargeback statement</div>
+          <div className={styles.title}>
+            Chargeback statement
+            {seal !== null && (
+              <span
+                className={cx(styles.seal, drift?.matches === false && styles.sealDrift)}
+                title={`Sealed ${new Date(seal.sealedAt).toLocaleString()} · ${seal.days} days · ${seal.sealedBy}`}
+              >
+                {drift?.matches === false ? 'Sealed — revised since' : 'Sealed'}
+              </span>
+            )}
+          </div>
           <div className={styles.sub}>
             {monthLabel(statement.month)} ·{' '}
             {statement.complete
-              ? 'complete month'
+              ? seal === null
+                ? 'complete month — not sealed'
+                : `final — sealed ${seal.sealedAt.slice(0, 10)}`
               : `in progress — reported through ${statement.through ?? 'no day yet'}`}{' '}
             · billed by {dimensionLabel.toLowerCase()}
           </div>
@@ -124,7 +150,7 @@ export function GatewayChargebackCard({
             type="button"
             className={styles.export}
             disabled={statement.total.spend === 0}
-            onClick={() => downloadChargebackCsv(statement)}
+            onClick={() => downloadChargebackCsv(statement, seal)}
           >
             Export CSV
           </button>
@@ -170,6 +196,16 @@ export function GatewayChargebackCard({
           </div>
         </div>
       </div>
+
+      {drift?.matches === false && seal !== null && (
+        <div className={styles.alert}>
+          This month was sealed at {usd(seal.total.spend, 2)} on {seal.sealedAt.slice(0, 10)}; the
+          daily rows now report {usd(statement.total.spend, 2)} — a{' '}
+          {drift.spendDelta >= 0 ? 'rise' : 'fall'} of {usd(Math.abs(drift.spendDelta), 2)} since
+          the statement was issued. The figures below are the current ones; re-seal the month to
+          issue them.
+        </div>
+      )}
 
       {!statement.reconciles && (
         <div className={styles.alert}>

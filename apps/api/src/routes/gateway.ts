@@ -2,6 +2,13 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../env.js';
 import {
+  GatewaySealError,
+  checkMonthSeal,
+  getGatewaySeal,
+  listGatewaySeals,
+  sealGatewayMonth,
+} from '../services/gateway-seal.js';
+import {
   getGatewayBudgets,
   getGatewayCoverage,
   getGatewayUsage,
@@ -9,6 +16,22 @@ import {
 } from '../services/gateway.js';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const monthParams = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) });
+
+/**
+ * A refusal to seal maps to the status that says what the caller should do:
+ * a month still running or one with holes in it is a request that is wrong
+ * *now* and right later (400), while an already-sealed month is a conflict
+ * with existing state (409) and is resolved by asking again with `force`.
+ */
+const SEAL_ERROR_STATUS = {
+  invalid_month: 400,
+  in_flight: 400,
+  incomplete: 400,
+  empty: 400,
+  sealed: 409,
+} as const;
 
 const rangeQuery = z.object({ from: isoDate, to: isoDate }).refine((q) => q.from <= q.to, {
   message: 'from must not be after to',
@@ -64,6 +87,73 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
    * wrong somewhere.
    */
   app.get('/api/gateway/probe', async () => probeGateway());
+
+  /**
+   * Every month that has been sealed, newest first — headers only.
+   *
+   * The chargeback card reads this to say whether the statement on screen is
+   * the one that was issued. It carries each month's sealed total, which is all
+   * the drift check needs; the lines are one route down and are only fetched
+   * when someone asks to see the issued statement itself.
+   */
+  app.get('/api/gateway/months', async () => ({ seals: await listGatewaySeals() }));
+
+  /**
+   * One sealed month with its per-payer lines — the statement as issued.
+   *
+   * `404` means the month was never sealed, which is a different answer from
+   * "the month had no spend": an unsealed month has no statement to quote, and
+   * the card falls back to deriving one from the daily rows. The body carries
+   * the `check` for an unsealed month, so a caller learns *why* — still
+   * running, or missing days it should backfill first.
+   */
+  app.get('/api/gateway/months/:month', async (request, reply) => {
+    const parsed = monthParams.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid month', issues: parsed.error.issues });
+    }
+    const sealed = await getGatewaySeal(parsed.data.month);
+    if (sealed === null) {
+      return reply
+        .code(404)
+        .send({ error: `${parsed.data.month} has not been sealed`, check: await checkMonthSeal(parsed.data.month) });
+    }
+    return sealed;
+  });
+
+  /**
+   * Seal a closed month by hand.
+   *
+   * The nightly sync seals a month the first time it is complete, so this
+   * exists for the two cases it cannot cover: a month completed by a backfill
+   * (which deliberately does not seal — see `gateway-sync.ts`), and a
+   * deliberate re-seal after the daily rows were revised, which needs
+   * `?force=true` because it replaces the statement that was already issued.
+   */
+  app.post('/api/gateway/months/:month/seal', async (request, reply) => {
+    const parsed = monthParams.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid month', issues: parsed.error.issues });
+    }
+    const force = z
+      .object({ force: z.enum(['true', 'false']).optional() })
+      .safeParse(request.query);
+    try {
+      return await sealGatewayMonth(parsed.data.month, {
+        force: force.success && force.data.force === 'true',
+        sealedBy: 'manual',
+      });
+    } catch (error) {
+      if (error instanceof GatewaySealError) {
+        return reply.code(SEAL_ERROR_STATUS[error.code]).send({
+          error: error.message,
+          code: error.code,
+          check: error.code === 'invalid_month' ? null : await checkMonthSeal(parsed.data.month),
+        });
+      }
+      throw error;
+    }
+  });
 
   /** Whether the gateway integration is configured, and with which source. */
   app.get('/api/gateway/status', async () => ({

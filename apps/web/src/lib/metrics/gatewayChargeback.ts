@@ -1,5 +1,15 @@
-import { EMPTY_GATEWAY_METRICS, costPerMillionTokens, sumGatewayMetrics } from '@dash/shared';
-import type { GatewayBreakdownPoint, GatewayDailyPoint, GatewayMetrics } from '@dash/shared';
+import {
+  EMPTY_GATEWAY_METRICS,
+  GATEWAY_PAYER_DIMENSIONS,
+  costPerMillionTokens,
+  sumGatewayMetrics,
+} from '@dash/shared';
+import type {
+  GatewayBreakdownPoint,
+  GatewayDailyPoint,
+  GatewayMetrics,
+  GatewayPayerDimension,
+} from '@dash/shared';
 import { shiftIso } from './gateway.js';
 
 /**
@@ -41,10 +51,13 @@ import { shiftIso } from './gateway.js';
  * The dimensions a bill can be issued against.
  *
  * A subset of `GATEWAY_DIMENSIONS` on purpose: this list is "who pays", not
- * "how can the spend be sliced".
+ * "how can the spend be sliced". Re-exported from `@dash/shared` rather than
+ * restated, because the month seal stores exactly these dimensions' lines — the
+ * two lists drifting apart would leave a sealed statement unable to reproduce
+ * the derived one.
  */
-export const CHARGEBACK_DIMENSIONS = ['team', 'tag', 'api_key', 'user'] as const;
-export type ChargebackDimension = (typeof CHARGEBACK_DIMENSIONS)[number];
+export const CHARGEBACK_DIMENSIONS = GATEWAY_PAYER_DIMENSIONS;
+export type ChargebackDimension = GatewayPayerDimension;
 
 /** Months are picked as `YYYY-MM`; every bound below is derived from that. */
 export type MonthKey = string;

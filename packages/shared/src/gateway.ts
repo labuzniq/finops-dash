@@ -538,6 +538,19 @@ export interface GatewayCoverage {
   floor: string;
 }
 
+/**
+ * The dimensions a bill can be issued against — "who pays", not "how can the
+ * spend be sliced".
+ *
+ * `model` and `provider` are the supply side (a statement charging AWS Bedrock
+ * bills nobody) and `mcp_server` is a strict subset of the traffic rather than
+ * a slice of it. Shared rather than web-only because the month seal stores
+ * exactly these four dimensions' lines, so the API and the card have to agree
+ * on the list.
+ */
+export const GATEWAY_PAYER_DIMENSIONS = ['team', 'tag', 'api_key', 'user'] as const;
+export type GatewayPayerDimension = (typeof GATEWAY_PAYER_DIMENSIONS)[number];
+
 /** How many gap runs are enumerated before the list becomes a sample. */
 const MAX_COVERAGE_GAPS = 12;
 
@@ -626,4 +639,190 @@ export function summarizeGatewayCoverage(
     daysBeyondRetention,
     floor: firstDay,
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * Month seals — a closed month held still.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A sealed month: what the gateway cost over one calendar month, recorded once
+ * the month can no longer change, and never recomputed.
+ *
+ * Every other gateway number on this dashboard is derived on the fly from
+ * `gateway_daily`, which is exactly right for analysis and wrong for a bill.
+ * A statement leaves the dashboard — it is exported, argued with, and quoted
+ * back months later — and the rows behind it are ordinary daily rows that any
+ * sync may rewrite: LiteLLM revises late-landing usage, a backfill re-fetches
+ * a repaired day, and a schema change to the daily tables moves the ground the
+ * statement stood on. A seal is the fixed thing to quote: the month's totals
+ * and its per-payer lines, taken once, with the instant it was taken.
+ *
+ * It is deliberately *not* a second source of truth for analysis. Nothing on
+ * the page reads a seal instead of the daily rows; the seal's job is to be
+ * compared against them, so that "June's bill has moved since we issued it" is
+ * a question with an answer.
+ */
+export interface GatewaySeal {
+  /** `YYYY-MM`. */
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  /** Days of the month that carried a row when it was sealed — the month's length. */
+  days: number;
+  /** When the seal was taken. */
+  sealedAt: string;
+  /** `scheduler` for the automatic seal at month close, `manual` for the route. */
+  sealedBy: GatewaySealOrigin;
+  /** The month's gateway-wide totals, as sealed. */
+  total: GatewayMetrics;
+}
+
+export const GATEWAY_SEAL_ORIGINS = ['scheduler', 'manual'] as const;
+export type GatewaySealOrigin = (typeof GATEWAY_SEAL_ORIGINS)[number];
+
+/** One payer's line on a sealed month. */
+export interface GatewaySealLine extends GatewayMetrics {
+  dimension: GatewayPayerDimension;
+  key: string;
+  label: string | null;
+}
+
+/** A seal with the lines it recorded — what `GET /api/gateway/months/:month` returns. */
+export interface GatewaySealedMonth extends GatewaySeal {
+  lines: GatewaySealLine[];
+}
+
+/** What `GET /api/gateway/months` returns: headers only, newest month first. */
+export interface GatewaySeals {
+  seals: GatewaySeal[];
+}
+
+/** How many missing days a refusal enumerates before the list becomes a sample. */
+const MAX_SEAL_MISSING_DAYS = 12;
+
+/** Why a month cannot be sealed yet, or `null` when it can. */
+export type GatewaySealBlocker = 'in_flight' | 'incomplete' | 'empty';
+
+/** Whether one month is ready to be held still, and what is in the way if not. */
+export interface GatewaySealCheck {
+  month: string;
+  monthStart: string;
+  monthEnd: string;
+  sealable: boolean;
+  blocker: GatewaySealBlocker | null;
+  /** Human sentence naming the blocker; null when sealable. */
+  reason: string | null;
+  /** Days of the month carrying a row. */
+  storedDays: number;
+  /** Calendar length of the month. */
+  expectedDays: number;
+  /** The days that are missing, up to a sample; `expectedDays − storedDays` is the count. */
+  missingDays: string[];
+}
+
+/** Last calendar day of `YYYY-MM`, UTC — day 0 of the next month. */
+function monthEndOf(month: string): string {
+  const year = Number(month.slice(0, 4));
+  const index = Number(month.slice(5, 7));
+  return new Date(Date.UTC(year, index, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * Whether `month` may be sealed, given the days the table actually holds.
+ *
+ * Two conditions, and both are about the month being *finished* rather than
+ * about it being old:
+ *
+ * - **The month has ended.** A month in flight is a preview; sealing one would
+ *   record a partial bill as final. `todayIso` decides this, not the stored
+ *   rows — a gateway that stopped syncing mid-month must not have that month
+ *   sealed short the moment the calendar rolls over.
+ * - **Every day of it is stored.** The seal is a sum, and a sum over 29 of 30
+ *   days is not the month's cost. A hole inside the month is exactly what
+ *   `GET /api/gateway/coverage` reports and `POST /api/refresh/gateway` fills,
+ *   so the refusal names the days rather than the count — the fix is a
+ *   backfill, and the caller needs the range to ask for.
+ *
+ * Pure, and `todayIso` is passed rather than read from the clock for the same
+ * reason `summarizeGatewayCoverage` takes it: the answer moves at midnight and
+ * a function reading `Date.now()` cannot be asserted against a fixture.
+ */
+export function resolveMonthSeal(
+  month: string,
+  storedDays: readonly string[],
+  todayIso: string,
+): GatewaySealCheck {
+  const monthStart = `${month}-01`;
+  const monthEnd = monthEndOf(month);
+  const expectedDays = daysBetween(monthStart, monthEnd) + 1;
+
+  const stored = new Set(storedDays.filter((day) => day >= monthStart && day <= monthEnd));
+  const missing: string[] = [];
+  for (let day = monthStart; day <= monthEnd; day = shiftDay(day, 1)) {
+    if (!stored.has(day)) missing.push(day);
+  }
+
+  const base = {
+    month,
+    monthStart,
+    monthEnd,
+    storedDays: stored.size,
+    expectedDays,
+    missingDays: missing.slice(0, MAX_SEAL_MISSING_DAYS),
+  };
+
+  // Strictly before today: the sync ends at yesterday UTC, so on the 1st the
+  // month that just closed is still one day short and lands on `incomplete`
+  // below — which is the honest blocker, since a backfill fixes it.
+  if (monthEnd >= todayIso) {
+    return {
+      ...base,
+      sealable: false,
+      blocker: 'in_flight',
+      reason: `${month} has not ended yet — it can be sealed from ${shiftDay(monthEnd, 1)}`,
+    };
+  }
+  if (stored.size === 0) {
+    return {
+      ...base,
+      sealable: false,
+      blocker: 'empty',
+      reason: `no day of ${month} is stored, so there is nothing to seal`,
+    };
+  }
+  if (missing.length > 0) {
+    const sample = missing.slice(0, 3).join(', ');
+    return {
+      ...base,
+      sealable: false,
+      blocker: 'incomplete',
+      reason: `${missing.length} day${missing.length === 1 ? '' : 's'} of ${month} ${
+        missing.length === 1 ? 'is' : 'are'
+      } missing (${sample}${missing.length > 3 ? ', …' : ''}) — backfill them first`,
+    };
+  }
+
+  return { ...base, sealable: true, blocker: null, reason: null };
+}
+
+/**
+ * How a sealed month compares with what the daily rows say *now*.
+ *
+ * The seal exists to be checked against, not to replace the derivation: if a
+ * later sync revised the month, the two disagree and the statement on screen is
+ * no longer the statement that was issued. Dollars only — a revision that moved
+ * no money is not worth an alarm, and the counters move for benign reasons
+ * (a re-fetched day's request count settling) far more often than spend does.
+ */
+export interface GatewaySealDrift {
+  /** `live − sealed`, in dollars. */
+  spendDelta: number;
+  /** True when the two agree to the cent. */
+  matches: boolean;
+}
+
+export function sealDrift(seal: Readonly<GatewaySeal>, live: Readonly<GatewayMetrics>): GatewaySealDrift {
+  const spendDelta = live.spend - seal.total.spend;
+  return { spendDelta, matches: Math.abs(spendDelta) < 0.005 };
 }

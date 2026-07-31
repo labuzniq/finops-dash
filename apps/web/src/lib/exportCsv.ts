@@ -1,5 +1,5 @@
-import { GATEWAY_DIMENSION_LABELS } from '@dash/shared';
-import type { CopilotSeat } from '@dash/shared';
+import { GATEWAY_DIMENSION_LABELS, sealDrift } from '@dash/shared';
+import type { CopilotSeat, GatewaySeal } from '@dash/shared';
 import type { ChargebackStatement } from './metrics/gatewayChargeback.js';
 import { monthLabel } from './metrics/gatewayChargeback.js';
 
@@ -89,8 +89,27 @@ const CHARGEBACK_HEADERS = [
   'change_vs_prior_month',
 ] as const;
 
-export function buildChargebackCsv(statement: ChargebackStatement): string {
+export function buildChargebackCsv(
+  statement: ChargebackStatement,
+  seal: GatewaySeal | null = null,
+): string {
   const dimensionLabel = GATEWAY_DIMENSION_LABELS[statement.dimension];
+  // A recipient arguing with this file months later needs to know whether the
+  // month was held still when it was cut, and whether the daily rows have moved
+  // since. Both are one line each here and neither is derivable from the table.
+  const drift = seal === null ? null : sealDrift(seal, statement.total);
+  const sealLines: string[][] =
+    seal === null
+      ? [['# seal_status', 'not sealed — derived from daily rows that a later sync may revise']]
+      : [
+          ['# seal_status', drift?.matches === true ? 'sealed' : 'sealed — daily rows have since changed'],
+          ['# sealed_at', seal.sealedAt],
+          ['# sealed_by', seal.sealedBy],
+          ['# sealed_gateway_spend_usd', seal.total.spend.toFixed(2)],
+          ...(drift?.matches === true
+            ? []
+            : [['# drift_vs_seal_usd', (drift?.spendDelta ?? 0).toFixed(2)]]),
+        ];
   const preamble = [
     ['# LLM gateway chargeback statement'],
     ['# period', monthLabel(statement.month)],
@@ -101,6 +120,7 @@ export function buildChargebackCsv(statement: ChargebackStatement): string {
         ? 'complete'
         : `in progress — reported through ${statement.through ?? 'no reported day'}`,
     ],
+    ...sealLines,
     ['# billed_by', dimensionLabel],
     ['# gateway_spend_usd', statement.total.spend.toFixed(2)],
     ['# allocated_usd', statement.allocated.spend.toFixed(2)],
@@ -155,9 +175,12 @@ export function buildChargebackCsv(statement: ChargebackStatement): string {
   return [...preamble, CHARGEBACK_HEADERS.join(','), ...rows, remainder].join('\n');
 }
 
-export function downloadChargebackCsv(statement: ChargebackStatement): void {
+export function downloadChargebackCsv(
+  statement: ChargebackStatement,
+  seal: GatewaySeal | null = null,
+): void {
   download(
-    buildChargebackCsv(statement),
+    buildChargebackCsv(statement, seal),
     `llm-gateway-chargeback-${statement.month}-by-${statement.dimension}.csv`,
   );
 }

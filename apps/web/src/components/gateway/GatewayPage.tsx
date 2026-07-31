@@ -43,6 +43,7 @@ import {
   useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayCoverage,
+  useGatewaySeals,
   useGatewayData,
   useGatewayForecastData,
   useGatewayStatus,
@@ -211,6 +212,10 @@ export function GatewayPage({ sync }: GatewayPageProps) {
   // clamped, so it runs alongside the usage fetch rather than after it.
   const coverageQuery = useGatewayCoverage(statusQuery.data?.configured ?? false);
   const coverage = coverageQuery.data ?? null;
+  // Which months have been held still. Cheap (one row per closed month) and
+  // read only by the statement, but fetched here with the other bounds queries
+  // because it answers a question about the table rather than about a range.
+  const sealsQuery = useGatewaySeals(statusQuery.data?.configured ?? false);
 
   const { from, to } = spendRangeBounds(range);
   const summary = useMemo(() => deriveGateway(usageQuery.data, from, to), [usageQuery.data, from, to]);
@@ -372,6 +377,12 @@ export function GatewayPage({ sync }: GatewayPageProps) {
       ),
     [billQuery.data, billRange, activeBillDimension],
   );
+
+  // The seal for the month on screen, if it has one. Resolved by month key
+  // rather than held in state, so switching months picks up the right seal —
+  // or none, for a month still in flight.
+  const activeSeal =
+    (sealsQuery.data?.seals ?? []).find((seal) => seal.month === activeMonth) ?? null;
 
   const latestJob = latestJobQuery.data ?? null;
   const hasData = totals.requests > 0 || totals.spend > 0;
@@ -668,6 +679,7 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             onMonth={setBillMonth}
             onDimension={setBillDimension}
             available={billDimensions}
+            seal={activeSeal}
             loading={billQuery.isPending}
           />
 

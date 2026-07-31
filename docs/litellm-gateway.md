@@ -168,6 +168,24 @@ routes are: an analytics-only credential is a perfectly reasonable thing to
 point this integration at, it will be refused key management, and `fetchBudgets`
 answering `[]` is a supported outcome rather than a failed sync.
 
+After a **full** sync (never a backfill) the job takes a **month seal**: any
+calendar month that has now ended with every one of its days stored, and that
+carries no seal yet, is recorded in `gateway_month` and `gateway_month_line`.
+That is the moment the answer changes — the run that stores a month's last day
+is the run that makes it sealable — and it rides along for the same reason
+governance does, one fewer schedule to reason about. Three rules:
+
+- **Never implicitly re-sealed.** A month that already carries a seal is skipped
+  even when the daily rows have since moved, because that divergence is the
+  whole point of having a seal. Re-issuing is
+  `POST /api/gateway/months/:month/seal?force=true`, by hand.
+- **A backfill does not seal.** It repairs days inside a month that may already
+  be sealed; taking the first seal of a month the moment its gap is filled would
+  mean a repair silently issues a statement. That decision belongs to whoever
+  ran the repair.
+- **Never fails the sync.** The usage has already landed by then, and a
+  bookkeeping step that could not run today runs tomorrow.
+
 Only `/user/daily/activity` contributes the gateway-wide totals. `/team/…` and
 `/tag/…` report the same spend re-sliced; adding their `metrics` in would
 triple-count every dollar, so they are pulled purely for their `entities`
@@ -209,6 +227,11 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   `gateway_daily` would silently disagree with the number the proxy actually
   enforces, and the enforced one is what an owner needs. `blocked` is likewise
   carried, not inferred: an admin can disable a key nowhere near its cap.
+- **A sealed month is a record, not a cache.** `gateway_month` is written once,
+  at close, and is never refreshed to agree with `gateway_daily` again. Every
+  read on the page still derives from the daily rows; the seal exists to be
+  compared against them, so a re-seal is always explicit and always replaces a
+  statement that was issued.
 - **Nothing outside `apps/api/src/gateway/` knows which source is active** —
   the same rule `copilot/` follows.
 
@@ -331,6 +354,9 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
 | `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and period spend per key and team, keys first, each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
 | `GET` | `/api/gateway/coverage` | Which days `gateway_daily` actually holds: first and last stored day, how many are stored, which are missing and in what runs, how many predate the proxy's retention window, and the `floor` every picker on the page clamps to. No parameters — it is the answer to *what may I ask for*. |
+| `GET` | `/api/gateway/months` | `{ seals }` — every calendar month that has been sealed, newest first, with the totals as recorded. Headers only; no parameters. |
+| `GET` | `/api/gateway/months/:month` | One sealed month with its per-payer lines — the statement as issued. `404` when the month was never sealed, carrying the `check` that says why (still running, or missing days to backfill). |
+| `POST` | `/api/gateway/months/:month/seal` | Seal a closed month by hand. `400` for a month still in flight or with holes in it, `409` for one already sealed — `?force=true` re-seals and replaces the statement that was issued. |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -428,9 +454,10 @@ What it shows, and why each one is there:
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
+| Seal badge on the statement | Whether the month on screen is *final* — recorded at close and quotable — and, when the daily rows have moved since, by how much. Nothing renders for a month still in flight |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Fifteen decisions worth keeping:
+Sixteen decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -784,6 +811,47 @@ Fifteen decisions worth keeping:
   archive. And `storedDays + missingDays == spanDays` is asserted, because
   without it "eleven days missing" is a number nobody can act on.
 
+- **A closed month is sealed, and the seal is never read in place of the daily
+  rows.** Every number on this page is derived on the fly from `gateway_daily`,
+  which is right for an analysis and wrong for a bill. A statement leaves the
+  dashboard and is argued with months later, and the rows behind it are ordinary
+  daily rows that any sync may rewrite: LiteLLM revises late-landing usage, a
+  backfill re-fetches a repaired day, and the aggregate the bill was cut from
+  can move under it. `gateway_month` and `gateway_month_line` record the month's
+  totals and its per-payer lines once, at close, with the instant it was taken.
+
+  Two conditions, and both are about the month being *finished* rather than
+  old: it has ended (a month in flight is a preview, and sealing one records a
+  partial bill as final), and every one of its days is stored (a sum over 29 of
+  30 days is not the month's cost). The second refusal names the missing days
+  rather than counting them, because the fix is a backfill and the caller needs
+  a range to ask for — and `force` re-issues a statement but does **not** waive
+  it, or a re-seal during an outage would quietly book a short month.
+
+  The seal is deliberately not a second source of truth. The chargeback card
+  still derives what it shows from the daily rows; the seal is what it is
+  *compared against*, which is the only way "June's bill has moved since we
+  issued it" becomes a question with an answer. That is also why the sync never
+  re-seals implicitly: a month that quietly re-agreed with the daily rows has
+  destroyed the evidence that it was revised. Only the payer dimensions are
+  recorded (`team`, `tag`, `api_key`, `user`) — `model` and `provider` bill
+  nobody and `mcp_server` is a subset — and they are stored side by side and
+  never summed, the same overlap rule the daily breakdowns carry.
+
+`apps/api/scripts/verify-gateway-seal.ts` covers both halves. The pure half is
+`resolveMonthSeal`: a complete month, a month in flight on its own last day and
+on the day after, the sync's one-day lag reading as `incomplete` rather than as
+`in_flight`, holes named and counted, the sample cap that never loses the count,
+both Februaries and a December sealed in January. The Postgres half seals the
+newest complete stored month and requires the header to reproduce the daily
+rows, every payer dimension's sealed lines to reproduce what `deriveChargeback`
+derives from the same payload key by key, a re-seal without `force` to be
+refused `409`, and then — the actual claim — deletes a day and requires the seal
+to *stay put* while the derivation moves, with `sealClosedMonths` declining to
+repair it. It restores the day through a ranged sync and re-seals before it
+finishes. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-seal.ts`.
+
 `apps/api/scripts/verify-gateway-drilldown.ts` checks the derivations against a
 freshly generated mock payload — series align to the spine, sum back to the
 ranked row they were opened from, and never exceed the gateway-wide day they
@@ -1119,15 +1187,12 @@ missing on this side of the gateway:
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,
   and it needs a different authorisation story than a dashboard cookie.
-- **Sealing a month at close.** `GET /api/gateway/coverage` lifted the 90-day
-  clamp — the statement now bills any month whose first day is stored, so a
-  dashboard that has been syncing since February can issue February's bill —
-  but the days it bills are still ordinary `gateway_daily` rows that no sync
-  will ever touch again. Nothing marks a month as *final*, and nothing records
-  which sync last wrote it. A `gateway_month` snapshot taken at close would give
-  a statement a fixed thing to quote and would survive a schema change to the
-  daily tables. Worth doing the first time a statement has to be reproduced
-  months later and match to the cent.
+- **Re-opening a sealed month.** A seal can be replaced
+  (`?force=true`) but not withdrawn, and nothing keeps the statement it
+  replaced. A history table would make "what did we bill in July, and what did
+  we bill after the correction" answerable; today only the current seal and the
+  live rows exist, which is enough to *notice* a revision and not enough to
+  audit one.
 - **Backfilling beyond the window.** A gap inside the proxy's 90 days is now a
   **Fill** button on the coverage note (`POST /api/refresh/gateway?from=&to=`).
   A gap older than the retention floor still has no answer and structurally

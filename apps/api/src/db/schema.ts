@@ -361,6 +361,72 @@ export const gatewayBudget = pgTable(
   (table) => [primaryKey({ columns: [table.scope, table.key] })],
 );
 
+/**
+ * A closed calendar month, held still — one row per sealed month.
+ *
+ * `gateway_daily` is a live table: a sync rewrites every day it re-fetches, a
+ * backfill repairs a gap, and LiteLLM revises late-landing usage. That is what
+ * an analysis wants and the opposite of what a bill wants. This row records the
+ * month's totals at the instant it was sealed, so a statement issued in July
+ * can still be reproduced in December and match to the cent — and so the two
+ * can be *compared*, which is how "June's bill has moved" becomes answerable.
+ *
+ * Written once per month by the sync, and only for a month that has ended with
+ * every one of its days stored (`resolveMonthSeal` in @dash/shared). Re-sealing
+ * is a deliberate, explicit act, never a side effect of another sync.
+ */
+export const gatewayMonth = pgTable('gateway_month', {
+  /** `YYYY-MM`. */
+  month: varchar('month', { length: 7 }).primaryKey(),
+  monthStart: date('month_start').notNull(),
+  monthEnd: date('month_end').notNull(),
+  /** Days sealed — the month's calendar length, since a short month cannot be sealed. */
+  days: integer('days').notNull(),
+  sealedAt: timestamp('sealed_at', { withTimezone: true }).notNull().defaultNow(),
+  /** See GATEWAY_SEAL_ORIGINS in @dash/shared — `scheduler` or `manual`. */
+  sealedBy: varchar('sealed_by', { length: 20 }).notNull(),
+  /** USD × 1e9. */
+  spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+  requests: bigint('requests', { mode: 'number' }).notNull(),
+  successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
+  failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
+  promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+  completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+  totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+  cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+  cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+});
+
+/**
+ * One payer's line on a sealed month — the statement itself, not a re-slice of
+ * the daily breakdowns.
+ *
+ * Only the payer-shaped dimensions are recorded (`team`, `tag`, `api_key`,
+ * `user` — GATEWAY_PAYER_DIMENSIONS in @dash/shared): a seal exists to make a
+ * *bill* reproducible, and `model`/`provider` charge nobody while `mcp_server`
+ * is a subset rather than a slice. The four are stored side by side and are
+ * never summed together — the same overlap rule the daily breakdowns carry.
+ */
+export const gatewayMonthLine = pgTable(
+  'gateway_month_line',
+  {
+    month: varchar('month', { length: 7 }).notNull(),
+    dimension: varchar('dimension', { length: 20 }).notNull(),
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    requests: bigint('requests', { mode: 'number' }).notNull(),
+    successfulRequests: bigint('successful_requests', { mode: 'number' }).notNull(),
+    failedRequests: bigint('failed_requests', { mode: 'number' }).notNull(),
+    promptTokens: bigint('prompt_tokens', { mode: 'number' }).notNull(),
+    completionTokens: bigint('completion_tokens', { mode: 'number' }).notNull(),
+    totalTokens: bigint('total_tokens', { mode: 'number' }).notNull(),
+    cacheReadTokens: bigint('cache_read_tokens', { mode: 'number' }).notNull(),
+    cacheCreationTokens: bigint('cache_creation_tokens', { mode: 'number' }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.month, table.dimension, table.key] })],
+);
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -500,6 +566,10 @@ export type GatewayBreakdownRow = typeof gatewayBreakdownDaily.$inferSelect;
 export type GatewayBreakdownInsert = typeof gatewayBreakdownDaily.$inferInsert;
 export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
 export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
+export type GatewayMonthRow = typeof gatewayMonth.$inferSelect;
+export type GatewayMonthInsert = typeof gatewayMonth.$inferInsert;
+export type GatewayMonthLineRow = typeof gatewayMonthLine.$inferSelect;
+export type GatewayMonthLineInsert = typeof gatewayMonthLine.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
 export type ImportLogRow = typeof importLogs.$inferSelect;
 export type ImportLogInsert = typeof importLogs.$inferInsert;

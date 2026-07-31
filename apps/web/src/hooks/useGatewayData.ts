@@ -4,12 +4,14 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
+  GatewaySeals,
   GatewayUsage,
 } from '@dash/shared';
 import {
   fetchGatewayBudgets,
   fetchGatewayCoverage,
   fetchGatewayProbe,
+  fetchGatewaySeals,
   fetchGatewayStatus,
   fetchGatewayUsage,
 } from '../api/client.js';
@@ -124,6 +126,22 @@ export function useGatewayCoverage(enabled: boolean) {
   return useQuery<GatewayCoverage>({
     queryKey: ['gateway', 'coverage'],
     queryFn: fetchGatewayCoverage,
+    enabled,
+  });
+}
+
+/**
+ * The months that have been sealed.
+ *
+ * A handful of rows with no bounds, cached like the coverage read and
+ * invalidated by the same sync prefix — a sync is the only thing that takes a
+ * seal. The chargeback card uses it twice: to label a statement as the one that
+ * was issued, and to notice when the daily rows have moved away from it.
+ */
+export function useGatewaySeals(enabled: boolean) {
+  return useQuery<GatewaySeals>({
+    queryKey: ['gateway', 'months'],
+    queryFn: fetchGatewaySeals,
     enabled,
   });
 }

@@ -150,6 +150,15 @@ straddling the floor is half-repairable, not hopeless) while an inverted window 
 retention are `400` — a sync that succeeds while filling nothing is the wrong answer to "fill this gap".
 A ranged sync writes only the days it fetched, `gateway_budget` included: governance is a snapshot of the
 whole proxy, so a repair of six days in May must not replace it, and only the nightly full sync does.
+`gateway_month`/`gateway_month_line` are the one gateway tables the page never *derives* from: a full sync
+takes a **month seal** of any closed month whose every day is stored (`resolveMonthSeal` in `@dash/shared`,
+`services/gateway-seal.ts`, `GET /api/gateway/months`), recording that month's totals and its per-payer
+lines once so a statement issued in July can still be quoted in December. It is never re-taken implicitly —
+a backfill deliberately does not seal, and a month that quietly re-agreed with the daily rows would have
+destroyed the only evidence that it was revised. The chargeback card still derives what it renders from
+`gateway_daily`; the seal is what it is *compared against* (`sealDrift`), which is how the badge reads
+`Sealed` or `Sealed — revised since` and the CSV preamble can state the drift. `force` re-issues a
+statement but does not waive completeness: sealing a month with a hole in it would book a short bill.
 Everything above is
 *usage*; `gateway_budget` is the one gateway table that is
 not. It is a snapshot of the proxy's

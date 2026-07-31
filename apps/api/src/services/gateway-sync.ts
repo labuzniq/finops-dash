@@ -10,6 +10,7 @@ import type {
 import { createGatewayClient } from '../gateway/index.js';
 import type { GatewayBudgetSnapshot, GatewaySnapshot } from '../gateway/index.js';
 import { moduleLogger } from '../log.js';
+import { sealClosedMonths } from './gateway-seal.js';
 import { startJob } from './refresh.js';
 
 const log = moduleLogger('services.gateway-sync');
@@ -189,6 +190,34 @@ async function persist(
 }
 
 /**
+ * Take a seal on any closed month the sync has just completed.
+ *
+ * This is the moment the answer can change: the run that stores a month's last
+ * day is the run that makes it sealable. It rides along with the sync rather
+ * than sitting on its own timer for the same reason governance does — one
+ * fewer schedule to reason about — but unlike governance it *is* skipped by a
+ * backfill, and for the opposite reason. A backfill repairs days inside a month
+ * that may already be sealed; sealing it here would be taking the first seal of
+ * a month whose gap has only just been filled, which is correct, but it would
+ * also mean a repair silently issues a statement. That decision belongs to
+ * whoever ran the repair, via `POST /api/gateway/months/:month/seal`.
+ *
+ * Never fails the sync. The usage has already landed by this point, and a
+ * bookkeeping step that could not run today runs tomorrow.
+ */
+async function sealNewlyClosedMonths(ranged: boolean): Promise<void> {
+  if (ranged) return;
+  try {
+    const { sealed, skipped } = await sealClosedMonths('scheduler');
+    if (sealed.length > 0) {
+      log.info({ dash: { sealed, skipped } }, 'closed gateway months sealed');
+    }
+  } catch (error) {
+    log.error({ err: error }, 'sealing closed gateway months failed — usage sync unaffected');
+  }
+}
+
+/**
  * Starts a gateway sync and returns the job to poll — single-flight per kind,
  * concurrent with every other sync. The whole window is fetched before
  * anything is written, so a mid-fetch failure fails the job and leaves the
@@ -225,6 +254,7 @@ export async function startGatewaySync(
       // break.
       const budgets = ranged ? null : await client.fetchBudgets();
       await persist(snapshot, budgets);
+      await sealNewlyClosedMonths(ranged);
       return snapshot.dates.length;
     },
   });

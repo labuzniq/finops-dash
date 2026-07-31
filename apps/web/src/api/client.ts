@@ -5,6 +5,7 @@ import type {
   GatewayBudgets,
   GatewayCoverage,
   GatewayProbe,
+  GatewaySeals,
   GatewaySource,
   GatewayUsage,
   ImportLogEntry,
@@ -246,6 +247,19 @@ export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
  */
 export function fetchGatewayCoverage(): Promise<GatewayCoverage> {
   return request<GatewayCoverage>('/gateway/coverage');
+}
+
+/**
+ * The months that have been sealed — a closed month's totals as they were
+ * recorded, not as the daily rows read today.
+ *
+ * Headers only, and no date range: it is a handful of rows and the chargeback
+ * card needs whichever month it happens to be showing. The sealed total is what
+ * the card compares its own derivation against, which is how a month that was
+ * revised after its statement was issued becomes visible.
+ */
+export function fetchGatewaySeals(): Promise<GatewaySeals> {
+  return request<GatewaySeals>('/gateway/months');
 }
 
 /**
