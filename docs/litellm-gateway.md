@@ -624,12 +624,13 @@ What it shows, and why each one is there:
 | People on the gateway | How many users the proxy attributed calls to and what share of spend carries a user id at all, distinct actives per day, spend and calls per user, how many of the population call on an average day, users first seen in the second half of the window, and the concentration read — how few users are half the attributed bill, and 80% of it |
 | Chargeback statement | One calendar month's spend, split across the units that will be billed for it (team / tag / API key / user, one at a time) — each line with its share of the month, its tokens, its blended $/1M and the same line in the month before, plus an explicit **unallocated** line and a CSV export |
 | Prompt cache | Input tokens the backends served from cache against the ones we paid to send again — the split, the daily hit rate, reads per token written against the break-even, the share of the input bill the cache is keeping off it, the headroom, and the current dimension's keys ranked by uncached input with the two fault states badged |
+| Priced cache (panel on the cache card) | The same cache activity in **dollars**, from the catalogue's four rates and pinned to `model` whatever the switcher says: what the reads kept off the bill, what the writes cost, the net against what those input tokens would have cost with no cache at all, the headroom valued at each model's own read discount, and the models with cache activity the catalogue could not price. Renders only when something priced |
 | Price catalogue | The rates the proxy is configured with, beside the bill they produced: what share of gateway spend sits on models the catalogue can price, each model's list input/output $/1M against its **effective** blended rate, the same tokens re-priced at list, and the ratio between the two — with a single-deployment model more than 5% away from list flagged, a multi-deployment alias labelled a **floor** and left out of the aggregate, and the models the proxy offers that saw no traffic counted |
 | Seal badge on the statement | Whether the month on screen is *final* — recorded at close and quotable — and, when the daily rows have moved since, by how much. Nothing renders for a month still in flight |
 | Revision history on the statement | For a month that has been billed more than once: every statement it has carried with its own total and what it moved by, and — for the payer dimension on screen — which lines moved into the current revision, with dollars the proxy attributed to nobody in one revision or the other named rather than spread. Fetched only for a month that has one, so the ordinary month costs no extra request |
 | Coverage note | Days inside the stored span that carry no row at all (and the runs they form), and how much history predates the proxy's retention window. Each run still inside the window carries a **Fill** button that backfills exactly it; a run the proxy has pruned reads *pruned upstream* and offers nothing. Renders nothing when there is nothing to say, which is the normal state |
 
-Twenty decisions worth keeping:
+Twenty-one decisions worth keeping:
 
 - **The breakdown is a switcher, not seven cards.** Seven cards side by side
   invite reading the dimensions as parts of a whole and adding them up, which
@@ -1171,6 +1172,43 @@ Twenty decisions worth keeping:
   prices models, and "what does a team cost per million tokens" is a question
   about a workload's mix, not about a rate.
 
+- **The cache is priced by model, or not at all.** `lib/metrics/gatewayCache.ts`
+  refuses to report dollars because the daily row carries one `spend` covering
+  input, output and both cache operations together — and four rates per model is
+  exactly what lifts that refusal. `lib/metrics/gatewayCacheValue.ts` is the
+  panel that does it, and the dimension is the whole design: a rate belongs to a
+  model, and one `team`'s cached tokens span every model it touched at rates
+  differing by a factor, so a per-team saving would be an average of price
+  lists. It is pinned to `model` whatever the switcher above it says, and the
+  panel says so rather than leaving a reader to assume the two tables share a
+  key.
+
+  The number is a **counterfactual**, not a re-pricing: what those input tokens
+  would have cost with no cache at all, minus what the catalogue says they cost
+  with one. Reads are valued at the spread between the input rate and the read
+  rate, writes at the premium over a plain input token, and output tokens cancel
+  and are left out entirely — the cache cannot touch them, and folding them in
+  would bury the figure the panel exists to state. That subtraction is checkable
+  against the cache card above it: a workload sitting exactly on
+  `CACHE_BREAKEVEN_REUSE` must price to $0.00 at the 0.1×/1.25× rates the
+  constant is derived from, which is what keeps the convention-weighted card and
+  the priced panel from telling a reader two different things.
+
+  Three rules carry over from the catalogue card, and one is new. A missing
+  cache rate is **unknown, never zero**: `repriceMetrics` falls back to the
+  input rate when a backend prices no cache separately, which is right when
+  reconstructing a *total* and catastrophic when measuring a *difference* — the
+  same fallback here would report a saving of exactly $0.00 out of a null, so
+  those models are excluded and named instead. A `price_varies` alias is a
+  floor, so its rate spread is a lower bound too, and it is reported apart from
+  the headline rather than mixed into it. Nothing here is subtracted from
+  `spend`, and no other card reads these numbers. The new one is the levelling
+  rate for headroom: the module derives it from the gateway totals **itself**
+  rather than borrowing the cache card's, because the two modules disagree about
+  whether a cache read is already counted inside `promptTokens` (open question
+  12), and a module that prices on one convention and levels on the other
+  reports no headroom anywhere.
+
 `apps/api/scripts/verify-gateway-catalog-view.ts` covers that derivation, and
 splits into the three things the mock can and cannot show. It **can** show the
 join and the arithmetic: coverage measured against the gateway total, the one
@@ -1192,6 +1230,27 @@ Postgres half runs the same derivation over what a sync stored, which is what
 proves a null price is still null in the shape the card reads — a `$0.00/M`
 coming back would render as a 100% discount. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-catalog-view.ts`.
+
+`apps/api/scripts/verify-gateway-cache-value.ts` covers the priced panel, and
+its centre is the identity: over constructed rows where both bills are known,
+the saving must equal the no-cache bill minus the billed one to the cent, cache
+reads must come back out of `promptTokens` before anything is priced at the
+input rate, and output tokens must change nothing. Then the rules that only
+break silently — a model with cache activity and no read rate is a named gap and
+not a $0.00 saving, a model that read but never wrote is priced *without* a
+write rate (the requirement is per counter, not per catalogue entry), a workload
+on the cache card's break-even prices to zero, and one writing far more than it
+reads prices negative and lands in `costing`. Headroom carries two bounds that
+exist because of how this script's first run failed: it can never exceed the
+input bill it would come out of, and no model can move more tokens into cache
+than it sent uncached — the check that catches a levelling rate handed over on
+the wrong scale or the wrong convention, which every other assertion passed
+straight through. Over the mock it then proves the floor row stays out of the
+headline and out of coverage, and that each firm-rate model's priced input bill
+reconciles with the spend the payload actually carries once its output is taken
+off. The Postgres half re-runs it over what a sync stored, which is what proves
+a null cache rate is still null rather than a free cache operation. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-cache-value.ts`.
 
 `apps/api/scripts/verify-gateway-seal-history.ts` covers both halves of that.
 The pure half is `diffSeals`: the sub-cent settle that is not a change, the
@@ -1682,6 +1741,21 @@ job's error string.
     pay-as-you-go fallback is exactly the case where the difference is large. If
     the answer is "one deployment each", the catalogue's prices are rates and the
     floor caveat can come off the card.
+12. **Does `prompt_tokens` already include `cache_read_input_tokens`?** Two
+    modules in this repo currently answer differently and both are shipped:
+    `gatewayCache.ts` (and `cacheHitRate` in `@dash/shared`) read the input
+    total as `promptTokens + cacheReadTokens`, while `gatewayCatalog.ts`,
+    `gatewayCacheValue.ts` and the mock's own billing read the reads as already
+    being *inside* `promptTokens` — which is what LiteLLM does for the
+    OpenAI-shaped providers, where `prompt_tokens_details.cached_tokens` is a
+    subset. The two differ by the size of the cache itself: on the mock the hit
+    rate reads 22.1% under the first convention and 28.3% under the second. Nothing is
+    wrong on a gateway with no cache; on this one it means the KPI and the cache
+    card understate the hit rate if the second reading is right. A single day's
+    real payload settles it — compare `prompt_tokens` against
+    `cache_read_input_tokens + ` the provider's own uncached input for one busy
+    model — and whichever way it falls, the convention has to become one
+    statement both modules read rather than two.
 
 ## Not yet built
 
@@ -1709,23 +1783,21 @@ Governance is now rendered end to end across all three scopes
   dashboard. Sending it somewhere (mail, Slack, a webhook) needs a scheduler
   hook, a delivery target and a de-duplication story, none of which the console
   has today.
-- **Pricing what the catalogue now makes priceable.** The catalogue *view*
-  exists (`Price catalogue`, on `lib/metrics/gatewayCatalog.ts` over
-  `GET /api/gateway/models`): list rates beside the effective rate the same
-  model actually billed, so a mis-priced deployment or an unrecorded discount
-  becomes visible, carrying the two labels the table imposes — an estimate
-  beside the bill, never in place of it, and a floor rather than a rate wherever
-  `price_varies` is set. The other card it was built for is still unbuilt.
-  `lib/metrics/gatewayCache.ts` reports tokens and refuses dollars, because the
-  daily row carries one `spend` covering input, output and both cache operations
-  together, and four rates per model is exactly what lifts that refusal — but
-  the cache card's rows are keyed by the page's breakdown *dimension*, and one
-  `team`'s cached tokens span every model it touched at rates differing by a
-  factor. So the honest version prices the saving only on the `model` dimension,
-  or on a spend-weighted blend that states which models it assumed; a single
-  number across a `team` row would be an average of price lists. Until then the
-  card's 0.1×/1.25× convention stands, and the catalogue is now evidence that it
-  is the right convention rather than merely a plausible one.
+- **Pricing what the catalogue now makes priceable.** Both cards the catalogue
+  was fetched for now exist. `Price catalogue`
+  (`lib/metrics/gatewayCatalog.ts`) puts list rates beside the effective rate
+  the same model actually billed, and the priced panel on the cache card
+  (`lib/metrics/gatewayCacheValue.ts`) puts a dollar figure on the prompt cache
+  — reads valued at the spread they saved, writes at the premium they cost, the
+  net against a no-cache counterfactual. What is *not* built, and is the honest
+  limit rather than a gap to close later, is the same figure on any other
+  dimension: the cache card's rows are keyed by the page's breakdown dimension,
+  and one `team`'s cached tokens span every model it touched at rates differing
+  by a factor. A per-team saving would be an average of price lists, so the
+  panel stays pinned to `model` and the rest of the card keeps reporting tokens.
+  The 0.1×/1.25× convention stays with it, and the catalogue is now evidence
+  that it is the right convention rather than merely a plausible one — where the
+  two disagree, the priced panel is the one reading this proxy's own rates.
 
   A second thing the catalogue makes possible and nothing does yet: a **model
   the catalogue prices lower for the same work**. Every rate on the card is

@@ -1,8 +1,14 @@
 import { GATEWAY_DIMENSION_LABELS } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import { compactCount, EMPTY, percent } from '../../lib/format.js';
+import { compactCount, EMPTY, percent, usd } from '../../lib/format.js';
 import { CACHE_BREAKEVEN_REUSE } from '../../lib/metrics/gatewayCache.js';
 import type { CacheDay, CacheRow, CacheSummary } from '../../lib/metrics/gatewayCache.js';
+import { hasCacheValue } from '../../lib/metrics/gatewayCacheValue.js';
+import type {
+  CacheValueGap,
+  CacheValueRow,
+  CacheValueSummary,
+} from '../../lib/metrics/gatewayCacheValue.js';
 import { Card } from '../Card.js';
 import styles from './GatewayCacheCard.module.css';
 
@@ -35,8 +41,18 @@ import styles from './GatewayCacheCard.module.css';
 /** Enough to name where the input volume is; past this it is a table, not a finding. */
 const MAX_ROWS = 8;
 
+/** The priced panel is a finding, not a table — four models name where the money is. */
+const MAX_VALUE_ROWS = 4;
+
 interface GatewayCacheCardProps {
   summary: CacheSummary;
+  /**
+   * The same cache activity priced from `GET /api/gateway/models`, always on the
+   * `model` dimension whatever the switcher says. Absent while the catalogue has
+   * not answered, or on a proxy that lists no cache rates — in which case the
+   * card keeps its convention-weighted ratio, which needs no price list.
+   */
+  value?: CacheValueSummary | undefined;
 }
 
 /** 0..1 → `22.0%`, or `—` when there was no input to rate. */
@@ -50,7 +66,7 @@ const STATE_LABEL: Record<CacheRow['state'], string | null> = {
   unused: 'no cache',
 };
 
-export function GatewayCacheCard({ summary }: GatewayCacheCardProps) {
+export function GatewayCacheCard({ summary, value }: GatewayCacheCardProps) {
   const dimensionLabel = GATEWAY_DIMENSION_LABELS[summary.dimension].toLowerCase();
   const shown = summary.rows.slice(0, MAX_ROWS);
   const hidden = summary.rows.length - shown.length;
@@ -130,6 +146,8 @@ export function GatewayCacheCard({ summary }: GatewayCacheCardProps) {
         />
       </div>
 
+      {value !== undefined && hasCacheValue(value) && <PricedPanel value={value} />}
+
       <div className={cx(styles.row, styles.headerStrip)}>
         <div>{GATEWAY_DIMENSION_LABELS[summary.dimension].toUpperCase()}</div>
         <div />
@@ -202,8 +220,167 @@ export function GatewayCacheCard({ summary }: GatewayCacheCardProps) {
         Tokens, not dollars: the proxy reports one spend figure per row covering input, output and
         both cache operations together, so what a cached token saved cannot be separated out of it
         without assuming a price list — and this gateway fronts three.
+        {value !== undefined && hasCacheValue(value) && (
+          <> The panel above is the exception: it reads the price list the proxy publishes, on the
+          one dimension a rate belongs to.</>
+        )}
       </div>
     </Card>
+  );
+}
+
+const GAP_LABEL: Record<CacheValueGap, string> = {
+  unlisted: 'not in the catalogue',
+  unpriced: 'no per-token rate',
+  no_cache_rate: 'no cache rate published',
+};
+
+/** Signed dollars, so a cache that costs money reads as a cost rather than as a small saving. */
+function signedUsd(value: number): string {
+  const shown = usd(Math.abs(value), 2);
+  return value < 0 ? `−${shown}` : value > 0 ? `+${shown}` : shown;
+}
+
+/**
+ * The cache read through the proxy's own price list.
+ *
+ * This is the one panel on the card that reports dollars, and it can only do so
+ * on the `model` dimension — a rate belongs to a model, and one team's cached
+ * tokens span every model it touched at rates differing by a factor. So it stays
+ * pinned to `model` whatever the switcher above says, and the note says as much
+ * rather than leaving a reader to assume the two tables share a key.
+ *
+ * The figure is a *counterfactual*: what those same input tokens would have cost
+ * with no cache at all, minus what the catalogue says they cost with one. It is
+ * never subtracted from `spend` and no other card reads it, because a list rate
+ * ignores every discount the account carries — which is exactly what the price
+ * catalogue card measures and this one inherits.
+ */
+function PricedPanel({ value }: { value: CacheValueSummary }) {
+  const shown = value.rows.slice(0, MAX_VALUE_ROWS);
+  const hidden = value.rows.length - shown.length;
+  const negative = value.netSaving < 0;
+
+  return (
+    <div className={styles.priced}>
+      <div className={styles.pricedHead}>
+        <div>
+          <div className={styles.pricedTitle}>Priced from the catalogue · by model</div>
+          <div className={styles.sub}>
+            the same cache activity at the rates the proxy publishes, against what these input
+            tokens would have cost with no cache at all — an estimate beside the bill, never in
+            place of it
+          </div>
+        </div>
+        <div className={styles.headline}>
+          <div className={cx(styles.headlineValue, negative ? styles.bad : styles.good)}>
+            {signedUsd(value.netSaving)}
+          </div>
+          <div className={styles.headlineNote}>
+            {value.savingShare === null
+              ? 'nothing to compare'
+              : `${percent(Math.abs(value.savingShare) * 100)} ${negative ? 'above' : 'off'} a ${usd(value.noCacheInputCost, 0)} no-cache input bill`}
+          </div>
+        </div>
+      </div>
+
+      <div className={styles.pricedStats}>
+        <Stat
+          label="Reads saved"
+          value={usd(value.readSaving, 2)}
+          sub={`${compactCount(value.pricedCacheTokens)} cache tokens priced · ${percent(value.coverage * 100)} of the gateway's`}
+          tone="good"
+        />
+        <Stat
+          label="Writes cost"
+          value={usd(value.writePremium, 2)}
+          sub="the premium every backend charges over a plain input token to put one in the cache"
+          tone={value.writePremium > value.readSaving ? 'bad' : undefined}
+        />
+        <Stat
+          label="Headroom"
+          value={usd(value.headroomValue, 2)}
+          sub={`${compactCount(value.headroomTokens)} tokens at their own models' read discounts, if each merely reached the gateway rate`}
+        />
+        <Stat
+          label="Unpriceable"
+          value={value.gaps.length === 0 ? 'none' : String(value.gaps.length)}
+          sub={
+            value.gaps.length === 0
+              ? 'every model with cache activity carries a rate'
+              : value.gaps
+                  .slice(0, 3)
+                  .map((gap) => `${gap.label ?? gap.key} (${GAP_LABEL[gap.gap]})`)
+                  .join(' · ')
+          }
+        />
+      </div>
+
+      <div className={cx(styles.pricedRow, styles.headerStrip)}>
+        <div>MODEL</div>
+        <div className={styles.right}>NET</div>
+        <div className={styles.right}>READS SAVED</div>
+        <div className={styles.right}>WRITES COST</div>
+        <div className={styles.right}>HEADROOM</div>
+      </div>
+
+      {shown.map((row) => (
+        <PricedRow key={row.key} row={row} />
+      ))}
+
+      <div className={styles.pricedNote}>
+        {hidden > 0 && (
+          <>
+            {hidden} more priced model{hidden === 1 ? '' : 's'} ·{' '}
+          </>
+        )}
+        {value.floorRows.length > 0 && (
+          <>
+            {value.floorRows.length} model{value.floorRows.length === 1 ? '' : 's'} served by several
+            deployments ({signedUsd(value.floorNetSaving)}) are kept out of these totals: the
+            catalogue reports the cheapest of them, so their saving is a lower bound rather than a
+            rate ·{' '}
+          </>
+        )}
+        A missing cache rate is left unpriced rather than read as no discount, and nothing here is
+        subtracted from what the proxy billed.
+      </div>
+    </div>
+  );
+}
+
+function PricedRow({ row }: { row: CacheValueRow }) {
+  const negative = row.netSaving < 0;
+  return (
+    <div className={cx(styles.pricedRow, negative && styles.rowFlagged)}>
+      <div className={styles.name} title={row.key}>
+        <span className={styles.key}>{row.label ?? row.key}</span>
+        <span className={styles.sublabel}>
+          {usd(row.inputPerMillion, 2)}/M in ·{' '}
+          {row.cacheReadPerMillion === null
+            ? 'no read rate'
+            : `${usd(row.cacheReadPerMillion, 2)}/M read`}
+        </span>
+      </div>
+      <div className={cx(styles.right, negative ? styles.bad : styles.good)}>
+        {signedUsd(row.netSaving)}
+        <span className={styles.share}>
+          {row.savingShare === null ? EMPTY : `${percent(row.savingShare * 100)} of its input bill`}
+        </span>
+      </div>
+      <div className={cx(styles.right, styles.muted)}>
+        {usd(row.readSaving, 2)}
+        <span className={styles.share}>{compactCount(row.cachedTokens)} read</span>
+      </div>
+      <div className={cx(styles.right, styles.muted)}>
+        {usd(row.writePremium, 2)}
+        <span className={styles.share}>{compactCount(row.writeTokens)} written</span>
+      </div>
+      <div className={cx(styles.right, styles.muted)}>
+        {usd(row.headroomValue, 2)}
+        <span className={styles.share}>{compactCount(row.headroomTokens)} tokens</span>
+      </div>
+    </div>
   );
 }
 
@@ -216,7 +393,7 @@ function Stat({
   label: string;
   value: string;
   sub: string;
-  tone?: 'good' | 'bad';
+  tone?: 'good' | 'bad' | undefined;
 }) {
   return (
     <div className={styles.stat}>

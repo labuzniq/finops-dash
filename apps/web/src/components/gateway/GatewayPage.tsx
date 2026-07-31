@@ -20,6 +20,7 @@ import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewa
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
 import { deriveGatewayCache, hasCacheActivity } from '../../lib/metrics/gatewayCache.js';
+import { deriveCacheValue } from '../../lib/metrics/gatewayCacheValue.js';
 import { deriveCatalog, hasCatalog } from '../../lib/metrics/gatewayCatalog.js';
 import {
   CHARGEBACK_DIMENSIONS,
@@ -482,6 +483,25 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.breakdowns.model, catalogQuery.data, summary.totals.spend],
   );
 
+  // The cache priced from that same catalogue — pinned to `model` for a reason
+  // the cache card itself cannot be: a rate belongs to a model, and one team's
+  // cached tokens span every model it touched at rates differing by a factor, so
+  // a per-team saving would be an average of price lists. It is what lifts the
+  // cache card's refusal to report dollars, on the one dimension where it can.
+  const cacheValue = useMemo(
+    () =>
+      deriveCacheValue({
+        modelRows: summary.breakdowns.model,
+        catalogue: catalogQuery.data?.models ?? [],
+        // The spine's own totals, not the cache summary's rate: the module
+        // levels headroom on the same convention it prices with, and the two
+        // differ over whether a cache read is already counted inside
+        // `promptTokens`. See the note on `CacheValueInput`.
+        gatewayTotals: summary.totals,
+      }),
+    [summary.breakdowns.model, catalogQuery.data, summary.totals],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -791,7 +811,9 @@ export function GatewayPage({ sync }: GatewayPageProps) {
             <GatewayReliabilityCard summary={reliability} />
           </div>
 
-          <div id="gateway-cache">{hasCacheActivity(cache) && <GatewayCacheCard summary={cache} />}</div>
+          <div id="gateway-cache">
+            {hasCacheActivity(cache) && <GatewayCacheCard summary={cache} value={cacheValue} />}
+          </div>
 
           {/*
             Directly under the cache card on purpose: that card reports tokens

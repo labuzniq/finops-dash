@@ -116,6 +116,19 @@ labelled a *convention* (0.1× read, 1.25× write). Those multipliers give the c
 below `0.25/0.9 ≈ 0.28` reads per token written the cache costs more than not caching — and only that
 `churning` state and a material workload with no cache activity are badged, never "below average". Rows
 rank by uncached input tokens (the size of the opportunity, not of the mistake).
+`lib/metrics/gatewayCacheValue.ts` is that refusal lifted, and only on the one dimension where a rate
+belongs: it joins the same catalogue `gatewayCatalog.ts` reads to the `model` rows and puts dollars on
+the cache — reads valued at the spread between the input rate and the read rate, writes at the premium
+over a plain input token, output cancelled out, the net measured against what those input tokens would
+have cost with **no cache at all**. It is pinned to `model` however the switcher is set, because one
+`team`'s cached tokens span every model it touched at rates differing by a factor and a per-team saving
+would be an average of price lists. A missing cache rate is *unknown, never zero* — the input-rate
+fallback that is correct when `repriceMetrics` reconstructs a total would here report a $0.00 saving out
+of a null — a `priceVaries` alias is a floor reported apart from the headline, and nothing is subtracted
+from `spend`. It derives its own levelling rate for headroom from the gateway totals rather than
+borrowing the cache card's, because the two modules disagree about whether a cache read is already
+counted inside `promptTokens` (docs open question 12) and pricing on one convention while levelling on
+the other reports no headroom anywhere.
 `lib/metrics/gatewayChargeback.ts` is the page's only *statement* rather than analysis, and the only
 derivation built to be read outside the dashboard — which is why it is the one surface that must **add
 up**: the lines plus an explicit `unallocated` row equal the month's gateway spend exactly, with no
