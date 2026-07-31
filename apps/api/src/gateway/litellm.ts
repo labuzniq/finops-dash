@@ -54,6 +54,8 @@ import type {
   GatewayExceptionPage,
   GatewayExceptionRecord,
   GatewayHealthSnapshot,
+  GatewayLatencyPage,
+  GatewayLatencyRecord,
   GatewayModelSnapshot,
   GatewaySnapshot,
   GatewaySpendLogPage,
@@ -100,6 +102,14 @@ const SPEND_LOG_TIMEOUT_MS = 60_000;
  * should give up rather than hold the whole sweep open.
  */
 const EXCEPTION_TIMEOUT_MS = 30_000;
+
+/**
+ * `/model/metrics` scans `LiteLLM_SpendLogs` rather than the error table — the
+ * largest table the proxy keeps, grouped and averaged per day — so it is given
+ * more room than the exception sweep beside it and still bounded, because a
+ * sweep is one call per alias and a stalled first call must not hold the rest.
+ */
+const LATENCY_TIMEOUT_MS = 60_000;
 
 /** One probe request's outcome. `body` exists only on a 2xx that decoded. */
 interface ProbeAttempt {
@@ -587,6 +597,40 @@ const modelExceptionsSchema = z.object({
   exception_types: z.array(z.string()).default([]),
 });
 
+/**
+ * `GET /model/metrics?_selected_model_group&startTime&endTime` — an eighth
+ * envelope, and the second whose field names are data.
+ *
+ * The proxy answers
+ *   `{"data": [{"date": "2026-07-14",
+ *               "https://nocturne-weu.openai.azure.com/": 0.0071,
+ *               "bedrock/anthropic.claude-haiku-4-v1:0": 0.0043}],
+ *     "all_api_bases": ["https://nocturne-weu.openai.azure.com/", …]}`
+ * — one object per day, `date` plus one key per deployment carrying that day's
+ * average. So the parse is key-driven the same way the exception one is: take
+ * `date`, read every remaining numeric key as a deployment.
+ *
+ * Three things about the payload are worth knowing before trusting it:
+ *
+ *   - **`_selected_model_group` defaults to `"gpt-4-32k"` upstream.** Not to
+ *     "everything" — to one specific alias most gateways have never heard of.
+ *     Omitting the parameter answers `200` with an empty `data` and an empty
+ *     `all_api_bases`, which reads exactly like a gateway that served no
+ *     traffic. The client always sends it, the same rule as `summarize=false`
+ *     on `/spend/logs`.
+ *   - **The value is seconds per completion token**, not milliseconds and not a
+ *     request duration. It is `AVG(seconds / completion_tokens)` over requests,
+ *     so it is a mean of ratios rather than a throughput.
+ *   - **A day with no rows answers `null`.** The handler falls off the end of
+ *     its `if db_response is not None` branch and FastAPI serialises the
+ *     implicit `None`, so a body of `null` is the proxy's own way of saying
+ *     "nothing recorded" and must not be read as a malformed envelope.
+ */
+const modelLatencySchema = z.object({
+  data: z.array(z.record(z.unknown())).default([]),
+  all_api_bases: z.array(z.string()).default([]),
+});
+
 /** `/key/list` caps `size` at 100 (`Query(10, ge=1, le=100)`). */
 const KEY_PAGE_SIZE = 100;
 
@@ -1045,6 +1089,40 @@ function toExceptionRecord(
 }
 
 /**
+ * One `/model/metrics` row → that day's latency for every deployment key on it.
+ *
+ * Key-driven like the exception parse, with the rules the payload forces:
+ *
+ *   - the row's `date` is a `date_trunc('day')` stringified by Python, so it
+ *     arrives as `YYYY-MM-DD`; anything else is dropped rather than coerced,
+ *     because a date this client cannot place cannot go on a spine;
+ *   - a non-numeric or non-finite value is ignored, never coerced — `AVG` over
+ *     an all-null group answers null, and a null is "not measured" rather than
+ *     "instant";
+ *   - a zero or negative rate is dropped for the same reason: the proxy's
+ *     `HAVING SUM(completion_tokens) > 0` means a real row is always positive,
+ *     so a zero is an artefact; and
+ *   - a key repeated within one row cannot happen on the wire (it is an object),
+ *     but a *base* shared by two backend models collapses upstream with the last
+ *     one winning. That is the proxy's own behaviour and is documented rather
+ *     than repaired — there is nothing in the payload to repair it with.
+ */
+function toLatencyRecords(row: Record<string, unknown>, model: string): GatewayLatencyRecord[] {
+  const date = typeof row['date'] === 'string' ? row['date'].trim() : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+
+  const records: GatewayLatencyRecord[] = [];
+  for (const [field, value] of Object.entries(row)) {
+    if (field === 'date') continue;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) continue;
+    const key = field.trim();
+    if (key === '') continue;
+    records.push({ model, key: key.slice(0, 400), date, secondsPerToken: value });
+  }
+  return records;
+}
+
+/**
  * A rate limit, or null. Same rule as budgets — 0 rpm is a hard stop, absent is
  * no limit — with a floor guard because a negative limit is not a fact.
  */
@@ -1102,7 +1180,7 @@ function toIsoDate(value: string): string {
 
 /** Accumulator key — one row per (date, dimension, key). */
 function bucketKey(date: string, dimension: GatewayDimension, key: string): string {
-  return `${date} ${dimension} ${key}`;
+  return `${date}\u0000${dimension}\u0000${key}`;
 }
 
 export class LiteLlmGatewayClient implements GatewayClient {
@@ -1731,6 +1809,96 @@ export class LiteLlmGatewayClient implements GatewayClient {
   }
 
   /**
+   * `GET /model/metrics` — how slowly each deployment answered, per day, for
+   * one window.
+   *
+   * The third live read, and the other half of the exception sweep's answer:
+   * that one says why the failed calls failed, this one says how the successful
+   * ones performed. It is also the only latency the proxy will aggregate for
+   * us — `/spend/logs` carries `request_duration_ms` per row and is capped at a
+   * few thousand rows of a window that is millions, so a percentile taken from
+   * it describes the head of the range. Here the proxy does the grouping over
+   * every row it kept.
+   *
+   * Four things follow from the route rather than from choice:
+   *
+   *   - **One call per alias**, exactly like the exception sweep: the query
+   *     filters on `model_group` with no wildcard, and passing no aliases
+   *     fetches nothing rather than everything.
+   *   - **`_selected_model_group` is always sent.** Its upstream default is the
+   *     literal `"gpt-4-32k"`, so a call without it answers `200` with empty
+   *     data — a gateway that looks idle rather than a request that was wrong.
+   *   - **A `null` body is an empty answer, not an absent route.** The handler
+   *     returns Python's implicit `None` when its query matched nothing, which
+   *     is why this is the one read that needs `getJsonResult`.
+   *   - **The values are seconds per completion token**, carried through
+   *     unconverted. Anything that turns them into a duration is inventing a
+   *     completion length.
+   *
+   * Absent handling matches the exception sweep: the first alias answering one
+   * of the "not offered" statuses stands the whole route down, because a proxy
+   * without the route does not have it for one alias and not another.
+   */
+  async fetchModelLatency(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayLatencyPage> {
+    if (models.length === 0) return { rows: [], apiBases: [], available: true };
+
+    const rows: GatewayLatencyRecord[] = [];
+    const apiBases = new Set<string>();
+    let available = true;
+
+    for (const model of models) {
+      const url = new URL(`${this.root}/model/metrics`);
+      url.searchParams.set('_selected_model_group', model);
+      url.searchParams.set('startTime', `${from}T00:00:00`);
+      url.searchParams.set('endTime', `${to}T23:59:59`);
+
+      const result = await this.getJsonResult(url, true, LATENCY_TIMEOUT_MS);
+      if (result.absent) {
+        available = false;
+        break;
+      }
+      // The proxy's own "nothing matched" answer. An alias with no traffic in
+      // the window is a fact about the alias, not about the route, so the sweep
+      // carries on.
+      if (result.body === null || result.body === undefined) continue;
+
+      const parsed = modelLatencySchema.safeParse(result.body);
+      if (!parsed.success) {
+        throw new Error(
+          `LiteLLM /model/metrics returned an unexpected shape: ${describeIssues(
+            parsed.error.issues,
+          )}`,
+        );
+      }
+
+      for (const entry of parsed.data.data) rows.push(...toLatencyRecords(entry, model));
+      for (const base of parsed.data.all_api_bases) {
+        const trimmed = base.trim();
+        if (trimmed !== '') apiBases.add(trimmed);
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          available,
+          points: rows.length,
+          keys: new Set(rows.map((row) => `${row.model} ${row.key}`)).size,
+        },
+      },
+      'litellm model latency fetched',
+    );
+    return { rows, apiBases: [...apiBases].sort(), available };
+  }
+
+  /**
    * Call every route the sync depends on once, for one day, and report what
    * each answered.
    *
@@ -2249,8 +2417,29 @@ export class LiteLlmGatewayClient implements GatewayClient {
     optional: boolean,
     timeoutMs: number = REQUEST_TIMEOUT_MS,
   ): Promise<unknown | null> {
+    const result = await this.getJsonResult(url, optional, timeoutMs);
+    return result.absent ? null : result.body;
+  }
+
+  /**
+   * The same GET, with "the route is not offered" kept apart from "the route
+   * answered `null`".
+   *
+   * `getJson` collapses the two, which is right for every route whose empty
+   * answer is an empty envelope — a `null` body there fails the schema and
+   * throws, as it should. `/model/metrics` is the one route whose handler
+   * returns Python's `None` when its query matched nothing, so on that route a
+   * body of `null` is the proxy saying "no traffic in this window" and reading
+   * it as an absent route would report a working gateway as one without the
+   * endpoint.
+   */
+  private async getJsonResult(
+    url: URL,
+    optional: boolean,
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+  ): Promise<{ absent: true } | { absent: false; body: unknown }> {
     const response = await this.request(url, timeoutMs);
-    if (response.ok) return response.json();
+    if (response.ok) return { absent: false, body: await response.json() };
 
     const body = await response.text().catch(() => '');
     if (optional && ABSENT_STATUSES.has(response.status)) {
@@ -2258,7 +2447,7 @@ export class LiteLlmGatewayClient implements GatewayClient {
         { dash: { path: url.pathname, status: response.status } },
         'optional gateway endpoint unavailable — skipped',
       );
-      return null;
+      return { absent: true };
     }
     throw new Error(`LiteLLM ${url.pathname} responded ${response.status}: ${body.slice(0, 300)}`);
   }

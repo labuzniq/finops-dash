@@ -206,6 +206,38 @@ export interface GatewayExceptionPage {
   available: boolean;
 }
 
+/**
+ * One deployment key's latency on one day, as `GET /model/metrics` averaged it.
+ *
+ * `key` is LiteLLM's combined name — the `api_base` where there is one, the
+ * backend model string where there is not — and `model` is the alias the read
+ * was scoped to, because the row itself does not carry it. Flat rather than
+ * nested so the client can accumulate across the one-call-per-alias sweep
+ * without building a tree it would only have to flatten again.
+ */
+export interface GatewayLatencyRecord {
+  model: string;
+  key: string;
+  /** ISO date, UTC. */
+  date: string;
+  /** Seconds of wall clock per completion token. Never a request duration. */
+  secondsPerToken: number;
+}
+
+/**
+ * What one `/model/metrics` sweep answered.
+ *
+ * `available: false` is a first-class result for the same reason it is on
+ * `/spend/logs`: this route aggregates the *same* table, so a proxy running
+ * `disable_spend_logs` bills perfectly and reports no latency at all.
+ */
+export interface GatewayLatencyPage {
+  rows: GatewayLatencyRecord[];
+  /** The proxy's own `all_api_bases`, merged across the sweep. Evidence only. */
+  apiBases: string[];
+  available: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
@@ -268,6 +300,26 @@ export interface GatewayClient {
     to: string,
     models: readonly string[],
   ): Promise<GatewayExceptionPage>;
+  /**
+   * Per-deployment latency for a window, for the aliases named — the proxy's own
+   * aggregation over its request log.
+   *
+   * Live and stored nowhere, and asked one alias at a time, exactly like
+   * `fetchModelExceptions`: the proxy's query filters on `model_group` with no
+   * wildcard. It is the other half of that layer's answer — the exception sweep
+   * says which calls failed and why, this says how slowly the ones that
+   * succeeded came back — and it is the only latency the proxy exports over a
+   * whole window rather than over a capped sample.
+   *
+   * Optional like the other live reads: it aggregates `LiteLLM_SpendLogs`, so
+   * `disable_spend_logs` answers `available: false` on a gateway that is
+   * working perfectly.
+   */
+  fetchModelLatency(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayLatencyPage>;
   /**
    * A connection check: call every route this client depends on once, for a
    * single day, and report what each answered.

@@ -19,6 +19,7 @@ import type {
   GatewayDeploymentObservation,
   GatewayExceptions,
   GatewayHealth,
+  GatewayLatency,
   GatewayModelPrice,
   GatewayModels,
   GatewayProbe,
@@ -575,25 +576,7 @@ export async function getGatewayExceptions(from: string, to: string): Promise<Ga
     );
   }
 
-  const rows = await db
-    .select()
-    .from(gatewayBreakdownDaily)
-    .where(
-      and(
-        eq(gatewayBreakdownDaily.dimension, 'model'),
-        gte(gatewayBreakdownDaily.date, from),
-        lte(gatewayBreakdownDaily.date, to),
-      ),
-    );
-
-  const spendByModel = new Map<string, bigint>();
-  for (const row of rows) {
-    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
-  }
-  const ranked = [...spendByModel.entries()]
-    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
-    .map(([key]) => key);
-
+  const ranked = await rankModelsBySpend(from, to);
   const models = ranked.slice(0, EXCEPTION_MODEL_CAP);
   const skippedModels = ranked.slice(EXCEPTION_MODEL_CAP);
 
@@ -621,6 +604,111 @@ export async function getGatewayExceptions(from: string, to: string): Promise<Ga
     available: page.available,
     fetchedAt,
   };
+}
+
+/**
+ * How many aliases one latency sweep will ask about.
+ *
+ * The same number as the exception sweep and for the same reason — the proxy's
+ * query filters on `model_group` with no wildcard, so the only bound available
+ * is how many aliases are worth a round trip. Named separately because the two
+ * routes are separately capped: one reads the error table and the other scans
+ * the request log, so the day one of them has to be narrowed is not the day
+ * both do.
+ */
+export const LATENCY_MODEL_CAP = 12;
+
+/**
+ * How slowly each deployment answered over a window — fetched live and stored
+ * nowhere.
+ *
+ * The third read here that talks to the proxy while the caller waits, and the
+ * complement of the exception sweep: that one reads the error table and says
+ * why the failed calls failed, this one aggregates the request log and says how
+ * the successful ones performed. Both are keyed below the alias, which is the
+ * resolution at which a reserved pool that is refusing and slow can be told
+ * apart from the sibling covering for it.
+ *
+ * It is not stored for the same reason `/spend/logs` is not: the numbers are
+ * the proxy's own aggregation over a table it prunes on its own schedule, and a
+ * copy here would be a second thing to age. The aliases are chosen the same way
+ * too — from the window's own `model` usage ranked by spend, capped, with the
+ * ones left out reported rather than dropped.
+ */
+export async function getGatewayLatency(from: string, to: string): Promise<GatewayLatency> {
+  const fetchedAt = new Date().toISOString();
+  const client = createGatewayClient();
+  if (client === null) {
+    throw new GatewayLogsUnavailableError(
+      'GATEWAY_SOURCE is off — latency is aggregated by the proxy and there is nothing to read.',
+    );
+  }
+
+  const ranked = await rankModelsBySpend(from, to);
+  const models = ranked.slice(0, LATENCY_MODEL_CAP);
+  const skippedModels = ranked.slice(LATENCY_MODEL_CAP);
+
+  const page = await client.fetchModelLatency(from, to, models);
+
+  // One series per (alias, key) pair. The pair is the identity because the row
+  // itself carries only the key: LiteLLM reports a deployment under its
+  // api_base, and two aliases served from one Azure endpoint are one key with
+  // two different readings.
+  const series = new Map<string, { model: string; key: string; points: { date: string; secondsPerToken: number }[] }>();
+  for (const row of page.rows) {
+    const id = `${row.model} ${row.key}`;
+    const existing = series.get(id);
+    if (existing === undefined) {
+      series.set(id, {
+        model: row.model,
+        key: row.key,
+        points: [{ date: row.date, secondsPerToken: row.secondsPerToken }],
+      });
+    } else {
+      existing.points.push({ date: row.date, secondsPerToken: row.secondsPerToken });
+    }
+  }
+
+  return {
+    from,
+    to,
+    models,
+    skippedModels,
+    series: [...series.values()],
+    apiBases: page.apiBases,
+    available: page.available,
+    fetchedAt,
+  };
+}
+
+/**
+ * The window's model aliases, ranked by what they spent.
+ *
+ * Both per-model sweeps (`/model/metrics/exceptions` and `/model/metrics`) need
+ * the same list for the same reason: the proxy has no wildcard, so somebody has
+ * to decide which aliases are worth a round trip, and taking them from the
+ * window's own usage keeps the decision about traffic that exists rather than
+ * about a hard-coded list.
+ */
+async function rankModelsBySpend(from: string, to: string): Promise<string[]> {
+  const rows = await db
+    .select()
+    .from(gatewayBreakdownDaily)
+    .where(
+      and(
+        eq(gatewayBreakdownDaily.dimension, 'model'),
+        gte(gatewayBreakdownDaily.date, from),
+        lte(gatewayBreakdownDaily.date, to),
+      ),
+    );
+
+  const spendByModel = new Map<string, bigint>();
+  for (const row of rows) {
+    spendByModel.set(row.key, (spendByModel.get(row.key) ?? 0n) + row.spendNano);
+  }
+  return [...spendByModel.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] > a[1] ? 1 : -1))
+    .map(([key]) => key);
 }
 
 /** The one place a log row's money becomes dollars. */

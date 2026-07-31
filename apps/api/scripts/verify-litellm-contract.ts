@@ -31,6 +31,7 @@ import {
   budgetUtilization,
   classifyGatewayException,
   deploymentExceptionKey,
+  latencyDeploymentKey,
   parseBudgetDuration,
   resolveDeploymentModel,
   resolveModelPrice,
@@ -2419,6 +2420,173 @@ try {
   threw = String(error).includes('unexpected shape');
 }
 check(threw, 'a malformed envelope throws rather than reporting a clean gateway');
+
+// ------------------------------------------------------ GET /model/metrics
+//
+// The eighth envelope, and the second whose field names are data: one object
+// per day carrying `date` plus one key per deployment. Four traps live in it —
+// `_selected_model_group` defaults upstream to the literal "gpt-4-32k" so a
+// call without it answers an empty gateway, the values are *seconds per
+// completion token* rather than durations, the key is an `api_base` (so two
+// models behind one endpoint collapse upstream), and the handler answers a bare
+// `null` when its query matched nothing.
+
+const LAT_FROM = '2026-06-01';
+const LAT_TO = '2026-06-30';
+
+const latencyRows: Record<string, unknown[]> = {
+  'azure/gpt-4o': [
+    {
+      date: '2026-06-01',
+      'https://nocturne-weu.openai.azure.com/': 0.0071,
+      'https://nocturne-neu-ptu.openai.azure.com/': 0.0142,
+      // A key a newer proxy might carry beside the deployments. Not a number,
+      // so not a deployment.
+      note: 'partial day',
+      // AVG over an all-null group. Not measured, and never instant.
+      'https://nocturne-eus.openai.azure.com/': null,
+    },
+    { date: '2026-06-02', 'https://nocturne-weu.openai.azure.com/': 0.0069 },
+    // A row whose date this client cannot place cannot go on a spine.
+    { date: 'Jun 03', 'https://nocturne-weu.openai.azure.com/': 0.5 },
+  ],
+  'bedrock/claude': [
+    // No URL, so the key is the backend model string — the other branch of
+    // latencyDeploymentKey, live in the same sweep.
+    { date: '2026-06-01', 'bedrock/claude': 0.0043 },
+  ],
+};
+
+const latencySweep = await withProxy(
+  (captured) =>
+    captured.path === '/model/metrics'
+      ? {
+          status: 200,
+          body: {
+            data: latencyRows[captured.query.get('_selected_model_group') ?? ''] ?? [],
+            all_api_bases: ['https://nocturne-weu.openai.azure.com/'],
+          },
+        }
+      : { status: 404, body: { detail: 'unknown route' } },
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, [
+      'azure/gpt-4o',
+      'bedrock/claude',
+    ]);
+    return { page, calls: [...proxy.calls] };
+  },
+);
+
+check(
+  latencySweep.calls.length === 2 && latencySweep.calls.every((call) => call.path === '/model/metrics'),
+  `one call per alias here too — the same model_group filter, the same absence of a wildcard (${latencySweep.calls.length})`,
+);
+check(
+  latencySweep.calls[0]?.query.get('_selected_model_group') === 'azure/gpt-4o' &&
+    latencySweep.calls[1]?.query.get('_selected_model_group') === 'bedrock/claude',
+  'every call names its model group — omitting it would silently ask about the proxy\'s "gpt-4-32k" default',
+);
+check(
+  latencySweep.calls[0]?.query.get('startTime') === `${LAT_FROM}T00:00:00` &&
+    latencySweep.calls[0]?.query.get('endTime') === `${LAT_TO}T23:59:59`,
+  'the window is sent as datetimes, ending at the end of the last day',
+);
+
+const weu = latencySweep.page.rows.filter(
+  (row) => row.key === 'https://nocturne-weu.openai.azure.com/',
+);
+check(
+  latencySweep.page.available && weu.length === 2,
+  `each day's numeric key becomes one reading for that deployment (${weu.length})`,
+);
+check(
+  weu[0]?.secondsPerToken === 0.0071 && weu[0]?.date === '2026-06-01',
+  'the value is carried through unconverted — seconds per completion token, never a duration',
+);
+check(
+  weu.every((row) => row.model === 'azure/gpt-4o'),
+  'the alias comes from the query, since the row carries only a date and deployment keys',
+);
+check(
+  !latencySweep.page.rows.some((row) => row.key === 'note'),
+  'a non-numeric extra field is ignored, never coerced into a deployment',
+);
+check(
+  !latencySweep.page.rows.some((row) => row.key.includes('eus')),
+  'a null average is dropped — an unmeasured deployment is not an instant one',
+);
+check(
+  !latencySweep.page.rows.some((row) => row.date === 'Jun 03'),
+  'a row whose date is not an ISO day is dropped rather than placed by guesswork',
+);
+check(
+  latencySweep.page.rows.some((row) => row.key === 'bedrock/claude') &&
+    latencyDeploymentKey('bedrock/claude', null) === 'bedrock/claude',
+  'a deployment with no api_base is keyed by its model string, and the health row rebuilds the same key',
+);
+check(
+  latencySweep.page.apiBases.length === 1 &&
+    latencySweep.page.apiBases[0] === 'https://nocturne-weu.openai.azure.com/',
+  'all_api_bases is merged across the sweep and kept as evidence beside the readings',
+);
+
+const nullBody = await withProxy(
+  replier({ '/model/metrics': { status: 200, body: null } }),
+  async (proxy) => client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, ['azure/gpt-4o']),
+);
+check(
+  nullBody.available && nullBody.rows.length === 0,
+  'a bare null body is the proxy saying "nothing matched" — available, with no readings',
+);
+
+const latencyEmpty = await withProxy(
+  replier({ '/model/metrics': { status: 200, body: { data: [], all_api_bases: [] } } }),
+  async (proxy) => client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, ['azure/gpt-4o']),
+);
+check(
+  latencyEmpty.available && latencyEmpty.rows.length === 0,
+  'and so is an empty envelope — neither is a refusal',
+);
+
+const latencyNoAliases = await withProxy(
+  replier({ '/model/metrics': { status: 200, body: { data: [], all_api_bases: [] } } }),
+  async (proxy) => {
+    const page = await client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, []);
+    return { page, calls: proxy.calls.length };
+  },
+);
+check(
+  latencyNoAliases.calls === 0 && latencyNoAliases.page.available,
+  'no aliases fetches nothing rather than everything, exactly as on the exception sweep',
+);
+
+for (const status of [401, 403, 404, 405, 501]) {
+  const refused = await withProxy(
+    replier({ '/model/metrics': { status, body: { detail: 'no' } } }),
+    async (proxy) => {
+      const page = await client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, [
+        'azure/gpt-4o',
+        'bedrock/claude',
+      ]);
+      return { page, calls: proxy.calls.length };
+    },
+  );
+  check(
+    !refused.page.available && refused.page.rows.length === 0 && refused.calls === 1,
+    `${status} stands the latency sweep down after one call — disable_spend_logs empties this route too`,
+  );
+}
+
+let latencyThrew = false;
+try {
+  await withProxy(
+    replier({ '/model/metrics': { status: 200, body: { data: 'not a list' } } }),
+    async (proxy) => client(proxy.baseUrl).fetchModelLatency(LAT_FROM, LAT_TO, ['azure/gpt-4o']),
+  );
+} catch (error) {
+  latencyThrew = String(error).includes('unexpected shape');
+}
+check(latencyThrew, 'a malformed envelope throws rather than reporting a fast gateway');
 
 // -------------------------------------------------------------------- done
 

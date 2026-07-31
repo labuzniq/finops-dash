@@ -12,6 +12,7 @@ import {
 import { getGatewayNotifications } from '../services/gateway-notify.js';
 import {
   EXCEPTION_MAX_WINDOW_DAYS,
+  LATENCY_MAX_WINDOW_DAYS,
   SPEND_LOG_MAX_WINDOW_DAYS,
   SPEND_LOG_ROW_CAP,
 } from '@dash/shared';
@@ -23,6 +24,7 @@ import {
   getGatewayDeploymentHistory,
   getGatewayExceptions,
   getGatewayHealth,
+  getGatewayLatency,
   getGatewayModels,
   getGatewaySpendLogs,
   getGatewayUsage,
@@ -276,6 +278,44 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
     try {
       return await getGatewayExceptions(from, to);
+    } catch (error) {
+      if (error instanceof GatewayLogsUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * How slowly each deployment answered over a window, per day.
+   *
+   * Live and storing nothing, like `/logs` and `/exceptions`. It reads the
+   * proxy's own aggregation over `LiteLLM_SpendLogs` — the whole window rather
+   * than the head of it, which is the one thing the request sample cannot do —
+   * and the number it answers is *seconds per completion token*, so nothing
+   * derived from it is a request duration.
+   *
+   * The window is capped at a month for the same two reasons the exception
+   * route is: the proxy's own default here is thirty days, and the table
+   * underneath is pruned on the request log's schedule rather than the
+   * aggregates' ninety days.
+   */
+  app.get('/api/gateway/latency', async (request, reply) => {
+    const parsed = rangeQuery.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'Invalid query', issues: parsed.error.issues });
+    }
+    const { from, to } = parsed.data;
+    const days = Math.round(
+      (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000 + 1,
+    );
+    if (days > LATENCY_MAX_WINDOW_DAYS) {
+      return reply.code(400).send({
+        error: `Latency may be read ${LATENCY_MAX_WINDOW_DAYS} days at a time — asked for ${days}.`,
+      });
+    }
+    try {
+      return await getGatewayLatency(from, to);
     } catch (error) {
       if (error instanceof GatewayLogsUnavailableError) {
         return reply.code(503).send({ error: error.message });

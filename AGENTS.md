@@ -442,6 +442,27 @@ the reading does not name reads *not in the reading* rather than healthy. Unread
 answered-with-nothing are three separate silences, an alias the cap left out is **unread rather than
 clean**, and the card feeds no digest finding: the fault it would name is already the health card's
 `degraded`, and what it adds is the reason under that finding.
+`GET /api/gateway/latency?from=&to=` is the third live read and the sibling of that one:
+`/model/metrics` over the same `LiteLLM_SpendLogs` the request sample draws from, only aggregated
+by the proxy over *every* row in the window rather than the head of it. An **eighth envelope**, and
+the second whose field names are data — one object per day carrying `date` plus one numeric key per
+deployment. Four of its rules are load-bearing: `_selected_model_group` defaults upstream to the
+literal `gpt-4-32k`, so a call without it answers `200` with an empty gateway (the same family of
+trap as `summarize=true` and an ignored `size`); the value is **seconds per completion token**
+averaged *per request*, so it is a rate and never a duration, sensitive to short answers, and the
+only transformation that adds no claim is its reciprocal (`tokensPerSecond`); the row key is an
+`api_base` where there is one and the backend model string where there is not, cut at `/openai/`,
+so two models behind one endpoint collapse upstream and the alias has to be carried back by the
+caller — `latencyDeploymentKey` in `@dash/shared` is that join, one-directional like
+`deploymentExceptionKey`; and a bare `null` body is the proxy's own "nothing matched" rather than an
+absent route, which is why this is the one read that goes through `getJsonResult`. Because it reads
+the request log, `disable_spend_logs` empties it, cache hits are excluded upstream, and a deployment
+with no completion tokens is absent rather than instant. `summarizeGatewayLatency` rolls a window up
+per key and per day with exactly one threshold of its own — `LATENCY_ELEVATED_RATIO` (1.5×) gated on
+`LATENCY_MIN_DAYS` — which is one more than the exception layer allows itself and one fewer gate than
+the reliability badge: every key here is measured in the same unit, so "slower than the rest of this
+gateway" is supported, while the proxy averaged the requests away, so significance is not. The daily
+reading is a median across the keys that reported, never a sum, because rates do not add.
 **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. `GET /api/gateway/probe` and `GatewayProbePanel` (on the `Data sources`
@@ -506,6 +527,14 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   `failed_requests`, nothing derived from it may be rendered as a failure rate or a share of
   traffic, and an answer with no rows means "no errors *recorded*". The proxy's `total_exceptions`
   is never read as a total: upstream it counts distinct exception classes.
+- **Latency is a rate, per completion token.** `/model/metrics` answers
+  `AVG(seconds / completion_tokens)` over requests, so nothing derived from it may be rendered as a
+  request duration, an SLA figure or a percentile — the one transformation that adds no claim is its
+  reciprocal (`tokensPerSecond`). It carries no request counts, so a badge on it can only ever be a
+  materiality ratio gated on days observed, never a significance test; a day's reading is a median
+  across keys and never a sum, because rates do not add; and it reads the request log rather than the
+  aggregates, so `disable_spend_logs` empties it and a deployment with no completion tokens is absent
+  rather than instant.
 - **`prompt_tokens` is the whole input; both cache counters are inside it.**
   `CACHE_TOKENS_INSIDE_PROMPT_TOKENS` in `@dash/shared` is the one statement, read through
   `inputTokens`, `uncachedInputTokens` and `cacheReadShare`. Nothing may add a cache counter to

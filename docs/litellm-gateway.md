@@ -449,6 +449,76 @@ may be rendered as a failure rate. The mock reproduces that gap deliberately
 (`ERROR_LOG_COVERAGE`), because a generator whose two tables agreed to the unit
 would teach a derivation to assume something no proxy guarantees.
 
+### The latency aggregate (the only speed reading that covers the window)
+
+The gateway exports latency in exactly two places and they answer different
+questions. `/spend/logs` carries `request_duration_ms` per row — the truth for
+the rows it returns and a *biased* sample of the window, since the route has no
+sampling parameter, answers the head of the range and is capped at a few
+thousand rows out of millions. The other place is the sibling of the exception
+route, where the proxy does the aggregation itself over every row it kept:
+
+```
+GET /model/metrics?_selected_model_group=&startTime=&endTime=
+  → { "data": [ { "date": "2026-06-01",
+                  "https://nocturne-weu.openai.azure.com/": 0.0071,
+                  "bedrock/anthropic.claude-haiku-4-v1:0": 0.0043 } ],
+      "all_api_bases": ["https://nocturne-weu.openai.azure.com/", …] }
+```
+
+An **eighth envelope**, and the second whose field names are data: one object
+per day carrying `date` plus one key per deployment. The parse takes `date` and
+reads every remaining numeric key as a deployment, the mirror image of the
+exception parse.
+
+Four things about it are load-bearing, and three of them are traps:
+
+- **`_selected_model_group` defaults upstream to the literal `"gpt-4-32k"`** —
+  not to "everything". A call without it answers `200` with an empty `data` and
+  an empty `all_api_bases`, which reads exactly like a gateway that served no
+  traffic. The client always sends it, the same rule as `summarize=false` on
+  `/spend/logs` and `page_size` on `/user/list`.
+- **The value is seconds per completion token, averaged per request.** The SQL
+  is `AVG(EXTRACT(epoch FROM ("endTime" - "startTime")) / NULLIF("completion_tokens", 0))`
+  — a mean of per-request *ratios*, not total seconds over total tokens. So it
+  is a rate rather than a duration (multiplying it by anything asserts a
+  completion length this payload does not carry), and it is sensitive to short
+  answers, which carry the whole connection overhead in their ratio. The one
+  honest re-reading is its reciprocal, tokens per second. `tokensPerSecond` in
+  `@dash/shared` is that, and there is deliberately nothing else.
+- **The key is an `api_base`, not a deployment.** LiteLLM names the column the
+  `api_base` where there is one and the backend model string where there is not,
+  then cuts anything after `/openai/`. Two backend models behind one endpoint
+  therefore collapse onto one key *within a single response*, last row winning
+  for that day — which is why the alias has to be carried back by the caller and
+  why `latencyDeploymentKey(backend, apiBase)` in `@dash/shared` exists rather
+  than a parse. It is the same one-directional join rule as
+  `deploymentExceptionKey`, over a different formula.
+- **A `null` body is an empty answer, not an absent route.** The handler falls
+  off the end of its `if db_response is not None` branch and FastAPI serialises
+  the implicit `None`, so a bare `null` is the proxy saying "nothing matched".
+  Reading it as a refusal would report a working gateway as one without the
+  endpoint, which is why this is the one read that goes through
+  `getJsonResult` rather than `getJson`.
+
+And what it shares with the request log rather than with the aggregates: it
+reads `LiteLLM_SpendLogs`, so `disable_spend_logs` empties this route too, its
+retention is the log's rather than the aggregates' ninety days, cache hits are
+excluded upstream (`cache_hit != 'True'` — a cached answer has no backend
+latency to report), and a deployment that only ever embedded is absent
+altogether (`HAVING SUM(completion_tokens) > 0`).
+
+`summarizeGatewayLatency` rolls a window up per key and per day and carries
+exactly one threshold of its own — `LATENCY_ELEVATED_RATIO` (1.5×) gated on
+`LATENCY_MIN_DAYS` (3). That is one more than the exception layer allows itself
+and one *fewer gate* than the reliability card's badge, and both differences are
+the payload's: every key here is measured in the same unit as every other key,
+so "slower than the rest of this gateway" is a comparison the data supports —
+but the proxy averaged the requests away, so there are no counts, no interval to
+compute and no significance to claim. The badge is a materiality statement and
+the minimum-days gate is the only evidence gate available. The day-level reading
+is a **median across the keys that reported**, never a sum: rates do not add.
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -710,6 +780,18 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   upstream it counts distinct exception classes, so a pool with four thousand
   rate limits and seven timeouts reports `2`. The count is ours, summed from the
   classes, with the proxy's figure carried beside it as evidence.
+- **Latency is a rate, and the rate is per completion token.** `/model/metrics`
+  answers `AVG(seconds / completion_tokens)` over requests — a mean of
+  per-request ratios, so nothing derived from it may be rendered as a request
+  duration, an SLA figure or a percentile, and the only transformation that adds
+  no claim is its reciprocal (`tokensPerSecond`). It carries no request counts
+  at all, which is why the badge on it is a materiality ratio gated on days
+  observed and never a significance test: there is nothing to compute an
+  interval from. The day-level reading is a median across keys, never a sum,
+  because rates do not add. And it reads the request log rather than the
+  aggregates, so `disable_spend_logs` empties it, cache hits are excluded
+  upstream, and a deployment with no completion tokens is absent rather than
+  instant.
 - **Zero is a fact, not a gap.** Unlike the Copilot metrics, every counter here
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
@@ -973,6 +1055,7 @@ $3.26 per million input tokens against $2.18 gateway-wide, which
 | `GET` | `/api/gateway/notifications?days=` | `{ notifications, deliveryConfigured, open, pending, evaluatedAt }` — governance findings and whether they left the building. Every open episode plus the ones that closed inside `days` (default 30, max 365). The only gateway read about the dashboard's own behaviour rather than the proxy's. |
 | `GET` | `/api/gateway/logs?from=&to=&limit=` | `{ from, to, rows, available, truncated, fetchedAt }` — a sample of individual requests, fetched **live** from `/spend/logs` and stored nowhere. The joint-keyed evidence layer: every dimension on one row, plus the deployment that served it and how long it took. Window capped at 7 days, rows at 5,000 (`limit` may lower it, never raise it); `400` for a wider window or an inverted one, `503` while the source is `off`. `available: false` means the proxy keeps no logs, which is a supported way to run one — not an error, and not "no requests". |
 | `GET` | `/api/gateway/exceptions?from=&to=` | `{ from, to, models, skippedModels, deployments, available, fetchedAt }` — why the failed calls in a window failed, per deployment, fetched **live** from `/model/metrics/exceptions` and stored nowhere. One proxy call per alias (the route has no wildcard), aliases taken from the window's own `model` usage ranked by spend and capped at `EXCEPTION_MODEL_CAP` (12) with the rest reported as `skippedModels`. Window capped at `EXCEPTION_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. `available: false` means the route was refused or is absent; an empty answer means no errors were *recorded*, which on a proxy running `disable_error_logs` is a different claim from none happening. |
+| `GET` | `/api/gateway/latency?from=&to=` | `{ from, to, models, skippedModels, series, apiBases, available, fetchedAt }` — how slowly each deployment answered, per day, fetched **live** from `/model/metrics` and stored nowhere. One proxy call per alias like the exception sweep, aliases taken from the window's own `model` usage ranked by spend and capped at `LATENCY_MODEL_CAP` (12). Window capped at `LATENCY_MAX_WINDOW_DAYS` (31), `400` beyond it, `503` while the source is `off`. Values are **seconds per completion token**, never durations; keys are `api_base`-shaped, so the alias is carried beside them. `available: false` means refused, absent, or a proxy running `disable_spend_logs` — never "the gateway was fast". |
 | `GET` | `/api/gateway/probe` | A live connection check — see below. Reads no table, writes nothing, and always answers `200`: a dead proxy is a result, not an error. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
@@ -2576,6 +2659,22 @@ checked in both directions — a row with no id and one with no clock are droppe
 while the rest of the sample survives, but an envelope that is neither shape
 still throws.
 
+`/model/metrics` gets a section of its own, and what it pins first is again the
+parameter that fails quietly: `_selected_model_group` must be on the wire for
+every call, because its upstream default is the literal `"gpt-4-32k"` and a call
+without it answers `200` with an empty gateway. Then the envelope's own rules —
+one call per alias with no wildcard, the window as datetimes ending at the end
+of the last day, each day's numeric keys becoming one reading per deployment
+with the value carried through unconverted, a non-numeric extra ignored, a
+`null` average dropped (unmeasured is not instant), a row whose `date` is not an
+ISO day dropped rather than placed by guesswork, both branches of
+`latencyDeploymentKey` live in one sweep (an Azure base and a Bedrock model
+string), and `all_api_bases` merged across the sweep as evidence. Three silences
+are kept apart at the end: a bare `null` body and an empty envelope are both
+*available with nothing to report*, while 401/403/404/405/501 stand the sweep
+down after one call — `disable_spend_logs` empties this route too — and a
+malformed envelope still throws rather than reporting a fast gateway.
+
 A section then checks the pure budget arithmetic in `@dash/shared`,
 because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
 `1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
@@ -2681,6 +2780,32 @@ window asked twice answers identically. The last check is the invariant itself:
 the exception total and the ledger's `failed_requests` disagree, on purpose. Run
 it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-exceptions.ts`.
+
+`apps/api/scripts/verify-gateway-latency.ts` covers the latency layer in the
+same two halves. The **pure** half pins the two rules the payload forces. The
+first is the key: `latencyDeploymentKey` reproduces LiteLLM's own collapse — a
+deployment with a URL is keyed by the URL, one without is keyed by its backend
+model string, everything from `/openai/` onwards is cut, a base that is not a
+URL is not a key at all, and two models behind one endpoint land on one key,
+which is a fact about the proxy rather than a bug to repair. The second is the
+badge: a key 1.5× the median on enough days is flagged, the same rate on one day
+is not, and a key above the median but under the ratio reports the ratio and no
+badge — with the fixture built so the median itself is *not* dragged by the
+outliers it is meant to find, which is the argument for a median. The roll-up is
+checked around them (means unweighted, points sorted, the daily reading a median
+across keys and never a sum, a zero rate dropped rather than ranked as instant)
+and so are the two silences: a refused route is never an empty one. The **mock**
+half drives `fetchModelLatency` and checks the claim the layer adds to the other
+cards: the reserved pool behind `azure/gpt-4o` is measurably slower than the
+sibling behind the same alias and is the deployment the badge lands on, while
+the alias in front of it bills every day and fails ordinarily — so the same
+deployment `/health` calls failing and the exception log calls rate-limited is
+slow on a third, independent payload. The reasoning deployment is checked as the
+contrast (slower than the median, deliberately under the gate, which is what
+makes the badge a finding), a Bedrock deployment's worst day is an incident day,
+both key branches appear in one payload, and the same window asked twice answers
+identically. Run it with
+`set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-gateway-latency.ts`.
 
 `apps/api/scripts/verify-gateway-exceptions-view.ts` covers what the *page* does
 with those rows. Its **pure** half keeps the three silences apart (unread,
@@ -2858,6 +2983,29 @@ job's error string.
     never read as a total — but the two figures agreeing would become the
     signal that the upstream bug is gone.
 
+19. **Does `/model/metrics` answer fast enough on a corporate gateway, and does
+    it still key by `api_base`?** The query is a grouped scan of
+    `LiteLLM_SpendLogs` — the largest table the proxy keeps — filtered to one
+    `model_group` and a window of weeks, so a sweep is a dozen of them back to
+    back. The client gives each call a minute and the API caps the window at 31
+    days, but whether that is generous or hopeless on a gateway with a hundred
+    million log rows is not answerable from here. The second half matters more
+    for what the numbers *mean*: two deployments behind one Azure endpoint
+    collapse onto one key upstream, so on a proxy that fronts several models per
+    endpoint the per-deployment reading is really a per-endpoint one. The way to
+    tell is to compare the key count here against the deployment count in
+    `/health` on the same proxy.
+
+20. **Is the per-token average comparable across this gateway's workloads?** It
+    is a mean of per-request ratios, so a deployment answering one-token
+    classifications reads slower per token than the same hardware writing long
+    documents, and the difference is the connection overhead rather than the
+    model. That is fine for comparing a deployment against itself over time and
+    against its siblings behind the same alias — which is what the badge does —
+    and it is why nothing here ranks two *aliases* against each other as "the
+    slow one". Whether the corporate mix is uniform enough that the ranking
+    reads sensibly anyway is a question for a real payload.
+
 ## Not yet built
 
 Governance is now rendered end to end across all four scopes
@@ -2986,6 +3134,27 @@ Governance is now rendered end to end across all four scopes
   no denominator, so significance would have to be borrowed from the ledger, and
   a badge whose numbers come from a different table is exactly the disagreement
   the digest rule exists to prevent.
+
+- **A view on the latency aggregate.** The API reads `/model/metrics` end to
+  end — `GET /api/gateway/latency` sweeps the window's aliases and
+  `summarizeGatewayLatency` rolls the readings up per deployment key and per day
+  — and nothing renders it yet. The card it is waiting for belongs directly
+  under the request sample, because the two answer the same question at
+  different resolutions and the honest reading needs both: this layer covers
+  every request in the window and knows nothing about individual calls, while
+  the sample carries real durations for the head of it. The shape is already
+  forced by the layer — a read on a press rather than on mount (a sweep is a
+  round trip per alias, the same argument the exception card makes), a window
+  taken from the tail of the trimmed spine, three silences kept apart, and a
+  unit that is stated rather than converted: seconds per completion token, or
+  its reciprocal, and never a request duration.
+
+  What such a card must *not* do is feed the attention digest, for the reason
+  the exception card does not: the deployment its badge would name is already
+  the health card's `degraded` or the reliability card's elevated key, and the
+  digest never carries two findings about one subject. What it adds is the
+  evidence under an existing finding — a pool that is refusing *and* slow — not
+  a new one.
 
 - **Acting on a budget.** The card is read-only, deliberately: raising a cap is
   a `POST /key/update` against production inference for the whole corporation,

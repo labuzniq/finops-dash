@@ -17,7 +17,12 @@
  * traffic is a subset of the same requests, so it sums to less than the day.
  */
 
-import { budgetCounterResets, deploymentExceptionKey, SPEND_LOG_ROW_CAP } from '@dash/shared';
+import {
+  budgetCounterResets,
+  deploymentExceptionKey,
+  latencyDeploymentKey,
+  SPEND_LOG_ROW_CAP,
+} from '@dash/shared';
 import type {
   GatewayBudgetScope,
   GatewayDimension,
@@ -36,6 +41,8 @@ import type {
   GatewayExceptionPage,
   GatewayExceptionRecord,
   GatewayHealthSnapshot,
+  GatewayLatencyPage,
+  GatewayLatencyRecord,
   GatewayModelSnapshot,
   GatewaySnapshot,
   GatewaySpendLogPage,
@@ -608,6 +615,61 @@ function deploymentApiBase(provider: string, region: string): string | null {
   return provider === 'azure'
     ? `https://nocturne-${region}.openai.azure.com/`
     : `https://nocturne-${region}.services.ai.azure.com/`;
+}
+
+/**
+ * Seconds of wall clock per completion token for one deployment on one day —
+ * the number `/model/metrics` reports, built the way the proxy computes it.
+ *
+ * Two terms, because the proxy's average is a mean of per-request *ratios*
+ * rather than total seconds over total tokens: the generation cost per token,
+ * which is a property of the deployment, plus the connection overhead divided
+ * by however many tokens a typical answer carried, which is a property of the
+ * workload. That second term is why a deployment serving short answers reads
+ * slower per token than the same hardware serving long ones, and it is the one
+ * thing about this metric a reader has to know before comparing two rows.
+ */
+function latencySecondsPerToken(
+  model: MockModel,
+  date: string,
+  incident: boolean,
+  onPtu: boolean,
+): number {
+  // Bigger models generate more slowly; the reasoning deployment slowest of
+  // all, and still comfortably under the badge the failing pool earns.
+  const perToken =
+    model.id === 'azure/o4-mini'
+      ? 0.0092
+      : model.outputPerMillion >= 10
+        ? 0.0074
+        : model.outputPerMillion >= 4
+          ? 0.0061
+          : 0.0048;
+  // Typical answer length for this deployment's traffic, which is what the
+  // fixed overhead is spread over.
+  const completionTokens = model.outputPerMillion >= 10 ? 380 : 260;
+  const overheadSeconds = 0.26;
+
+  // Deterministic day-to-day movement — a hash rather than the shared Lehmer
+  // stream, so this route answers the same window the same way whatever else
+  // has been generated first, and moves no existing number by a nano-dollar.
+  const wobble = 0.94 + (dayHash(`${date} ${model.id} ${onPtu ? 'ptu' : 'std'}`) % 130) / 1000;
+
+  const base = (perToken + overheadSeconds / completionTokens) * wobble;
+  // A region falling over answers its surviving calls late; a reserved pool
+  // that is refusing is slow before it gives up — the same 1.9× the request
+  // sample gives it.
+  return base * (incident ? 1.6 : 1) * (onPtu ? 1.9 : 1);
+}
+
+/** A stable non-negative hash of a string. Deterministic across processes. */
+function dayHash(value: string): number {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619) >>> 0;
+  }
+  return hash;
 }
 
 /** Fixed Lehmer seed — identical output across restarts. */
@@ -1314,6 +1376,105 @@ export class MockGatewayClient implements GatewayClient {
       'mock gateway model exceptions generated',
     );
     return { rows, available: true };
+  }
+
+  /**
+   * Per-deployment latency — what `GET /model/metrics` answers, and the one
+   * reading of speed that covers the whole window rather than a capped sample.
+   *
+   * Generated from the same per-token cost the request-log stream already uses
+   * (5–9ms a token plus a fixed connection overhead), so the two sources agree
+   * about the gateway without being the same numbers: this route reports the
+   * proxy's own daily *mean of per-request ratios*, and `/spend/logs` reports
+   * individual durations. Three things are planted here on purpose:
+   *
+   *  - **The refusing PTU pool is also slow.** The reserved deployment behind
+   *    `azure/gpt-4o` reads roughly twice its sibling's seconds per token — the
+   *    same 1.9× the request sample gives it — so the pool that `/health` calls
+   *    failing and the exception log calls rate-limited is measurably worse
+   *    here too, on a third independent payload, while the alias's own billing
+   *    stays ordinary.
+   *  - **The incident days are slower, not just failing.** A region that is
+   *    falling over answers its surviving calls late, so the 17th and 18th
+   *    carry a visible bump for the Bedrock deployments rather than only a
+   *    failure count.
+   *  - **The reasoning deployment is slower per token and stays under the
+   *    badge.** `azure/o4-mini` is genuinely slower than the chat models and
+   *    materially faster than the failing pool, which is what makes
+   *    `LATENCY_ELEVATED_RATIO` a finding rather than a list of everything
+   *    above the median.
+   *
+   * A note on the keys, because they are the route's trap: LiteLLM reports a
+   * deployment under its `api_base` when it has one, so every Azure model in
+   * this generator shares one key and is told apart only by the alias each call
+   * was scoped to. The Bedrock deployments carry no URL and are keyed by their
+   * model string. Both branches of `latencyDeploymentKey` are therefore live in
+   * this payload.
+   *
+   * Deterministic arithmetic rather than a draw from the shared stream, the same
+   * rule the exception generator follows: this route answers a window, and
+   * asking twice has to answer the same.
+   */
+  async fetchModelLatency(
+    from: string,
+    to: string,
+    models: readonly string[],
+  ): Promise<GatewayLatencyPage> {
+    const dates = eachDay(from, to);
+    if (models.length === 0 || dates.length === 0) {
+      return { rows: [], apiBases: [], available: true };
+    }
+
+    const rows: GatewayLatencyRecord[] = [];
+    const apiBases = new Set<string>();
+
+    for (const alias of models) {
+      const model = MODELS.find((candidate) => candidate.id === alias);
+      // An alias this proxy never routed has no logs to average, which is not
+      // the same as being instant — it simply does not appear.
+      if (model === undefined) continue;
+
+      const base = deploymentApiBase(model.provider, 'weu');
+      const key = latencyDeploymentKey(model.id, base);
+      if (base !== null) apiBases.add(latencyDeploymentKey(model.id, base));
+
+      const ptuKey =
+        model.id === MULTI_DEPLOYMENT_MODEL
+          ? latencyDeploymentKey(model.id, deploymentApiBase('azure', 'neu-ptu'))
+          : null;
+      if (ptuKey !== null) apiBases.add(ptuKey);
+
+      for (const date of dates) {
+        const incident =
+          model.provider === INCIDENT_PROVIDER &&
+          INCIDENT_DAYS_OF_MONTH.has(Number(date.slice(8, 10)));
+        const seconds = latencySecondsPerToken(model, date, incident, false);
+        rows.push({ model: alias, key, date, secondsPerToken: seconds });
+
+        if (ptuKey !== null) {
+          rows.push({
+            model: alias,
+            key: ptuKey,
+            date,
+            secondsPerToken: latencySecondsPerToken(model, date, incident, true),
+          });
+        }
+      }
+    }
+
+    log.info(
+      {
+        dash: {
+          from,
+          to,
+          models: models.length,
+          points: rows.length,
+          keys: new Set(rows.map((row) => `${row.model} ${row.key}`)).size,
+        },
+      },
+      'mock gateway model latency generated',
+    );
+    return { rows, apiBases: [...apiBases].sort(), available: true };
   }
 
   /**
