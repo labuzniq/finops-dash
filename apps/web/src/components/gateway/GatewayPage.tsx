@@ -20,6 +20,7 @@ import { attributeAnomaly, detectSpendAnomalies } from '../../lib/metrics/gatewa
 import { deriveBudgets } from '../../lib/metrics/gatewayBudgets.js';
 import { deriveBudgetHistory } from '../../lib/metrics/gatewayBudgetHistory.js';
 import { deriveGatewayCache, hasCacheActivity } from '../../lib/metrics/gatewayCache.js';
+import { deriveCatalog, hasCatalog } from '../../lib/metrics/gatewayCatalog.js';
 import {
   CHARGEBACK_DIMENSIONS,
   chargebackMonths,
@@ -46,6 +47,7 @@ import {
   useGatewayChargebackData,
   useGatewayComparisonData,
   useGatewayCoverage,
+  useGatewayModels,
   useGatewaySealHistory,
   useGatewaySeals,
   useGatewayData,
@@ -64,6 +66,7 @@ import { GatewayAttentionCard } from './GatewayAttentionCard.js';
 import { GatewayBreakdownCard } from './GatewayBreakdownCard.js';
 import { GatewayBudgetCard } from './GatewayBudgetCard.js';
 import { GatewayCacheCard } from './GatewayCacheCard.js';
+import { GatewayCatalogCard } from './GatewayCatalogCard.js';
 import { GatewayChargebackCard } from './GatewayChargebackCard.js';
 import { GatewayCoverageNote } from './GatewayCoverageNote.js';
 import { GatewayForecastCard } from './GatewayForecastCard.js';
@@ -462,6 +465,23 @@ export function GatewayPage({ sync }: GatewayPageProps) {
     [summary.daily, usageQuery.data, activeDimension],
   );
 
+  // The price list, joined to the `model` dimension — pinned to that constant
+  // rather than the switcher for the same reason the agent and adoption cards
+  // are pinned to theirs: a catalogue prices models, and "what does a team cost
+  // per million tokens" is a question about a workload's mix, not about a rate.
+  // The rows come from the same ranked breakdown the table renders, so the two
+  // cards can never disagree about what a model cost.
+  const catalogQuery = useGatewayModels(configured);
+  const catalog = useMemo(
+    () =>
+      deriveCatalog(
+        summary.breakdowns.model,
+        catalogQuery.data?.models ?? [],
+        summary.totals.spend,
+      ),
+    [summary.breakdowns.model, catalogQuery.data, summary.totals.spend],
+  );
+
   // The one card that does not follow the dimension switcher: `mcp_server` is
   // a subset of the same requests rather than a peer slice, so it is the only
   // dimension the totals can legitimately be split *by*. Reading it through the
@@ -772,6 +792,17 @@ export function GatewayPage({ sync }: GatewayPageProps) {
           </div>
 
           <div id="gateway-cache">{hasCacheActivity(cache) && <GatewayCacheCard summary={cache} />}</div>
+
+          {/*
+            Directly under the cache card on purpose: that card reports tokens
+            and refuses dollars because the daily row carries one spend covering
+            four kinds of token, and this is the list of rates that would price
+            them apart — read as an estimate beside the bill, never instead of
+            it.
+          */}
+          <div id="gateway-catalog">
+            {hasCatalog(catalog) && <GatewayCatalogCard summary={catalog} />}
+          </div>
 
           {hasAgentTraffic(agents) && <GatewayAgentsCard summary={agents} />}
 

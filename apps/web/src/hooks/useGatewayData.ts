@@ -4,6 +4,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayModels,
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
@@ -13,6 +14,7 @@ import {
   fetchGatewayBudgetHistory,
   fetchGatewayBudgets,
   fetchGatewayCoverage,
+  fetchGatewayModels,
   fetchGatewayProbe,
   fetchGatewaySealHistory,
   fetchGatewaySeals,
@@ -127,6 +129,25 @@ export function useGatewayBudgetHistory(days: number, enabled: boolean) {
   return useQuery<GatewayBudgetHistory>({
     queryKey: ['gateway', 'budget-history', days],
     queryFn: () => fetchGatewayBudgetHistory(days),
+    enabled,
+  });
+}
+
+/**
+ * The proxy's price list, cached like the budget snapshot and for the same
+ * reason: it is configuration, it has no date range and no history, and every
+ * full sync replaces it wholesale.
+ *
+ * Gated on the gateway being configured. A proxy that refuses `/model/info` to
+ * an analytics-only credential answers an empty catalogue rather than an error,
+ * so "no catalogue" and "no permission" are indistinguishable from here — the
+ * card stands itself down either way, and the probe panel is what tells them
+ * apart.
+ */
+export function useGatewayModels(enabled: boolean) {
+  return useQuery<GatewayModels>({
+    queryKey: ['gateway', 'models'],
+    queryFn: fetchGatewayModels,
     enabled,
   });
 }

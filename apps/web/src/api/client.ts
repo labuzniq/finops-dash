@@ -5,6 +5,7 @@ import type {
   GatewayBudgetHistory,
   GatewayBudgets,
   GatewayCoverage,
+  GatewayModels,
   GatewayProbe,
   GatewaySealHistory,
   GatewaySeals,
@@ -248,6 +249,17 @@ export function fetchGatewayBudgets(): Promise<GatewayBudgets> {
  */
 export function fetchGatewayBudgetHistory(days: number): Promise<GatewayBudgetHistory> {
   return request<GatewayBudgetHistory>(`/gateway/budgets/history?days=${days}`);
+}
+
+/**
+ * The proxy's configured price list — one row per public model alias.
+ *
+ * Configuration rather than usage, like the budget snapshot: no date range, no
+ * history, replaced wholesale by every full sync. It is what the recorded spend
+ * is *compared against*, never what a dollar figure is computed from.
+ */
+export function fetchGatewayModels(): Promise<GatewayModels> {
+  return request<GatewayModels>('/gateway/models');
 }
 
 /**

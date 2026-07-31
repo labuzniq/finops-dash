@@ -10,7 +10,7 @@ import type { ReliabilitySummary } from './gatewayReliability.js';
 /**
  * What on this page needs somebody, in one list.
  *
- * The gateway page now carries thirteen cards, each of which decides for itself
+ * The gateway page now carries fourteen cards, each of which decides for itself
  * what is worth flagging — a budget past its cap, a day that ran away from its
  * trailing median, a deployment failing above the gateway rate, a workload
  * writing to a cache it never reads, a fortnight the scheduler missed. Every one

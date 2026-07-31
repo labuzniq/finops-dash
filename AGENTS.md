@@ -191,6 +191,21 @@ beside the bill and never in place of it. What it is for is the one thing no
 usage payload can answer — the daily row carries a single `spend` covering
 input, output and both cache operations together, which is exactly why
 `gatewayCache.ts` reports tokens and refuses dollars.
+`lib/metrics/gatewayCatalog.ts` and `GatewayCatalogCard` are what read it: the
+page's only surface where two independent facts meet, the configured rate and
+the recorded spend, joined per model over the *same* ranked breakdown rows the
+table renders so the two cards cannot disagree. A row's tokens are re-priced
+across all four rates (uncached input — `promptTokens − cacheReadTokens`, since
+LiteLLM counts cache reads inside the prompt — plus cache read, cache write and
+output), then compared with the bill as a blended $/1M over the same token
+count, so the mix cancels and only the rate is under discussion. It leads with
+**coverage** (priced spend over gateway-wide spend, measured against the whole
+bill) for the same reason `gatewayAdoption.ts` does, flags a single-deployment
+model more than 5% from list as a finding — the tolerance is above nano-dollar
+rounding and below any discount worth naming — and never flags or aggregates a
+`priceVaries` row, whose estimate is a lower bound by construction. It is pinned
+to the `model` dimension rather than the switcher, like the agent and adoption
+cards: a catalogue prices models, and a team's $/1M is a fact about its mix.
 `gateway_budget` is the other. It is a snapshot of the proxy's
 **governance** state — caps, rate limits and the enforced counter, per key, per team and per configured
 tag, from `/key/list`, `/team/list` and `/tag/list` rather than the activity routes — replaced wholesale
@@ -230,7 +245,7 @@ window is clamped forward to `recordingSince` rather than padded with empty days
 standing spend produces a crossing with no spend at all, which is why a crossing is measured against the
 previous reading's own cap and sits on the same day as the cap change explaining it.
 `lib/metrics/gatewayAlerts.ts` is the page's only derivation *of derivations* and the reason the other
-thirteen cards are findable: it reads the already-derived summaries — budgets, budget history,
+fourteen cards are findable: it reads the already-derived summaries — budgets, budget history,
 anomalies, reliability, cache, coverage — and lists their findings at the top with a button that scrolls
 to the card that made each one. It **adds no threshold of its own**; it can only repeat a state a source
 already flagged, with that source's own numbers, because a digest able to disagree with the card it
