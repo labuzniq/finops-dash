@@ -1,4 +1,4 @@
-import type { GatewayDimension, GatewaySource } from '@dash/shared';
+import type { GatewayBudgetScope, GatewayDimension, GatewaySource } from '@dash/shared';
 
 /**
  * What a gateway source hands the sync — insert-shaped rows, money already in
@@ -45,11 +45,42 @@ export interface GatewaySnapshot {
   dates: string[];
 }
 
+/**
+ * One governed object as the proxy currently has it — a virtual key or a team.
+ *
+ * Not a time series: there is one row per (scope, key) and the sync replaces the
+ * lot. Every limit is nullable because "no cap" and "a cap of zero" are
+ * different states on a proxy, and a zero-filled null would turn the first into
+ * the second. Money is bigint nano-dollars like everything else.
+ */
+export interface GatewayBudgetSnapshot {
+  scope: GatewayBudgetScope;
+  /** The proxy's own id — hashed key token, or team id. */
+  key: string;
+  label: string | null;
+  /** LiteLLM's counter for the budget period in flight. USD × 1e9. */
+  spendNano: bigint;
+  maxBudgetNano: bigint | null;
+  softBudgetNano: bigint | null;
+  budgetDuration: string | null;
+  resetAt: Date | null;
+  tpmLimit: number | null;
+  rpmLimit: number | null;
+  blocked: boolean;
+}
+
 export interface GatewayClient {
   /** Source name, for job logs. */
   readonly name: GatewaySource;
   /** Usage for the inclusive ISO date range, gateway-wide plus every breakdown. */
   fetchUsage(from: string, to: string): Promise<GatewaySnapshot>;
+  /**
+   * Current budgets and rate limits for every key and team the calling
+   * credential can see. Returns `[]` — never throws — when the proxy offers no
+   * management routes to this key: governance is a secondary view and must not
+   * be able to fail a usage sync.
+   */
+  fetchBudgets(): Promise<GatewayBudgetSnapshot[]>;
 }
 
 export const ZERO_COUNTERS: GatewayCounters = {

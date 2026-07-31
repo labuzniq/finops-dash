@@ -23,6 +23,7 @@ import { eachDay } from './litellm.js';
 import { addCounters, ZERO_COUNTERS } from './types.js';
 import type {
   GatewayBreakdownSnapshot,
+  GatewayBudgetSnapshot,
   GatewayClient,
   GatewayCounters,
   GatewayDailySnapshot,
@@ -64,6 +65,25 @@ const MODELS: readonly MockModel[] = [
   { id: 'bedrock/amazon.nova-pro-v1:0', provider: 'bedrock', inputPerMillion: 0.8, outputPerMillion: 3.2, weight: 0.04 },
 ];
 
+/**
+ * A governance object's configuration — what the proxy enforces, as opposed to
+ * what it recorded. Every field is optional because on a real proxy every one
+ * of them is genuinely optional: the biggest workload on a corporate gateway is
+ * usually the one nobody dares cap.
+ */
+interface MockLimits {
+  /** Dollars per budget period. Absent means uncapped. */
+  maxBudget?: number;
+  /** Alert threshold under the cap. */
+  softBudget?: number;
+  /** LiteLLM duration string; absent means the budget never resets. */
+  budgetDuration?: string;
+  tpmLimit?: number;
+  rpmLimit?: number;
+  /** Administratively disabled — every call rejected, budget or no budget. */
+  blocked?: boolean;
+}
+
 /** One virtual key: a consuming platform, its team, its tag and its users. */
 interface MockKey {
   /** LiteLLM reports the hashed token, not the secret. */
@@ -75,6 +95,10 @@ interface MockKey {
   users: readonly string[];
   /** Share of gateway traffic. */
   weight: number;
+  /** What the proxy will let this key do. */
+  limits: MockLimits;
+  /** The team's own limits, which are wider than the key's — one team, one key here. */
+  teamLimits: MockLimits;
 }
 
 const KEYS: readonly MockKey[] = [
@@ -86,6 +110,10 @@ const KEYS: readonly MockKey[] = [
     tag: 'coding-assistant',
     users: ['ana.kovacs@corp.example', 'liam.silva@corp.example', 'maya.haugen@corp.example'],
     weight: 0.31,
+    // The gateway's biggest consumer, deliberately uncapped: it is the one
+    // workload nobody will let a budget stop mid-sprint. Rate-limited instead.
+    limits: { tpmLimit: 2_000_000, rpmLimit: 12_000 },
+    teamLimits: { maxBudget: 4_000, budgetDuration: '1mo' },
   },
   {
     token: '3c77ee81b5',
@@ -95,6 +123,8 @@ const KEYS: readonly MockKey[] = [
     tag: 'support',
     users: ['noah.okafor@corp.example', 'ivy.meyer@corp.example'],
     weight: 0.22,
+    limits: { maxBudget: 1_800, softBudget: 1_440, budgetDuration: '1mo', rpmLimit: 6_000 },
+    teamLimits: { maxBudget: 2_200, budgetDuration: '1mo' },
   },
   {
     token: 'd41a90f6c2',
@@ -104,6 +134,8 @@ const KEYS: readonly MockKey[] = [
     tag: 'document-intelligence',
     users: ['owen.tanaka@corp.example', 'zoe.novak@corp.example', 'eli.fischer@corp.example'],
     weight: 0.18,
+    limits: { maxBudget: 1_800, softBudget: 1_440, budgetDuration: '1mo' },
+    teamLimits: { maxBudget: 2_000, budgetDuration: '1mo' },
   },
   {
     token: '77b0e5aa19',
@@ -113,6 +145,11 @@ const KEYS: readonly MockKey[] = [
     tag: 'batch',
     users: ['ruth.iqbal@corp.example', 'marc.moreau@corp.example'],
     weight: 0.14,
+    // Sized for ordinary ETL traffic, so the twice-monthly re-embedding batch
+    // walks it through its soft budget and into overrun — the state a budget
+    // view exists to catch, and one no spend chart on the page reports.
+    limits: { maxBudget: 3_000, softBudget: 2_400, budgetDuration: '1mo' },
+    teamLimits: { maxBudget: 3_600, budgetDuration: '1mo' },
   },
   {
     token: 'be1439c7f0',
@@ -122,6 +159,8 @@ const KEYS: readonly MockKey[] = [
     tag: 'chat',
     users: ['nina.larsen@corp.example', 'theo.petrov@corp.example', 'lena.santos@corp.example'],
     weight: 0.1,
+    limits: { maxBudget: 1_200, softBudget: 960, budgetDuration: '1mo', rpmLimit: 3_000 },
+    teamLimits: { maxBudget: 1_400, budgetDuration: '1mo' },
   },
   {
     token: '05cd8b2e63',
@@ -131,6 +170,12 @@ const KEYS: readonly MockKey[] = [
     tag: 'experiment',
     users: ['kofi.weber@corp.example', 'sara.nakamura@corp.example'],
     weight: 0.05,
+    // A weekly experiment budget, already spent through and the key blocked.
+    // `blocked` is a separate state from an exhausted budget on a real proxy —
+    // an admin can disable a key that is nowhere near its cap — so the two are
+    // carried separately rather than derived from each other.
+    limits: { maxBudget: 30, softBudget: 24, budgetDuration: '7d', blocked: true },
+    teamLimits: { maxBudget: 500, budgetDuration: '1mo' },
   },
 ];
 
@@ -214,6 +259,13 @@ const INCIDENT_FAILURE_RATE = 0.16;
 const BURST_DAYS_OF_MONTH = new Set([9, 23]);
 const BURST_TAG = 'batch';
 const BURST_MULTIPLIER = 6;
+
+/**
+ * How far back a never-resetting spend counter is summed. The proxy's own
+ * counter runs since the key was created; 90 days is the widest window this
+ * generator produces, and the number it yields is the same order of magnitude.
+ */
+const LIFETIME_WINDOW_DAYS = 90;
 
 /** Fixed Lehmer seed — identical output across restarts. */
 const SEED = 1_337_991;
@@ -403,4 +455,116 @@ export class MockGatewayClient implements GatewayClient {
 
     return snapshot;
   }
+
+  /**
+   * Budgets and limits as the proxy would report them right now.
+   *
+   * The period spend is not invented: it is this generator's own usage summed
+   * over the period in flight, so a key sitting at 94% of its cap is at 94% of
+   * the spend the trend chart draws. It will not match the same key's total in
+   * a 90-day pull to the cent — the Lehmer stream is consumed from the start of
+   * whatever window was asked for — and that mismatch is itself faithful: on a
+   * real proxy the enforced counter and the daily aggregates are two different
+   * systems of record, which is exactly why this field is carried rather than
+   * re-derived.
+   */
+  async fetchBudgets(): Promise<GatewayBudgetSnapshot[]> {
+    const now = new Date();
+    const yesterday = shiftUtcDays(now, -1);
+    const periodStarts = new Map<string, Date>([
+      ['1mo', startOfUtcMonth(now)],
+      ['7d', startOfUtcWeek(now)],
+    ]);
+
+    // One pull wide enough for the longest counter, sliced per budget below.
+    // A key with no `budget_duration` still carries a spend counter on a real
+    // proxy — it simply never resets — so it is summed over the whole window
+    // rather than reported as zero, which would make the gateway's largest
+    // consumer look idle purely because nobody capped it.
+    const from = isoDay(shiftUtcDays(now, -LIFETIME_WINDOW_DAYS));
+    const to = isoDay(yesterday);
+    const usage = from <= to ? await this.fetchUsage(from, to) : null;
+
+    const spendSince = (
+      dimension: GatewayDimension,
+      key: string,
+      since: Date | null,
+    ): bigint => {
+      if (usage === null) return 0n;
+      const start = since === null ? from : isoDay(since);
+      let total = 0n;
+      for (const row of usage.breakdowns) {
+        if (row.dimension === dimension && row.key === key && row.date >= start) {
+          total += row.spendNano;
+        }
+      }
+      return total;
+    };
+
+    const budgets: GatewayBudgetSnapshot[] = [];
+
+    const push = (
+      scope: 'api_key' | 'team',
+      key: string,
+      label: string,
+      limits: MockLimits,
+      dimension: GatewayDimension,
+    ): void => {
+      const duration = limits.budgetDuration ?? null;
+      const periodStart = duration === null ? null : (periodStarts.get(duration) ?? null);
+      budgets.push({
+        scope,
+        key,
+        label,
+        spendNano: spendSince(dimension, key, periodStart),
+        maxBudgetNano: limits.maxBudget === undefined ? null : dollarsToNano(limits.maxBudget),
+        softBudgetNano: limits.softBudget === undefined ? null : dollarsToNano(limits.softBudget),
+        budgetDuration: duration,
+        resetAt: duration === null ? null : nextReset(duration, now),
+        tpmLimit: limits.tpmLimit ?? null,
+        rpmLimit: limits.rpmLimit ?? null,
+        blocked: limits.blocked === true,
+      });
+    };
+
+    for (const key of KEYS) {
+      push('api_key', key.token, key.alias, key.limits, 'api_key');
+      push('team', key.teamId, key.teamAlias, key.teamLimits, 'team');
+    }
+
+    log.info({ dash: { budgets: budgets.length } }, 'mock gateway budgets generated');
+    return budgets;
+  }
+}
+
+/** UTC midnight on the first of `date`'s month. */
+function startOfUtcMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+/** UTC midnight on the most recent Monday, `date` included. */
+function startOfUtcWeek(date: Date): Date {
+  const start = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+  // getUTCDay() is Sunday-first; a Sunday belongs to the week that began six
+  // days earlier, not to the one starting tomorrow.
+  start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+  return start;
+}
+
+function shiftUtcDays(date: Date, days: number): Date {
+  const shifted = new Date(date.getTime());
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted;
+}
+
+function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** When a period that began at the current one's start next rolls over. */
+function nextReset(duration: string, now: Date): Date {
+  if (duration === '7d') return shiftUtcDays(startOfUtcWeek(now), 7);
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 }

@@ -81,6 +81,40 @@ the calling key may see, so a team-scoped key silently returns only that team's
 usage — the numbers would look right and be wrong. Confirm the key's role before
 trusting a first sync.
 
+### The management endpoints (budgets and limits)
+
+Usage says what the gateway *did*. Budgets say what it is *allowed* to do, and
+they live on different routes — the management API, not the analytics one:
+
+```
+GET /key/list?page=1&size=100&return_full_object=true   → { keys, total_count, current_page, total_pages }
+GET /team/list                                          → [ … ]   (a bare array, no envelope)
+Authorization: Bearer sk-…
+```
+
+Field names come from LiteLLM's own models (`LiteLLM_VerificationToken`,
+`LiteLLM_TeamTable`): `spend`, `max_budget`, `soft_budget`, `budget_duration`,
+`budget_reset_at`, `tpm_limit`, `rpm_limit`, `blocked`, plus `key_alias` /
+`team_alias`. Three things about them decide the whole design:
+
+- **`size` caps at 100** (`Query(10, ge=1, le=100)`), and `/key/list` paginates
+  on `total_pages` — there is no `has_more` here, unlike the activity envelope.
+- **`keys` is `List[str] | List[UserAPIKeyAuth]`.** A proxy that ignores
+  `return_full_object` answers bare token strings, which carry no budget at all.
+  Those rows are dropped, not rejected: a proxy that only lists key names must
+  not fail a usage sync.
+- **The hashed `token` is the join key.** It is the same id the `api_key` usage
+  dimension reports, and the same is true of `team_id` for `team`. A key row
+  without a token is an orphan no spend can be read next to, so it is dropped
+  and counted in the log.
+
+`budget_duration` is LiteLLM's own duration grammar — `(\d+)(mo|[smhdw]?)`, with
+the word aliases `hourly`/`daily`/`weekly`/`monthly` normalised first. Note that
+`monthly` means **`30d`, not `1mo`**, per the proxy's own alias table; the two
+differ by up to a day and a half, and `budgetPeriodStart` in `@dash/shared`
+walks `mo` on the calendar for exactly that reason (a `1mo` budget resetting on
+1 March began on 1 February, 28 days earlier).
+
 ## What the sync does
 
 `services/gateway-sync.ts`, `refresh_jobs` kind `gateway`:
@@ -98,6 +132,17 @@ trusting a first sync.
   vanished keys standing and double-counting.
 - Runs from the daily 07:00 Europe/Prague scheduler alongside the other three
   pulls, and on demand via `POST /api/refresh/gateway`.
+
+The same job also pulls **budgets** and replaces `gateway_budget` entire, inside
+the same transaction. Governance rides along with usage rather than on its own
+schedule: it is two small requests, and a cap read hours apart from the spend it
+is shown next to would be a worse lie than a slightly stale one. The table is a
+snapshot, not a series — a rotated key or a deleted team has no row to keep, and
+leaving one standing would show an owner a cap that nothing enforces any more.
+Both management routes are optional in the same sense the team and tag activity
+routes are: an analytics-only credential is a perfectly reasonable thing to
+point this integration at, it will be refused key management, and `fetchBudgets`
+answering `[]` is a supported outcome rather than a failed sync.
 
 Only `/user/daily/activity` contributes the gateway-wide totals. `/team/…` and
 `/tag/…` report the same spend re-sliced; adding their `metrics` in would
@@ -128,6 +173,18 @@ status, so retrying it would burn the whole backoff and then fail the sync with
   is non-null: the proxy omits counters it has no rows for, and a missing
   counter genuinely means none happened. The one nullable field is `label` (a
   key alias or team name the proxy may not have resolved), which renders `—`.
+- **Budgets invert both of those, deliberately.** On `gateway_budget` a null
+  limit means *no such limit*, and `max_budget = 0` means *budgeted at nothing,
+  reject everything* — opposite states of one field, so nothing there is
+  zero-filled. It is the one place in the gateway contract where absence is
+  unknown-shaped rather than zero-shaped, and it is why the budget columns are
+  nullable while every usage counter is `NOT NULL`.
+- **A budget's `spend` is the proxy's counter, never our sum.** It covers the
+  period in flight, which resets on the key's own schedule — possibly mid-day,
+  possibly on a duration nothing else in the dashboard uses. Re-deriving it from
+  `gateway_daily` would silently disagree with the number the proxy actually
+  enforces, and the enforced one is what an owner needs. `blocked` is likewise
+  carried, not inferred: an admin can disable a key nowhere near its cap.
 - **Nothing outside `apps/api/src/gateway/` knows which source is active** —
   the same rule `copilot/` follows.
 
@@ -174,6 +231,23 @@ to every spend-shaped card on the page: a rejected call bills no tokens, so
 those two days come in slightly *cheaper* than usual. That is the whole argument
 for the reliability card being separate from the unusual-spend one.
 
+**Budgets** are generated too, one per key and one per team, and their period
+spend is not invented: it is this generator's own usage summed over the period
+in flight, so a key sitting at 96% of its cap is at 96% of the spend the trend
+chart draws. The caps are placed to cover the states a budget view exists to
+distinguish — `copilot-agents` uncapped and rate-limited instead (the biggest
+consumer is the one nobody dares cap, and its counter never resets, so it is
+summed over the whole window rather than reported as zero); `data-platform-etl`
+sized for ordinary ETL and walked into overrun by its own re-embedding batch;
+`customer-support-bot` past its soft budget but inside its cap;
+`sandbox-experiments` over a *weekly* budget and `blocked`, which is a separate
+state from an exhausted one and is carried separately. The spend will not match
+the same key's total in a 90-day pull to the cent — the Lehmer stream is
+consumed from the start of whatever window is asked for — and that mismatch is
+itself faithful: on a real proxy the enforced counter and the daily aggregates
+are two different systems of record, which is precisely why the field is carried
+rather than re-derived.
+
 MCP traffic is the third planted shape. It is a subset of the same requests on
 the two agent-shaped keys (`copilot-agents`, `customer-support-bot`), and two
 things about it are deliberate. Its share of those keys' traffic **climbs ~3
@@ -194,6 +268,7 @@ tokens-per-call a pure artefact of the scaling.
 | Method | Path | Answer |
 | --- | --- | --- |
 | `GET` | `/api/gateway?from=&to=` | `{ daily, breakdowns }` for the inclusive range — fetched once, everything derived client-side. |
+| `GET` | `/api/gateway/budgets` | `{ budgets }` — current caps, rate limits and period spend per key and team, keys first, each scope ranked by share of cap consumed with the uncapped rows last. No parameters: it is state, not a range. |
 | `GET` | `/api/gateway/status` | `{ source, configured }`. |
 | `POST` | `/api/refresh/gateway` | `202` with the job to poll; `503` while the source is `off`. |
 
@@ -433,7 +508,24 @@ malformed envelope failing loudly instead of syncing silently empty, `429` and
 `503` retried while `401/403/404/405/501` are answered once and skipped, and the
 load-bearing one — the `/team` endpoint's `metrics` **and** its own
 `models` breakdown staying out of the totals, so the same dollars re-sliced
-never double-count. Run it with
+never double-count.
+
+It also covers the **management** routes, where the load-bearing rule is the
+null one: an uncapped key keeps `null` limits (zero-filling them would render
+the gateway's least constrained key as its strictest), while a `max_budget` of
+`0` stays `0`. Alongside it: `/key/list` asked for full objects 100 to a page
+and paginated on `total_pages`, bare-string and tokenless key rows dropped, a
+token repeated across pages yielding one row rather than a primary-key
+collision, `/team/list` read from a bare array, aliases trimmed and empty ones
+nulled, a six-fractional-digit reset timestamp parsed and an unparseable one
+nulled rather than reaching Postgres as an Invalid Date, a refused `/key/list`
+yielding no budgets instead of failing the sync while `/team/list` still
+answers, and a mistyped budget field throwing rather than syncing a silently
+wrong cap. A final section checks the pure budget arithmetic in `@dash/shared`,
+because it interprets LiteLLM's own duration grammar: `monthly` is 30d and not
+`1mo`, a `1mo` period is walked on the calendar (a 31st resetting monthly clamps
+to 28 February rather than rolling into March), an overrun reads above 100%
+rather than clamped, and a zero cap has no percentage at all. Run it with
 `set -a; . ./.env; set +a; node_modules/.pnpm/node_modules/.bin/tsx apps/api/scripts/verify-litellm-contract.ts`.
 
 It cannot confirm that a real proxy *sends* these shapes — that is still an open
@@ -460,3 +552,23 @@ gating.
    let the tag dimension carry cost centres directly?
 5. Retention: how far back do the daily aggregate tables actually go? The
    90-day window assumes at least that much.
+6. Will the credential we are given be allowed `/key/list` and `/team/list` at
+   all? An analytics-scoped key is refused management routes, in which case
+   budgets simply never appear (handled, logged, and not fatal). If it *is*
+   allowed, does `/key/list` return the same hashed `token` the `api_key` usage
+   breakdown is keyed by? Everything about reading a budget next to the spend it
+   governs rests on those two ids being the same string.
+7. Are budgets actually configured on the corporate proxy, and at which level —
+   per key, per team, or per tag? `/tag/list`-style tag budgets exist in newer
+   LiteLLM versions and are not read here; whether they are worth adding depends
+   entirely on which level the gateway's owners actually govern at.
+
+## Not yet built
+
+`gateway_budget` is populated and served, but **nothing renders it yet** — the
+budget card on the `LLM gateway` page is the next step. The read model it will
+run on (`GET /api/gateway/budgets` plus `budgetUtilization`,
+`budgetRemaining` and `budgetPeriodStart` in `@dash/shared`) is in place and
+verified; what is missing is the view and the pace derivation on top of it
+(spend against the *share of the period elapsed*, which is what turns "96% of
+cap" into "96% of cap on day 12 of 30").

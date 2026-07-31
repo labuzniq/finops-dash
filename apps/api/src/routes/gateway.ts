@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { env } from '../env.js';
-import { getGatewayUsage } from '../services/gateway.js';
+import { getGatewayBudgets, getGatewayUsage } from '../services/gateway.js';
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -27,6 +27,14 @@ export const gatewayRoutes: FastifyPluginAsync = async (app) => {
     }
     return getGatewayUsage(parsed.data.from, parsed.data.to);
   });
+
+  /**
+   * Budgets and rate limits as of the last sync — current state, not a range,
+   * so it takes no query parameters. An empty list is a legitimate answer twice
+   * over: the gateway has never synced, or the credential the proxy gave us is
+   * not allowed to list keys and teams.
+   */
+  app.get('/api/gateway/budgets', async () => getGatewayBudgets());
 
   /** Whether the gateway integration is configured, and with which source. */
   app.get('/api/gateway/status', async () => ({

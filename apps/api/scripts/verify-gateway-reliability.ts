@@ -246,10 +246,14 @@ check(
   'the lower bound is not below the point estimate',
 );
 
-// The materiality gate has to be the thing rejecting the near-baseline keys, not
-// a lucky interval: every unflagged key with a rate above the gateway's must be
-// one the Wilson gate would have passed. Otherwise the two gates are untested in
-// the regime they were added for.
+// The materiality gate has to be doing real work: at least one unflagged key
+// whose rate is above the gateway's must be one the Wilson gate *would* have
+// passed, so the badge's absence is a judgement about size rather than about
+// evidence. Deliberately not "every" such key — the two gates guard opposite
+// regimes and either is allowed to reject on its own, so which one fires for a
+// given key depends on the traffic the window happens to contain. Asserting
+// every rejection came from materiality would be asserting something the maths
+// does not guarantee, and it fails on the days the interval gets there first.
 const nearBaseline = model.rows.filter(
   (row) =>
     !row.elevated &&
@@ -258,12 +262,12 @@ const nearBaseline = model.rows.filter(
     row.failureRate > model.failureRate,
 );
 check(nearBaseline.length > 0, 'no above-baseline-but-unflagged key to test the materiality gate');
+const rejectedByMateriality = nearBaseline.filter(
+  (row) => wilsonLowerBound(row.failedRequests, row.requests, confidenceZ) > (model.failureRate ?? 0),
+);
 check(
-  nearBaseline.every(
-    (row) =>
-      wilsonLowerBound(row.failedRequests, row.requests, confidenceZ) > (model.failureRate ?? 0),
-  ),
-  'an above-baseline key was rejected by the interval rather than by materiality',
+  rejectedByMateriality.length > 0,
+  `the materiality gate rejected no key on its own (${rejectedByMateriality.length}/${nearBaseline.length} above-baseline keys cleared the interval)`,
 );
 check(
   nearBaseline.every(

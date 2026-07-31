@@ -24,6 +24,13 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import {
+  budgetPeriodStart,
+  budgetRemaining,
+  budgetUtilization,
+  parseBudgetDuration,
+} from '@dash/shared';
+import type { GatewayBudget } from '@dash/shared';
 import { LiteLlmGatewayClient, eachDay } from '../src/gateway/litellm.js';
 import type { GatewayBreakdownSnapshot, GatewaySnapshot } from '../src/gateway/types.js';
 
@@ -554,6 +561,272 @@ check(eachDay('2026-02-27', '2026-03-02').join(',') === '2026-02-27,2026-02-28,2
 check(eachDay('2024-02-27', '2024-03-01').length === 4, 'a leap-year February has its 29th');
 check(eachDay('2026-07-05', '2026-07-01').length === 0, 'an inverted range yields nothing');
 check(eachDay('2026-05-01', '2026-07-29').length === 90, 'a 90-day retention window is 90 days');
+
+// =====================================================================
+// 6 · The management side — /key/list and /team/list
+// =====================================================================
+//
+// Budgets come from different routes with a different envelope: /key/list
+// paginates on `size`/`total_pages` and may answer with bare token strings,
+// /team/list answers a naked array. The rule this section exists to pin is that
+// every limit is null-or-a-number and nothing is zero-filled — "uncapped" and
+// "capped at nothing" are opposite states of the same field.
+
+console.log('\n6 · budgets — /key/list and /team/list');
+
+const keyRow = (over: Record<string, unknown>) => ({
+  token: 'tok-1',
+  key_alias: 'alias-1',
+  spend: 1.5,
+  max_budget: 100,
+  budget_duration: '1mo',
+  budget_reset_at: '2026-08-01T00:00:00.594000Z',
+  ...over,
+});
+
+const budgets = await withProxy(
+  (captured) => {
+    if (captured.path === '/key/list') {
+      const page = captured.query.get('page');
+      if (page === '1') {
+        return {
+          status: 200,
+          body: {
+            keys: [
+              keyRow({
+                token: 'hash-copilot',
+                key_alias: '  copilot-agents  ',
+                spend: 1_234.567891234,
+                // Uncapped: null must survive as null all the way to the row.
+                max_budget: null,
+                soft_budget: null,
+                budget_duration: null,
+                budget_reset_at: null,
+                tpm_limit: 2_000_000,
+                rpm_limit: 12_000,
+              }),
+              keyRow({
+                token: 'hash-blocked',
+                key_alias: '',
+                spend: 1.095e-5,
+                // Budgeted at nothing — 0 is a hard stop, not "no budget".
+                max_budget: 0,
+                soft_budget: 0,
+                rpm_limit: 0,
+                blocked: true,
+                budget_reset_at: 'not a date',
+              }),
+              // A proxy that ignored return_full_object: no budget to read.
+              'sk-bare-string-key',
+              // Full object, no token: nothing to join to the api_key dimension.
+              keyRow({ token: null, key_alias: 'orphan' }),
+            ],
+            total_pages: 2,
+            current_page: 1,
+          },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          keys: [
+            keyRow({ token: 'hash-support', key_alias: 'support', spend: 900, max_budget: 2_400 }),
+            // Same token again — one row must win, not two colliding on the PK.
+            keyRow({ token: 'hash-support', key_alias: 'support-duplicate', spend: 99 }),
+          ],
+          total_pages: 2,
+          current_page: 2,
+        },
+      };
+    }
+
+    if (captured.path === '/team/list') {
+      return {
+        status: 200,
+        body: [
+          {
+            team_id: 'team-platform',
+            team_alias: 'Platform Engineering',
+            spend: 3_100.25,
+            max_budget: 4_000,
+            budget_duration: '1mo',
+            budget_reset_at: '2026-08-01T00:00:00Z',
+            blocked: false,
+          },
+          // No id — nothing to key a row on.
+          { team_id: '', team_alias: 'ghost', spend: 5 },
+        ],
+      };
+    }
+
+    return { status: 404, body: {} };
+  },
+  async (proxy) => {
+    const rows = await client(proxy.baseUrl).fetchBudgets();
+    return { rows, calls: proxy.calls };
+  },
+);
+
+const keyCall = budgets.calls.find((call) => call.path === '/key/list');
+check(
+  keyCall?.query.get('return_full_object') === 'true' && keyCall?.query.get('size') === '100',
+  '/key/list is asked for full objects, 100 to a page',
+);
+check(
+  keyCall?.authorization === 'Bearer sk-test-key',
+  'the management routes carry the same bearer auth as the analytics ones',
+);
+check(
+  budgets.calls.filter((call) => call.path === '/key/list').length === 2,
+  'pagination follows total_pages on /key/list',
+);
+
+const budgetOf = (scope: string, key: string) =>
+  budgets.rows.find((row) => row.scope === scope && row.key === key);
+
+check(budgets.rows.length === 4, `bare strings and tokenless rows are dropped (${budgets.rows.length} rows)`);
+
+const copilot = budgetOf('api_key', 'hash-copilot');
+check(
+  copilot?.maxBudgetNano === null && copilot?.softBudgetNano === null,
+  'an uncapped key keeps null limits — never zero, which would read as the strictest budget',
+);
+check(copilot?.spendNano === 1_234_567_891_234n, 'nine-decimal spend lands exactly in nano');
+check(copilot?.label === 'copilot-agents', 'key_alias is trimmed');
+check(
+  copilot?.tpmLimit === 2_000_000 && copilot?.rpmLimit === 12_000,
+  'rate limits survive as numbers',
+);
+check(copilot?.resetAt === null && copilot?.budgetDuration === null, 'a never-resetting budget carries no reset');
+
+const blocked = budgetOf('api_key', 'hash-blocked');
+check(
+  blocked?.maxBudgetNano === 0n && blocked?.rpmLimit === 0,
+  'a zero cap stays zero — the opposite state from an absent one',
+);
+check(blocked?.blocked === true, 'blocked is carried, not derived from the budget');
+check(blocked?.label === null, 'an empty alias is null, not an empty string');
+check(blocked?.spendNano === 10_950n, 'exponent-notation spend parses on the management side too');
+check(blocked?.resetAt === null, 'an unparseable reset timestamp is null, not an Invalid Date');
+
+const support = budgetOf('api_key', 'hash-support');
+check(
+  budgets.rows.filter((row) => row.key === 'hash-support').length === 1 &&
+    support?.label === 'support',
+  'a token repeated across pages yields one row, first seen winning',
+);
+
+const platform = budgetOf('team', 'team-platform');
+check(
+  platform?.maxBudgetNano === 4_000_000_000_000n && platform?.label === 'Platform Engineering',
+  '/team/list is read from a bare array, no pagination envelope',
+);
+check(
+  platform?.resetAt?.toISOString() === '2026-08-01T00:00:00.000Z',
+  'a reset timestamp parses to the instant it names',
+);
+check(
+  budgets.rows.every((row) => row.key !== ''),
+  'a team with no id is dropped rather than colliding on the primary key',
+);
+check(
+  budgets.rows.every((row) => row.blocked === false || row.key === 'hash-blocked'),
+  'blocked defaults to false when the proxy omits it',
+);
+
+// An analytics-only credential: management is refused, usage must not care.
+const refused = await withProxy(
+  (captured) => (captured.path === '/team/list' ? { status: 200, body: [] } : { status: 403, body: {} }),
+  (proxy) => client(proxy.baseUrl).fetchBudgets(),
+);
+check(refused.length === 0, 'a refused /key/list yields no budgets rather than failing the sync');
+
+const teamOnly = await withProxy(
+  (captured) =>
+    captured.path === '/team/list'
+      ? { status: 200, body: [{ team_id: 't1', max_budget: 10 }] }
+      : { status: 404, body: {} },
+  (proxy) => client(proxy.baseUrl).fetchBudgets(),
+);
+check(
+  teamOnly.length === 1 && teamOnly[0]?.scope === 'team',
+  'an absent /key/list does not stop /team/list from answering',
+);
+
+const malformed = await withProxy(
+  (captured) =>
+    captured.path === '/key/list'
+      ? { status: 200, body: { keys: [{ token: 'x', max_budget: 'lots' }] } }
+      : { status: 404, body: {} },
+  (proxy) =>
+    client(proxy.baseUrl)
+      .fetchBudgets()
+      .then(() => 'resolved')
+      .catch((error: unknown) => String(error)),
+);
+check(
+  malformed.includes('unexpected shape'),
+  'a budget field of the wrong type throws rather than syncing a silently wrong cap',
+);
+
+// =====================================================================
+// 7 · Budget arithmetic in @dash/shared
+// =====================================================================
+//
+// These are pure and the UI will run on them, but they interpret LiteLLM's own
+// duration grammar, so they belong next to the client that reads those fields.
+
+console.log('\n7 · budget arithmetic');
+
+check(parseBudgetDuration('30d')?.unit === 'd', 'a plain duration parses');
+check(parseBudgetDuration('1mo')?.unit === 'mo', 'months parse as months, not minutes');
+check(parseBudgetDuration('monthly')?.value === 30, "LiteLLM's own alias table makes `monthly` 30d, not 1mo");
+check(parseBudgetDuration('weekly')?.unit === 'd' && parseBudgetDuration('weekly')?.value === 7, '`weekly` is 7d');
+check(parseBudgetDuration('') === null && parseBudgetDuration('0d') === null, 'nonsense durations are null, not a fake period');
+
+const budget = (over: Partial<GatewayBudget> = {}): GatewayBudget => ({
+  scope: 'api_key',
+  key: 'k',
+  label: null,
+  spend: 50,
+  maxBudget: 100,
+  softBudget: null,
+  budgetDuration: '1mo',
+  resetAt: '2026-08-01T00:00:00.000Z',
+  tpmLimit: null,
+  rpmLimit: null,
+  blocked: false,
+  ...over,
+});
+
+check(budgetUtilization(budget()) === 50, 'utilisation is spend over cap');
+check(budgetUtilization(budget({ spend: 130 })) === 130, 'an overrun reads above 100, not clamped');
+check(budgetUtilization(budget({ maxBudget: null })) === null, 'an uncapped budget has no utilisation');
+check(budgetUtilization(budget({ maxBudget: 0 })) === null, 'a zero cap has no percentage to report');
+check(budgetRemaining(budget({ spend: 130 })) === -30, 'remaining goes negative on overrun');
+
+check(
+  budgetPeriodStart(budget()) === '2026-07-01T00:00:00.000Z',
+  'a 1mo period resetting on 1 August began on 1 July',
+);
+check(
+  budgetPeriodStart(budget({ resetAt: '2026-03-01T00:00:00.000Z' })) === '2026-02-01T00:00:00.000Z',
+  'a February month is walked on the calendar, not as 30 nominal days',
+);
+check(
+  budgetPeriodStart(budget({ resetAt: '2026-03-31T12:00:00.000Z' })) === '2026-02-28T12:00:00.000Z',
+  'a 31st resetting monthly clamps to the shorter month rather than rolling into March',
+);
+check(
+  budgetPeriodStart(budget({ budgetDuration: '7d', resetAt: '2026-07-06T00:00:00.000Z' })) ===
+    '2026-06-29T00:00:00.000Z',
+  'a 7d period is exactly seven days back',
+);
+check(
+  budgetPeriodStart(budget({ resetAt: null })) === null &&
+    budgetPeriodStart(budget({ budgetDuration: 'whenever' })) === null,
+  'a period start needs both halves and a duration the proxy would accept',
+);
 
 // -------------------------------------------------------------------- done
 

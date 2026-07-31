@@ -25,4 +25,5 @@ export type {
   GatewaySnapshot,
   GatewayDailySnapshot,
   GatewayBreakdownSnapshot,
+  GatewayBudgetSnapshot,
 } from './types.js';

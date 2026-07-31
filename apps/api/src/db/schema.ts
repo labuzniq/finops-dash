@@ -322,6 +322,45 @@ export const gatewayBreakdownDaily = pgTable(
   ],
 );
 
+/**
+ * Current budgets and rate limits per governed object on the LiteLLM proxy —
+ * one row per (scope, key), replaced wholesale on every gateway sync.
+ *
+ * The only gateway table with no date column, because it is not a time series:
+ * a budget is configuration plus the proxy's own counter for the period in
+ * flight, and the proxy is the system of record for both. `spend_nano` is
+ * deliberately *not* re-derivable from `gateway_daily` — a key's period resets
+ * on its own schedule, and only the enforced counter says how close to the cap
+ * the proxy thinks it is.
+ *
+ * Every limit column is nullable and none of them default to zero: NULL means
+ * "no such limit" while 0 means "budgeted at nothing, reject everything". This
+ * is the one place in the gateway schema where absence is unknown-shaped
+ * rather than zero-shaped.
+ */
+export const gatewayBudget = pgTable(
+  'gateway_budget',
+  {
+    /** See GATEWAY_BUDGET_SCOPES in @dash/shared — `api_key` or `team`. */
+    scope: varchar('scope', { length: 20 }).notNull(),
+    /** The proxy's id: hashed key token, or team id — joins the usage dimension of the same name. */
+    key: varchar('key', { length: 200 }).notNull(),
+    label: varchar('label', { length: 200 }),
+    /** USD × 1e9, for the budget period in flight. */
+    spendNano: bigint('spend_nano', { mode: 'bigint' }).notNull(),
+    maxBudgetNano: bigint('max_budget_nano', { mode: 'bigint' }),
+    softBudgetNano: bigint('soft_budget_nano', { mode: 'bigint' }),
+    /** LiteLLM duration string — `30d`, `1mo`, `24h`. */
+    budgetDuration: varchar('budget_duration', { length: 20 }),
+    resetAt: timestamp('reset_at', { withTimezone: true }),
+    tpmLimit: bigint('tpm_limit', { mode: 'number' }),
+    rpmLimit: bigint('rpm_limit', { mode: 'number' }),
+    blocked: boolean('blocked').notNull().default(false),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.key] })],
+);
+
 /** One on-demand sync. Rows are the job queue, the audit log, and the UI's status source. */
 export const refreshJobs = pgTable(
   'refresh_jobs',
@@ -459,6 +498,8 @@ export type GatewayDailyRow = typeof gatewayDaily.$inferSelect;
 export type GatewayDailyInsert = typeof gatewayDaily.$inferInsert;
 export type GatewayBreakdownRow = typeof gatewayBreakdownDaily.$inferSelect;
 export type GatewayBreakdownInsert = typeof gatewayBreakdownDaily.$inferInsert;
+export type GatewayBudgetRow = typeof gatewayBudget.$inferSelect;
+export type GatewayBudgetInsert = typeof gatewayBudget.$inferInsert;
 export type RefreshJobRow = typeof refreshJobs.$inferSelect;
 export type ImportLogRow = typeof importLogs.$inferSelect;
 export type ImportLogInsert = typeof importLogs.$inferInsert;

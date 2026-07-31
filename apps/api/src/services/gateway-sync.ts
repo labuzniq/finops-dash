@@ -1,10 +1,14 @@
 import { inArray } from 'drizzle-orm';
 import type { RefreshJob } from '@dash/shared';
 import { db } from '../db/client.js';
-import { gatewayBreakdownDaily, gatewayDaily } from '../db/schema.js';
-import type { GatewayBreakdownInsert, GatewayDailyInsert } from '../db/schema.js';
+import { gatewayBreakdownDaily, gatewayBudget, gatewayDaily } from '../db/schema.js';
+import type {
+  GatewayBreakdownInsert,
+  GatewayBudgetInsert,
+  GatewayDailyInsert,
+} from '../db/schema.js';
 import { createGatewayClient } from '../gateway/index.js';
-import type { GatewaySnapshot } from '../gateway/index.js';
+import type { GatewayBudgetSnapshot, GatewaySnapshot } from '../gateway/index.js';
 import { moduleLogger } from '../log.js';
 import { startJob } from './refresh.js';
 
@@ -57,9 +61,10 @@ function utcDay(offset: number): string {
  * to the dates the client says it covered — days outside the window keep their
  * rows, so shrinking WINDOW_DAYS never destroys history.
  */
-async function persist(snapshot: GatewaySnapshot): Promise<void> {
+async function persist(snapshot: GatewaySnapshot, budgets: GatewayBudgetSnapshot[]): Promise<void> {
   const dailyRows: GatewayDailyInsert[] = snapshot.daily.map((day) => ({ ...day }));
   const breakdownRows: GatewayBreakdownInsert[] = snapshot.breakdowns.map((row) => ({ ...row }));
+  const budgetRows: GatewayBudgetInsert[] = budgets.map((budget) => ({ ...budget }));
 
   await db.transaction(async (tx) => {
     if (snapshot.dates.length > 0) {
@@ -74,6 +79,16 @@ async function persist(snapshot: GatewaySnapshot): Promise<void> {
     for (const rows of chunk(breakdownRows, CHUNK_SIZE)) {
       await tx.insert(gatewayBreakdownDaily).values(rows);
     }
+    // Budgets are current state, not history: the whole table is the snapshot,
+    // so it is replaced entire. A key that was rotated away or a team that was
+    // deleted has no row to keep, and leaving one standing would show an owner
+    // a cap that nothing enforces any more. Emptied deliberately when the
+    // proxy offers no management routes — the UI reads "no budgets visible",
+    // which is true, rather than an ever-staler copy of the last ones seen.
+    await tx.delete(gatewayBudget);
+    for (const rows of chunk(budgetRows, CHUNK_SIZE)) {
+      await tx.insert(gatewayBudget).values(rows);
+    }
   });
 
   log.debug(
@@ -82,6 +97,7 @@ async function persist(snapshot: GatewaySnapshot): Promise<void> {
         days: snapshot.dates.length,
         dailyRows: dailyRows.length,
         breakdownRows: breakdownRows.length,
+        budgetRows: budgetRows.length,
       },
     },
     'gateway usage persisted',
@@ -109,7 +125,11 @@ export async function startGatewaySync(): Promise<RefreshJob> {
     context: { gatewaySource: client.name, from, to },
     run: async () => {
       const snapshot = await client.fetchUsage(from, to);
-      await persist(snapshot);
+      // Governance rides along with usage rather than on its own schedule: it
+      // is two small requests, and a budget read hours apart from the spend it
+      // is shown next to would be a worse lie than a slightly stale one.
+      const budgets = await client.fetchBudgets();
+      await persist(snapshot, budgets);
       return snapshot.dates.length;
     },
   });

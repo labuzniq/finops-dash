@@ -88,12 +88,22 @@ because `mcp_server` is a strict subset: `remainder = totals − attributed` is 
 subtraction the overlapping dimensions permit, so the page can compare agent-shaped traffic against
 everything else on $/call and tokens/call and read adoption half-over-half. It is wired to the constant
 `mcp_server`, never to the dimension switcher, and it says "MCP-attributed" rather than "agents"
-because the proxy only tags calls that routed through a server — the number is a floor. **It is a draft against
+because the proxy only tags calls that routed through a server — the number is a floor. Everything above
+is *usage*; `gateway_budget` is the one gateway table that is not. It is a snapshot of the proxy's
+**governance** state — caps, rate limits and the counter for the period in flight, per key and per team,
+from `/key/list` and `/team/list` rather than the activity routes — replaced wholesale by the same sync
+and served by `GET /api/gateway/budgets`. Two rules invert there: a null limit means *no such limit*
+while `0` means *reject everything*, so nothing is zero-filled; and `spend` is the proxy's own enforced
+counter, never a re-derivation from `gateway_daily`, because a key's budget period resets on its own
+schedule. Both management routes are optional — an analytics-only credential is refused them, and
+`fetchBudgets` answering `[]` must not fail a usage sync. **Nothing renders it yet** — the budget card is
+the next step (see `docs/litellm-gateway.md`, "Not yet built"). **It is a draft against
 LiteLLM's published API, not validated against a live proxy** — see `docs/litellm-gateway.md` for the
 assumptions and open questions. The live client's *wire* behaviour is covered:
 `apps/api/scripts/verify-litellm-contract.ts` drives `LiteLlmGatewayClient` against a throwaway HTTP
 server serving the documented envelope (pagination, auth, retry classification, exponent-notation
-spend, absent optional routes, and the rule that `/team` and `/tag` never contribute totals). That
+spend, absent optional routes, the rule that `/team` and `/tag` never contribute totals, and the
+management routes' null-vs-zero limits). That
 proves the client handles the documented shape, not that the proxy sends it — it is also the harness
 for replaying a real captured response the day one exists.
 
@@ -122,7 +132,9 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
 - **Gateway breakdown dimensions overlap — never sum across them.** `model`, `provider`, `api_key`,
   `team`, `tag` and `user` are six slices of the same daily total; `mcp_server` is a subset of it.
   Unlike the Copilot metrics, every gateway counter is non-null — the proxy omits what never happened,
-  so zero there is a fact, not an unknown.
+  so zero there is a fact, not an unknown. **`gateway_budget` is the exception**: a null cap or rate
+  limit means none is configured, and `0` means blocked-by-budget, so those columns are nullable and
+  must never be zero-filled.
 - **`last_activity_at` is stored as a timestamp; "days ago" is derived at read time.** Storing the day
   count would go stale overnight.
 - **Every colour, radius, and font comes from `apps/web/src/styles/tokens.css`** — the Nocturne token
