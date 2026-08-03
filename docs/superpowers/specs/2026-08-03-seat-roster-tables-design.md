@@ -39,14 +39,19 @@ carries no dollar column, even though `PLAN_PRICE` would make one easy.
 
 ## Architecture
 
-One shared presentational component, two pure derivation modules, two CSV builders.
+One shared presentational component, two pure derivation modules over a shared grouping, one CSV
+builder.
 
 ```
-lib/metrics/wastedRoster.ts   SpendUserRow[]  → RosterGroup[]   (dollars)
-lib/metrics/idleRoster.ts     CopilotSeat[]   → RosterGroup[]   (no dollars)
-components/RosterTable.tsx    RosterGroup[]   → expandable table
-lib/exportCsv.ts              +2 flat builders, one row per person
+lib/metrics/roster.ts         shared types + groupRoster()
+lib/metrics/wastedRoster.ts   SpendUserRow[]  → Roster   (dollars)
+lib/metrics/idleRoster.ts     CopilotSeat[]   → Roster   (no dollars)
+components/RosterTable.tsx    Roster          → expandable table
+lib/exportCsv.ts              +buildRosterCsv, flat, one row per person
 ```
+
+The two pages render `RosterTable` directly rather than through per-page wrapper components: the
+only thing that differs is `showAmount` and the copy, both of which are props.
 
 `RosterGroup` is the shared shape both modules produce and the component renders:
 
@@ -124,17 +129,18 @@ These are the load-bearing ones. Breaking any of them makes the table lie.
    `b1_manager` column, every group, ignoring paging and expansion — a grouped CSV cannot be
    pivoted, and a paged one is a trap.
 
-8. **`reclaimCandidates()` stops being a second definition of idle.** It becomes a slice of the
-   roster's own ordering rather than a parallel sort, so the dead derivation is either used or
-   consistent with the one that replaced it.
+8. **`reclaimCandidates()` goes.** The roster supersedes it: same population, same ordering, now
+   rendered and with names. `idle.ts` keeps `idleSeats()` as the one definition of the population
+   and its ordering, so nothing can rank these seats two ways. Keeping a top-6 slice nothing
+   renders would leave the dead derivation dead.
 
 ## Layout
 
-**Spend page** — a new `WastedRosterCard` directly under the `SpendTrendCard` / `WastedSpendCard`
-split, above `CostCentreCard`. It reads as the drill-down of the card immediately above it.
+**Spend page** — the roster sits directly under the `SpendTrendCard` / `WastedSpendCard` split and
+above `CostCentreCard`. It reads as the drill-down of the card immediately above it.
 
-**Analytics page** — a new `IdleRosterCard` between `KpiRow` and the view toggle, so the idle KPI
-and the names it stands for are adjacent.
+**Analytics page** — the roster sits between `KpiRow` and the view toggle, so the idle KPI and the
+names it stands for are adjacent.
 
 Both are collapsed by default. Two hundred people is not an opening screen; the group rows are the
 summary and expansion is the drill-down. Paging is over **groups**, not people, at the existing
@@ -146,10 +152,14 @@ Styling comes from `tokens.css` through a CSS Module, like every other component
 ## Verification
 
 `pnpm typecheck` is the repo's only automated gate, and the derivations are pure functions over
-existing types, so the type system carries most of the weight. Beyond that: drive the app with
-`COPILOT_SOURCE=mock`, confirm the roster's person count equals the card's seat count, confirm an
-empty-Report-1 range renders the refusal rather than a full roster, and confirm the CSV row count
-matches the header.
+existing types, so the type system carries most of the weight. Beyond that, drive the app with
+`COPILOT_SOURCE=mock` and check the four things the types cannot:
+
+- the roster's person count equals the card's seat count (`$4,750.00 / 250` on both);
+- the idle roster's group counts equal the counts taken straight off `/api/seats`, and the
+  unassigned bucket sorts last even when it is larger than the group above it;
+- an empty-Report-1 range renders the refusal rather than a full roster (`measurable: false`);
+- the CSV escapes embedded quotes, leaves nulls empty, and puts never-used seats first.
 
 ## Out of scope
 

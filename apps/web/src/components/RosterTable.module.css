@@ -1,0 +1,295 @@
+.card {
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 16px 20px 4px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Same segmented control as the cost-centre card's dimension switcher. */
+.segmented {
+  display: flex;
+  background: var(--border2);
+  padding: 3px;
+  border-radius: 9px;
+  gap: 2px;
+}
+
+.segment {
+  border: 0;
+  background: transparent;
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--card);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.export {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.export:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.export:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px 4px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Label, bar, then the right-aligned numbers. The idle roster has no money, so
+   the money column is a modifier rather than an always-present empty cell. */
+.groupRow {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 70px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.withAmount {
+  grid-template-columns: 260px minmax(0, 1fr) 96px 70px;
+}
+
+.headRow {
+  padding-top: 0;
+  padding-bottom: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.groupButton {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.groupButton:hover {
+  background: var(--border2);
+}
+
+.name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fixed width so the labels stay aligned whether a group is open or shut. */
+.chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 120ms ease;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+}
+
+/* The unassigned bucket is a data-quality remainder, not a cost centre. */
+.gap {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.track {
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--accent) var(--chart-fill), transparent);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 5px;
+  background: var(--accent);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+/* The expanded people, indented under their group. */
+.people {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 8px 22px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.personRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) 100px;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+
+.personRow:hover {
+  background: var(--border2);
+}
+
+.person {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.personName {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.login {
+  font: 400 10.5px ui-monospace, Menlo, monospace;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dept {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detail {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.empty {
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 20px 14px;
+}
+
+.pageLabel {
+  margin-right: auto;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.pageButton {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pageButton:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.pageButton:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 1000px) {
+  .groupRow {
+    grid-template-columns: 150px minmax(0, 1fr) 56px;
+  }
+
+  .withAmount {
+    grid-template-columns: 150px minmax(0, 1fr) 88px 56px;
+  }
+
+  .personRow {
+    grid-template-columns: minmax(0, 1fr) 90px;
+  }
+
+  /* Department is the first to go — the name and the fact carry the row. */
+  .personRow > :nth-child(2) {
+    display: none;
+  }
+}

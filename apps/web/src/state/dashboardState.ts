@@ -33,6 +33,14 @@ export interface DashboardState {
   spendPage: number;
   /** Which org dimension the cost-centre rollup ranks. */
   spendGroupBy: CostCentreDimension;
+  /**
+   * Which org dimension the waste rosters group by — deliberately not
+   * `spendGroupBy`. That one ranks cost centres and defaults to department;
+   * this one answers "who do I contact", so it defaults to the B-1 manager and
+   * must not silently regroup when somebody re-cuts the chargeback ranking.
+   * One field serves both rosters: they never share a page.
+   */
+  rosterGroupBy: CostCentreDimension;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
   /**
@@ -58,6 +66,7 @@ export const initialDashboardState: DashboardState = {
   spendSortDirection: -1,
   spendPage: 0,
   spendGroupBy: 'department',
+  rosterGroupBy: 'b1Manager',
   tableView: 'users',
   usageMetric: {},
 };
@@ -75,6 +84,7 @@ export type DashboardAction =
   | { type: 'toggleSpendSort'; key: SpendSortKey }
   | { type: 'setSpendPage'; page: number }
   | { type: 'setSpendGroupBy'; dimension: CostCentreDimension }
+  | { type: 'setRosterGroupBy'; dimension: CostCentreDimension }
   | { type: 'setTableView'; view: TableView }
   | { type: 'setUsageMetric'; section: string; metric: string };
 
@@ -122,6 +132,10 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
     // table below it stay exactly where they were.
     case 'setSpendGroupBy':
       return { ...state, spendGroupBy: action.dimension };
+
+    // Same reasoning: regrouping the roster re-cuts the same people.
+    case 'setRosterGroupBy':
+      return { ...state, rosterGroupBy: action.dimension };
 
     case 'setTableView':
       return { ...state, tableView: action.view };

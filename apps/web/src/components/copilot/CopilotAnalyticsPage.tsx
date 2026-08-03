@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 import type { Dispatch } from 'react';
-import { RANGE_DAYS, rangeDayCount } from '@dash/shared';
+import { IDLE_THRESHOLD_DAYS, RANGE_DAYS, rangeDayCount } from '@dash/shared';
 import type { RangeDays, RefreshJob } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import { rangeLabel } from '../../lib/format.js';
+import { count, rangeLabel } from '../../lib/format.js';
+import { downloadRosterCsv } from '../../lib/exportCsv.js';
 import { useModels, useSeats, useUsage } from '../../hooks/useCopilotData.js';
 import type { DashboardMetrics } from '../../hooks/useDashboardMetrics.js';
 import { ALL, seatLanguages } from '../../lib/metrics/filter.js';
@@ -13,6 +14,7 @@ import type { DashboardAction, DashboardState } from '../../state/dashboardState
 import { FilterBar } from '../FilterBar.js';
 import { KpiRow } from '../KpiRow.js';
 import { ModelTable } from '../ModelTable.js';
+import { RosterTable } from '../RosterTable.js';
 import { UserTable } from '../UserTable.js';
 import { UtilizationDonut } from '../UtilizationDonut.js';
 import { UsageSections } from '../usage/UsageSections.js';
@@ -127,6 +129,22 @@ export function CopilotAnalyticsPage({
       {!loadError && !isLoading && (
         <>
           <KpiRow metrics={metrics} rangeDays={rangeDays} />
+
+          {/* Directly under the KPI, so the idle count and the names it stands
+              for are adjacent. Activity only — the licence money behind these
+              seats is the spend page's wasted roster, over a different
+              population. */}
+          <RosterTable
+            title="Who the idle seats belong to"
+            subtitle={`${count(metrics.roster.people)} ${metrics.roster.people === 1 ? 'seat' : 'seats'} unused for ${IDLE_THRESHOLD_DAYS}d or never used`}
+            roster={metrics.roster}
+            dimension={state.rosterGroupBy}
+            showAmount={false}
+            detailLabel="Last active"
+            emptyNote="Every seat matching these filters was used in the last 30 days."
+            onDimensionChange={(dimension) => dispatch({ type: 'setRosterGroupBy', dimension })}
+            onExport={() => downloadRosterCsv(metrics.roster, 'last_active', 'idle-seats.csv')}
+          />
 
           {/* Above the grid, not inside its left column — nesting it there
               pushed the table down and broke the alignment with the donut. */}
