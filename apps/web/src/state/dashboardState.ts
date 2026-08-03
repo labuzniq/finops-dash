@@ -2,10 +2,12 @@ import type { DateRange } from '@dash/shared';
 import type { CostCentreDimension } from '../lib/metrics/costCentre.js';
 import { ALL } from '../lib/metrics/filter.js';
 import type { EditorFilter, LanguageFilter } from '../lib/metrics/filter.js';
+import type { RosterGroupBy } from '../lib/metrics/roster.js';
 import type { SpendSortDirection, SpendSortKey } from '../lib/metrics/spend.js';
 import { EMPTY_SPEND_FILTERS } from '../lib/metrics/spendFilter.js';
 import type { SpendFilters } from '../lib/metrics/spendFilter.js';
 import type { SortDirection, SortKey } from '../lib/metrics/table.js';
+import type { WasteCohort } from '../lib/metrics/wasteCohort.js';
 
 /**
  * All page state in one reducer. Everything the dashboard shows is derived
@@ -34,13 +36,25 @@ export interface DashboardState {
   /** Which org dimension the cost-centre rollup ranks. */
   spendGroupBy: CostCentreDimension;
   /**
-   * Which org dimension the waste rosters group by — deliberately not
+   * Which org dimension the idle-seat roster groups by — deliberately not
    * `spendGroupBy`. That one ranks cost centres and defaults to department;
    * this one answers "who do I contact", so it defaults to the B-1 manager and
    * must not silently regroup when somebody re-cuts the chargeback ranking.
-   * One field serves both rosters: they never share a page.
    */
   rosterGroupBy: CostCentreDimension;
+  /**
+   * The same question on the wasted roster, held apart because that roster can
+   * also group by cohort and the idle one cannot: sharing the field would put
+   * every idle seat in the unassigned bucket the moment somebody re-cut the
+   * spend page.
+   */
+  wasteGroupBy: RosterGroupBy;
+  /**
+   * Which waste cohort the roster is narrowed to, or null for all of them.
+   * Filter rather than a second grouping, so it composes with whichever
+   * dimension the table is cut by.
+   */
+  wasteCohort: WasteCohort | null;
   /** Which breakdown the main table shows: per-user or per-model. */
   tableView: TableView;
   /**
@@ -67,6 +81,8 @@ export const initialDashboardState: DashboardState = {
   spendPage: 0,
   spendGroupBy: 'department',
   rosterGroupBy: 'b1Manager',
+  wasteGroupBy: 'b1Manager',
+  wasteCohort: null,
   tableView: 'users',
   usageMetric: {},
 };
@@ -85,6 +101,8 @@ export type DashboardAction =
   | { type: 'setSpendPage'; page: number }
   | { type: 'setSpendGroupBy'; dimension: CostCentreDimension }
   | { type: 'setRosterGroupBy'; dimension: CostCentreDimension }
+  | { type: 'setWasteGroupBy'; dimension: RosterGroupBy }
+  | { type: 'setWasteCohort'; cohort: WasteCohort | null }
   | { type: 'setTableView'; view: TableView }
   | { type: 'setUsageMetric'; section: string; metric: string };
 
@@ -136,6 +154,14 @@ export function dashboardReducer(state: DashboardState, action: DashboardAction)
     // Same reasoning: regrouping the roster re-cuts the same people.
     case 'setRosterGroupBy':
       return { ...state, rosterGroupBy: action.dimension };
+
+    case 'setWasteGroupBy':
+      return { ...state, wasteGroupBy: action.dimension };
+
+    // The cohort narrows the same people the grouping cuts, so the grouping
+    // survives the filter and the filter survives a regroup.
+    case 'setWasteCohort':
+      return { ...state, wasteCohort: action.cohort };
 
     case 'setTableView':
       return { ...state, tableView: action.view };

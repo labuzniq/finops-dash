@@ -38,6 +38,52 @@
   color: var(--muted);
 }
 
+/* The three cohorts, under the headline they add up to. */
+.cohorts {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cohort {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: baseline;
+}
+
+.cohortLabel {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cohortAmount {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Second line under the label, so a long cohort name never squeezes the money. */
+.cohortSeats {
+  grid-column: 2;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cohortNote {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--faint);
+  line-height: 1.45;
+}
+
 /* Pushes the bar and its caption to the bottom of whatever height we get. */
 .spacer {
   flex: 1;
