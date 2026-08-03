@@ -196,7 +196,7 @@ export interface ModelUsage {
 export const REFRESH_STATUSES = ['pending', 'running', 'succeeded', 'failed'] as const;
 export type RefreshStatus = (typeof REFRESH_STATUSES)[number];
 
-export const REFRESH_KINDS = ['copilot', 'jira', 'billing', 'gateway'] as const;
+export const REFRESH_KINDS = ['copilot', 'jira', 'billing', 'gateway', 'members'] as const;
 export type RefreshKind = (typeof REFRESH_KINDS)[number];
 
 /**

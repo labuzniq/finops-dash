@@ -53,6 +53,7 @@ export function App() {
   const billing = useSyncJob('billing');
   const jira = useSyncJob('jira');
   const gateway = useSyncJob('gateway');
+  const members = useSyncJob('members');
   const imports = useReportImports();
 
   // The reload button refetches every server query in place — same data
@@ -75,7 +76,13 @@ export function App() {
           {view === 'claude-code' && <ClaudeCodePage />}
           {view === 'llm-gateway' && <GatewayPage sync={gateway} />}
           {view === 'data-sources' && (
-            <DataSourcesPage copilot={copilot} billing={billing} jira={jira} gateway={gateway} />
+            <DataSourcesPage
+              copilot={copilot}
+              billing={billing}
+              jira={jira}
+              gateway={gateway}
+              members={members}
+            />
           )}
           {view === 'imports' && <ImportsPage imports={imports} />}
         </main>

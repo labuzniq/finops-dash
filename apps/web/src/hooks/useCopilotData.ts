@@ -23,6 +23,7 @@ import {
   startBillingSync,
   startGatewaySync,
   startJiraSync,
+  startMembersSync,
   startRefresh,
 } from '../api/client.js';
 import type { GatewaySyncWindow } from '../api/client.js';
@@ -201,6 +202,9 @@ const SYNC_SOURCES = {
   // Writes `gateway_daily` and `gateway_breakdown_daily` — its own query key,
   // shared with nothing else.
   gateway: { start: startGatewaySync, invalidates: ['gateway'] },
+  // Writes `github_users` — the identity join behind both the seat roster's
+  // display names and the spend payload's department and manager columns.
+  members: { start: startMembersSync, invalidates: ['seats', 'spend'] },
 } satisfies Record<RefreshKind, SyncSource>;
 
 export interface UseSyncJob {

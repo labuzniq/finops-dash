@@ -4,16 +4,17 @@ import { moduleLogger } from './log.js';
 import { startBillingSync } from './services/billing-sync.js';
 import { startGatewaySync } from './services/gateway-sync.js';
 import { startJiraSync } from './services/jira-sync.js';
+import { startMembersSync } from './services/members-sync.js';
 import { startRefresh } from './services/refresh.js';
 
 /**
  * In-process daily trigger for every data pull — no cron dependency, no
  * external scheduler. One timer aims at the next 07:00 Europe/Prague (CET/CEST
  * resolved via Intl, so DST needs no special-casing), fires the same sync
- * entry points the manual routes use (Copilot analytics refresh, JIRA identity
- * sync, enterprise billing sync, LLM-gateway sync), and re-aims. Each job is a
- * distinct `refresh_jobs` kind, single-flight per kind, safe to run
- * concurrently.
+ * entry points the manual routes use (Copilot analytics refresh, org member
+ * sync, JIRA identity sync, enterprise billing sync, LLM-gateway sync), and
+ * re-aims. Each job is a distinct `refresh_jobs` kind, single-flight per kind,
+ * safe to run concurrently.
  *
  * 07:00 local is well past midnight UTC year-round, so "yesterday UTC" — the
  * billing sync's newest target day — is always complete when the timer fires.
@@ -98,15 +99,28 @@ interface ScheduledSync {
 /**
  * Every data pull the app knows, in one place. Availability mirrors each
  * manual route's guard: the Copilot refresh always has a source (mock or
- * github — env.ts refuses to boot otherwise), JIRA needs its credentials
- * unless the mock source is active, billing needs GITHUB_ENTERPRISE, and the
- * LLM gateway needs GATEWAY_SOURCE to be anything but `off`.
+ * github — env.ts refuses to boot otherwise), the member sync needs an org and
+ * a token, JIRA needs its credentials unless the mock source is active,
+ * billing needs GITHUB_ENTERPRISE, and the LLM gateway needs GATEWAY_SOURCE to
+ * be anything but `off`.
  */
 const SYNCS: ScheduledSync[] = [
   {
     name: 'copilot-refresh',
     disabledReason: () => null,
     start: startRefresh,
+  },
+  {
+    // Ahead of jira-sync by intent only, not by guarantee: `startJob` returns
+    // once the row is inserted and runs the body detached, so JIRA resolves a
+    // login that joined today on tomorrow's run. That one-day lag on a new
+    // joiner's department is not worth coupling two independent syncs.
+    name: 'members-sync',
+    disabledReason: () =>
+      env.GITHUB_ORG && (env.GITHUB_MEMBERS_TOKEN || env.GITHUB_TOKEN)
+        ? null
+        : 'GITHUB_ORG and GITHUB_MEMBERS_TOKEN (or GITHUB_TOKEN) are not set',
+    start: startMembersSync,
   },
   {
     name: 'jira-sync',

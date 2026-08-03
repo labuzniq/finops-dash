@@ -138,18 +138,27 @@ interface DataSourcesPageProps {
   billing: UseSyncJob;
   jira: UseSyncJob;
   gateway: UseSyncJob;
+  members: UseSyncJob;
 }
 
-export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSourcesPageProps) {
+export function DataSourcesPage({
+  copilot,
+  billing,
+  jira,
+  gateway,
+  members,
+}: DataSourcesPageProps) {
   const { sync: syncCopilot, isRunning: isRefreshing, error: refreshError } = copilot;
   const { sync: syncBilling, isRunning: isBillingSyncing, error: billingError } = billing;
   const { sync: syncJira, isRunning: isJiraSyncing, error: jiraError } = jira;
   const { sync: syncGateway, isRunning: isGatewaySyncing, error: gatewayError } = gateway;
+  const { sync: syncMembers, isRunning: isMembersSyncing, error: membersError } = members;
 
   const latestJobQuery = useLatestJob('copilot');
   const billingJobQuery = useLatestJob('billing');
   const jiraJobQuery = useLatestJob('jira');
   const gatewayJobQuery = useLatestJob('gateway');
+  const membersJobQuery = useLatestJob('members');
   const gatewayStatusQuery = useGatewayStatus();
   const freshnessQuery = useTelemetryFreshness();
 
@@ -157,11 +166,13 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
   const billingJob = billingJobQuery.data ?? null;
   const jiraJob = jiraJobQuery.data ?? null;
   const gatewayJob = gatewayJobQuery.data ?? null;
+  const membersJob = membersJobQuery.data ?? null;
 
   const copilotState = syncState(latestJob, isRefreshing);
   const billingState = syncState(billingJob, isBillingSyncing);
   const jiraState = syncState(jiraJob, isJiraSyncing);
   const gatewayState = syncState(gatewayJob, isGatewaySyncing);
+  const membersState = syncState(membersJob, isMembersSyncing);
   const gatewaySource = gatewayStatusQuery.data?.source ?? 'off';
   const gatewayConfigured = gatewayStatusQuery.data?.configured ?? false;
 
@@ -223,6 +234,26 @@ export function DataSourcesPage({ copilot, billing, jira, gateway }: DataSources
               disabled={isBillingSyncing}
             >
               {isBillingSyncing ? 'Syncing…' : 'Sync'}
+            </button>
+          }
+        />
+
+        <SourceRow
+          name="GitHub org members"
+          fields="login · saml_name_id"
+          note="Runs on its own every day at 07:00; Sync pulls it now."
+          state={membersState}
+          status={statusText(membersState, membersJob)}
+          error={errorFor(membersError, membersJob)}
+          action={
+            <button
+              type="button"
+              className={styles.connect}
+              aria-label="Sync GitHub org members"
+              onClick={() => syncMembers()}
+              disabled={isMembersSyncing}
+            >
+              {isMembersSyncing ? 'Syncing…' : 'Sync'}
             </button>
           }
         />
