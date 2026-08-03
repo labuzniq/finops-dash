@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { rangeDayCount } from '@dash/shared';
 import type { CopilotSeat } from '@dash/shared';
 import { filterSeats } from '../lib/metrics/filter.js';
-import { reclaimCandidates } from '../lib/metrics/idle.js';
+import { idleRoster } from '../lib/metrics/idleRoster.js';
+import type { Roster } from '../lib/metrics/roster.js';
 import { paginate, sortSeats } from '../lib/metrics/table.js';
 import type { Page } from '../lib/metrics/table.js';
 import { buildUtilization } from '../lib/metrics/utilization.js';
@@ -24,8 +25,8 @@ export interface DashboardMetrics {
   filteredSeats: CopilotSeat[];
   utilization: Utilization;
   page: Page<CopilotSeat>;
-  /** Idle seats, worst first — the reclaim list. */
-  reclaim: CopilotSeat[];
+  /** Idle seats grouped by org unit, worst first — the names behind `idleCount`. */
+  roster: Roster;
   idleCount: number;
   /** Premium requests across the filtered seats, prorated to the range. */
   premiumRequestsUsed: number;
@@ -47,7 +48,10 @@ export function useDashboardMetrics(
   );
 
   const utilization = useMemo(() => buildUtilization(filteredSeats), [filteredSeats]);
-  const reclaim = useMemo(() => reclaimCandidates(filteredSeats), [filteredSeats]);
+  const roster = useMemo(
+    () => idleRoster(filteredSeats, state.rosterGroupBy),
+    [filteredSeats, state.rosterGroupBy],
+  );
 
   const rangeDays = rangeDayCount(state.range);
 
@@ -71,7 +75,7 @@ export function useDashboardMetrics(
     filteredSeats,
     utilization,
     page,
-    reclaim,
+    roster,
     idleCount: utilization.buckets
       .filter((bucket) => bucket.key === 'dormant' || bucket.key === 'never')
       .reduce((total, bucket) => total + bucket.count, 0),

@@ -1,6 +1,7 @@
 import { GATEWAY_DIMENSION_LABELS, sealDrift } from '@dash/shared';
 import type { CopilotSeat, GatewaySeal } from '@dash/shared';
 import type { ChargebackStatement } from './metrics/gatewayChargeback.js';
+import type { Roster } from './metrics/roster.js';
 import { monthLabel } from './metrics/gatewayChargeback.js';
 
 /** Exports the seats currently in view — what you filtered is what you get. */
@@ -55,6 +56,51 @@ function download(contents: string, filename: string): void {
 
 export function downloadSeatsCsv(seats: readonly CopilotSeat[], rangeDays: number): void {
   download(buildSeatsCsv(seats), `copilot-seats-${rangeDays}d.csv`);
+}
+
+/**
+ * A waste roster as a file — the handoff, since the dashboard mails nobody.
+ *
+ * Flat and complete: one row per person across every group, ignoring both the
+ * paging and the expansion on screen. Grouping is a reading aid and a grouped
+ * CSV cannot be pivoted; a paged one is worse, because it looks whole. All
+ * three identity fields ride along whichever one the screen happens to be
+ * grouped by, so the recipient can re-cut it without coming back.
+ *
+ * `detail` carries its own unit — dollars on the wasted roster, a last-active
+ * label on the idle one — so the column is named by the caller rather than
+ * assumed here.
+ */
+const ROSTER_HEADERS = [
+  'user_login',
+  'name',
+  'department',
+  'b1_manager',
+  'b2_manager',
+] as const;
+
+export function buildRosterCsv(roster: Roster, detailHeader: string): string {
+  const header = [...ROSTER_HEADERS, detailHeader].join(',');
+  const rows = roster.groups.flatMap((group) =>
+    group.people.map((person) =>
+      [
+        person.login,
+        person.displayName,
+        person.department,
+        person.b1Manager,
+        person.b2Manager,
+        person.detail,
+      ]
+        .map(escapeCell)
+        .join(','),
+    ),
+  );
+
+  return [header, ...rows].join('\n');
+}
+
+export function downloadRosterCsv(roster: Roster, detailHeader: string, filename: string): void {
+  download(buildRosterCsv(roster, detailHeader), filename);
 }
 
 /**

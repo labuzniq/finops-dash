@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Dispatch } from 'react';
 import type { BillingRow, ModelSpendRow, RefreshJob, SpendPerson } from '@dash/shared';
 import { cx } from '../../lib/cx.js';
-import { rangeLabel, relativeTime } from '../../lib/format.js';
+import { count, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
 import {
   modelBreakdown,
@@ -14,6 +14,8 @@ import {
 } from '../../lib/metrics/spend.js';
 import { costCentreRollup } from '../../lib/metrics/costCentre.js';
 import type { CostCentreDimension } from '../../lib/metrics/costCentre.js';
+import { wastedRoster } from '../../lib/metrics/wastedRoster.js';
+import { downloadRosterCsv } from '../../lib/exportCsv.js';
 import {
   applySpendFilter,
   cascadeScopeChange,
@@ -30,6 +32,7 @@ import { SpendKpiRow } from './SpendKpiRow.js';
 import { SpendTrendCard } from './SpendTrendCard.js';
 import { SpendUserTable } from './SpendUserTable.js';
 import { WastedSpendCard } from './WastedSpendCard.js';
+import { RosterTable } from '../RosterTable.js';
 import styles from './SpendSection.module.css';
 
 /**
@@ -110,6 +113,13 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
   // disagree with the KPIs about who is being counted.
   const waste = useMemo(() => wastedSpend(userRows), [userRows]);
 
+  // Same rows, same test — the roster is the card above it with the names put
+  // back in, so its person count is the card's seat count by construction.
+  const roster = useMemo(
+    () => wastedRoster(userRows, state.rosterGroupBy),
+    [userRows, state.rosterGroupBy],
+  );
+
   // The rollup runs over the faceted row set: identical to `userRows` unless
   // the grouped dimension is itself filtered, in which case it widens back out
   // so the selected group can be ranked against its peers.
@@ -169,6 +179,21 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
             <SpendTrendCard trend={trend} subtitle={label} />
             <WastedSpendCard waste={waste} rangeLabel={label} />
           </div>
+
+          <RosterTable
+            title="Who the wasted licences belong to"
+            subtitle={`${count(roster.people)} ${roster.people === 1 ? 'person' : 'people'} · ${usd(roster.amount, 2)} · licensed with no AI credits · ${label}`}
+            roster={roster}
+            dimension={state.rosterGroupBy}
+            showAmount
+            detailLabel="Licence cost in range"
+            unmeasurableNote="No per-model report in this range, so a seat nobody used cannot be told apart from one nobody reported. Import Report 1 for this window to name them."
+            emptyNote="Every licensed person in this range used AI credits."
+            onDimensionChange={(dimension) => dispatch({ type: 'setRosterGroupBy', dimension })}
+            onExport={() =>
+              downloadRosterCsv(roster, 'licence_usd', `wasted-seats-${bounds.from}-${bounds.to}.csv`)
+            }
+          />
 
           <CostCentreCard
             rollup={rollup}
