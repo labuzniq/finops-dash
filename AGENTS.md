@@ -628,6 +628,27 @@ per-row tolerance). That
 proves the client handles the documented shape, not that the proxy sends it — it is also the harness
 for replaying a real captured response the day one exists.
 
+**Org membership is its own data pull.** `apps/api/src/copilot/members.ts` reads GitHub's GraphQL
+`organization.samlIdentityProvider.externalIdentities` — the supported twin of the members page's
+Export button, which posts to the *dotcom* `orgs/{org}/members/export`, needs browser session cookies
+and a scraped CSRF token, and has no published contract. `services/members-sync.ts` upserts the result
+into `github_users` under `refresh_jobs` kind `members`, on the 07:00 schedule and behind
+`POST /api/refresh/members`. Three rules are load-bearing. **Rows are never deleted and `active` is
+never touched**: a login that stops appearing left the org, unlinked SSO, or fell out of a partial
+page, and one response cannot tell those apart, so departed members stay joinable to their historical
+spend, while `active` keeps meaning "seen in a billing report" and stays the billing import's. The
+saml id is written through **`coalesce(excluded, existing)`**, because a member with no linked
+identity is *unknown* and unknown must not erase what an upload established. And a nameId past the
+`varchar(40)` column is **skipped and counted, never truncated** — a truncated id joins to the wrong
+`jira_people` row, which is worse than the member being absent. GraphQL answers `200` for most
+failures, so a null `samlIdentityProvider` and an `errors[]` array both throw rather than reporting an
+empty roster. `externalIdentities` covers SAML-*linked* members only, which is why
+`POST /api/import/users` stays as the manual path for everyone else; the client's wire behaviour is
+covered by `apps/api/scripts/verify-members-contract.ts` against a throwaway server, not against a
+live org. A successful or failed run also files an `import_log` row under the `users` slot with an
+explicit filename, so the Imports page and `refresh_jobs` answer different questions about the same
+table rather than one of them going stale.
+
 **Refresh is a job table, not a broker.** `POST /api/refresh` inserts a row, returns `202`, and syncs in
 the background; the client polls until `succeeded`/`failed`, then invalidates its queries. The
 `refresh_jobs` table is simultaneously the queue, the audit log, and the UI's "synced 2h ago" source.
