@@ -7,6 +7,7 @@ import {
   GatewaySyncUnavailableError,
   startGatewaySync,
 } from '../services/gateway-sync.js';
+import { MembersSyncUnavailableError, startMembersSync } from '../services/members-sync.js';
 import { getLatestRefreshJob, getRefreshJob, startRefresh } from '../services/refresh.js';
 
 const jobParams = z.object({ id: z.string().uuid() });
@@ -41,6 +42,25 @@ export const refreshRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(202).send({ job });
     } catch (error) {
       if (error instanceof BillingSyncUnavailableError) {
+        return reply.code(503).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Kick off an org member sync (kind `members`) — the scheduled 07:00 run
+   * uses the same entry point. 503 while GITHUB_ORG or a token is unset.
+   *
+   * This is the API replacement for the members-export CSV upload; the upload
+   * route stays for the members GraphQL cannot see (never linked SSO).
+   */
+  app.post('/api/refresh/members', async (_request, reply) => {
+    try {
+      const job = await startMembersSync();
+      return reply.code(202).send({ job });
+    } catch (error) {
+      if (error instanceof MembersSyncUnavailableError) {
         return reply.code(503).send({ error: error.message });
       }
       throw error;
