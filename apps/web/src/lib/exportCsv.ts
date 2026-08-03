@@ -69,7 +69,9 @@ export function downloadSeatsCsv(seats: readonly CopilotSeat[], rangeDays: numbe
  *
  * `detail` carries its own unit — dollars on the wasted roster, a last-active
  * label on the idle one — so the column is named by the caller rather than
- * assumed here.
+ * assumed here. `noteHeader` is the same arrangement for the second fact: the
+ * wasted roster passes one and gets a cohort column with it, since a cohort
+ * without the date that produced it cannot be checked.
  */
 const ROSTER_HEADERS = [
   'user_login',
@@ -79,8 +81,14 @@ const ROSTER_HEADERS = [
   'b2_manager',
 ] as const;
 
-export function buildRosterCsv(roster: Roster, detailHeader: string): string {
-  const header = [...ROSTER_HEADERS, detailHeader].join(',');
+export function buildRosterCsv(roster: Roster, detailHeader: string, noteHeader?: string): string {
+  const withNote = noteHeader !== undefined;
+  const header = [
+    ...ROSTER_HEADERS,
+    ...(withNote ? ['cohort', noteHeader] : []),
+    detailHeader,
+  ].join(',');
+
   const rows = roster.groups.flatMap((group) =>
     group.people.map((person) =>
       [
@@ -89,6 +97,10 @@ export function buildRosterCsv(roster: Roster, detailHeader: string): string {
         person.department,
         person.b1Manager,
         person.b2Manager,
+        // Both fields ride on every row whichever way the screen is grouped —
+        // a recipient who re-cuts the file by cohort must not have to come back
+        // for the dates.
+        ...(withNote ? [person.cohort ?? null, person.note ?? null] : []),
         person.detail,
       ]
         .map(escapeCell)
@@ -99,8 +111,13 @@ export function buildRosterCsv(roster: Roster, detailHeader: string): string {
   return [header, ...rows].join('\n');
 }
 
-export function downloadRosterCsv(roster: Roster, detailHeader: string, filename: string): void {
-  download(buildRosterCsv(roster, detailHeader), filename);
+export function downloadRosterCsv(
+  roster: Roster,
+  detailHeader: string,
+  filename: string,
+  noteHeader?: string,
+): void {
+  download(buildRosterCsv(roster, detailHeader, noteHeader), filename);
 }
 
 /**

@@ -14,7 +14,7 @@ import type { DashboardAction, DashboardState } from '../../state/dashboardState
 import { FilterBar } from '../FilterBar.js';
 import { KpiRow } from '../KpiRow.js';
 import { ModelTable } from '../ModelTable.js';
-import { RosterTable } from '../RosterTable.js';
+import { ORG_DIMENSIONS, RosterTable } from '../RosterTable.js';
 import { UserTable } from '../UserTable.js';
 import { UtilizationDonut } from '../UtilizationDonut.js';
 import { UsageSections } from '../usage/UsageSections.js';
@@ -139,6 +139,7 @@ export function CopilotAnalyticsPage({
             subtitle={`${count(metrics.roster.people)} ${metrics.roster.people === 1 ? 'seat' : 'seats'} unused for ${IDLE_THRESHOLD_DAYS}d or never used`}
             roster={metrics.roster}
             dimension={state.rosterGroupBy}
+            dimensions={ORG_DIMENSIONS}
             showAmount={false}
             detailLabel="Last active"
             emptyNote="Every seat matching these filters was used in the last 30 days."

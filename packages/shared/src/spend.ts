@@ -79,9 +79,36 @@ export interface BillingImportResult {
   unknownLogins: string[];
 }
 
+/**
+ * How far back the per-model report reaches, and when each login last spent a
+ * credit *before* the selected range.
+ *
+ * The wasted-seat population is "licensed, zero credits in range", which by
+ * construction says nothing about what happened before the range — so a seat
+ * nobody has ever spent a credit on and one whose owner stopped three weeks ago
+ * are the same row without this. Credits rather than seat activity, because
+ * credits are the currency of the waste test itself.
+ *
+ * `floor` is what keeps "never" from being asserted: a login absent from
+ * `lastCreditBefore` spent nothing *in the imported history*, and someone whose
+ * last credit predates the first imported day is indistinguishable from someone
+ * who never spent one. Consumers name the floor rather than claiming never.
+ */
+export interface CreditHistory {
+  /** First day the per-model report covers. Null when nothing is imported. */
+  floor: string | null;
+  /**
+   * login -> last day strictly before the range that recorded credits. A login
+   * with no credit day in the imported history is absent rather than null: the
+   * absence is the fact, and a null would invite zero-filling it.
+   */
+  lastCreditBefore: Record<string, string>;
+}
+
 /** Everything `GET /api/spend` returns — fetched once, derived client-side. */
 export interface SpendPayload {
   billingRows: BillingRow[];
   modelRows: ModelSpendRow[];
   people: SpendPerson[];
+  creditHistory: CreditHistory;
 }

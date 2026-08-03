@@ -1,5 +1,6 @@
 import { UNASSIGNED } from './costCentre.js';
 import type { CostCentreDimension } from './costCentre.js';
+import type { WasteCohort } from './wasteCohort.js';
 
 /**
  * The shape both waste rosters produce and one table renders.
@@ -33,11 +34,30 @@ export interface RosterPerson {
    */
   detail: string;
   /**
+   * A second right-hand fact, where the roster has one: the last credit day on
+   * the wasted roster, absent on the idle one. Optional rather than empty,
+   * because a column with nothing in it is worse than no column.
+   */
+  note?: string;
+  /**
+   * Which waste cohort this person is in — set by the wasted roster only, and
+   * what makes `cohort` groupable. Absent on the idle roster, whose population
+   * has no such split.
+   */
+  cohort?: WasteCohort;
+  /**
    * Worst-first sort weight within the group — licence dollars, or staleness
    * in days. Never rendered.
    */
   weight: number;
 }
+
+/**
+ * What a roster may be grouped by. The org dimensions are the question "who
+ * would have this conversation"; `cohort` is the question "which conversation
+ * is it", and only the wasted roster carries one.
+ */
+export type RosterGroupBy = CostCentreDimension | 'cohort';
 
 export interface RosterGroup {
   /**
@@ -75,31 +95,39 @@ export type RosterSource = RosterPerson;
 export const EMPTY_ROSTER: Roster = { groups: [], people: 0, amount: 0, measurable: true };
 
 /**
- * Group people by one org dimension, worst bucket first.
+ * Group people by one dimension, worst bucket first.
  *
  * Ranking is by money where there is money and by headcount where there is
  * not, so the first row is always the conversation to have first. The
  * unassigned bucket sorts last regardless of size, exactly as in
  * `costCentreRollup` — ranking it among real managers invites reading it as
  * one, and no filter can select "people with no manager".
+ *
+ * `labelOf` is how a key that is an identifier rather than a name renders: the
+ * cohort keys are `never`/`dormant`/`lapsed` and the reader is owed prose. Org
+ * dimensions pass nothing, since their key already is their label.
  */
 export function groupRoster(
   people: readonly RosterSource[],
-  dimension: CostCentreDimension,
+  dimension: RosterGroupBy,
   amountOf: (person: RosterSource) => number,
-  measurable = true,
+  labelOf?: (key: string) => string,
 ): Roster {
   const byKey = new Map<string, RosterGroup>();
   let totalAmount = 0;
 
   for (const person of people) {
-    const raw = person[dimension];
-    const key = raw === null || raw === '' ? null : raw;
+    // `cohort` is optional on the shared shape and set on every person of the
+    // roster that offers it, so an undefined here is the same absence a null
+    // org field is: the unassigned bucket, never a cohort of its own.
+    const raw = person[dimension] ?? null;
+    const key = raw === '' ? null : raw;
     // Map keys must be strings; the sentinel cannot collide with a real value
     // because a real value is never empty.
     const mapKey = key ?? '';
 
-    const group = byKey.get(mapKey) ?? { key, label: key ?? UNASSIGNED, people: [], amount: 0 };
+    const label = key === null ? UNASSIGNED : (labelOf?.(key) ?? key);
+    const group = byKey.get(mapKey) ?? { key, label, people: [], amount: 0 };
     const amount = amountOf(person);
     group.people.push(person);
     group.amount += amount;
@@ -125,5 +153,8 @@ export function groupRoster(
     return b.amount - a.amount || b.people.length - a.people.length || a.label.localeCompare(b.label);
   });
 
-  return { groups, people: people.length, amount: totalAmount, measurable };
+  // Always measurable: the unmeasurable case never reaches here — the caller
+  // that cannot tell an unused seat from an unreported one returns
+  // `EMPTY_ROSTER` with the flag cleared rather than grouping nobody.
+  return { groups, people: people.length, amount: totalAmount, measurable: true };
 }

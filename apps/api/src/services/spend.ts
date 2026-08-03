@@ -1,6 +1,12 @@
-import { and, asc, gte, lte } from 'drizzle-orm';
+import { and, asc, gt, gte, lt, lte, max, min } from 'drizzle-orm';
 import { BILLING_SKUS } from '@dash/shared';
-import type { BillingRow, ModelSpendRow, SpendPayload, SpendPerson } from '@dash/shared';
+import type {
+  BillingRow,
+  CreditHistory,
+  ModelSpendRow,
+  SpendPayload,
+  SpendPerson,
+} from '@dash/shared';
 import { db } from '../db/client.js';
 import { billingDaily, modelSpendDaily } from '../db/schema.js';
 import { loadIdentity } from './identity.js';
@@ -22,12 +28,44 @@ import { nanoToDollars } from '../lib/nano.js';
  */
 
 /**
+ * Credit recency for the range — two aggregates over Report 1, never over
+ * Report 2, which knows licence money and no credits at all.
+ *
+ * The client's wasted-seat population is "licensed, zero credits in range", so
+ * everything interesting about it happened *before* the range: the last credit
+ * day is queried with `date < from` and the in-range rows are left to the
+ * payload proper. The floor is the first day the report covers at all, and it
+ * is what stops "no credit row" from being read as "never spent a credit" —
+ * a login whose last credit predates the import is indistinguishable from one
+ * that never had any.
+ */
+async function getCreditHistory(from: string): Promise<CreditHistory> {
+  const [lastDays, floorRow] = await Promise.all([
+    db
+      .select({ login: modelSpendDaily.login, lastDate: max(modelSpendDaily.date) })
+      .from(modelSpendDaily)
+      .where(and(lt(modelSpendDaily.date, from), gt(modelSpendDaily.creditsNano, 0n)))
+      .groupBy(modelSpendDaily.login),
+    db.select({ floor: min(modelSpendDaily.date) }).from(modelSpendDaily),
+  ]);
+
+  const lastCreditBefore: Record<string, string> = {};
+  for (const row of lastDays) {
+    // The group-by guarantees a row only where one exists, but `max` is typed
+    // nullable; a null here would mean an empty group, which cannot happen.
+    if (row.lastDate !== null) lastCreditBefore[row.login] = row.lastDate;
+  }
+
+  return { floor: floorRow[0]?.floor ?? null, lastCreditBefore };
+}
+
+/**
  * Billing rows, model rows and the identity join for an inclusive date range.
  * `billingRows` (Report 2) is the sole money source; `modelRows` (Report 1)
  * carries per-model stats and is never summed into money totals client-side.
  */
 export async function getSpend(from: string, to: string): Promise<SpendPayload> {
-  const [billing, models, identity] = await Promise.all([
+  const [billing, models, identity, creditHistory] = await Promise.all([
     db
       .select()
       .from(billingDaily)
@@ -39,6 +77,7 @@ export async function getSpend(from: string, to: string): Promise<SpendPayload> 
       .where(and(gte(modelSpendDaily.date, from), lte(modelSpendDaily.date, to)))
       .orderBy(asc(modelSpendDaily.date), asc(modelSpendDaily.login), asc(modelSpendDaily.model)),
     loadIdentity(),
+    getCreditHistory(from),
   ]);
 
   const billingRows: BillingRow[] = [];
@@ -76,5 +115,5 @@ export async function getSpend(from: string, to: string): Promise<SpendPayload> 
     .sort()
     .map((login) => ({ login, ...identity.resolve(login) }));
 
-  return { billingRows, modelRows, people };
+  return { billingRows, modelRows, people, creditHistory };
 }

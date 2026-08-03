@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import type { Dispatch } from 'react';
-import type { BillingRow, ModelSpendRow, RefreshJob, SpendPerson } from '@dash/shared';
+import type {
+  BillingRow,
+  CreditHistory,
+  ModelSpendRow,
+  RefreshJob,
+  SpendPerson,
+} from '@dash/shared';
 import { cx } from '../../lib/cx.js';
 import { count, rangeLabel, relativeTime, usd } from '../../lib/format.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
@@ -15,6 +21,12 @@ import {
 import { costCentreRollup } from '../../lib/metrics/costCentre.js';
 import type { CostCentreDimension } from '../../lib/metrics/costCentre.js';
 import { wastedRoster } from '../../lib/metrics/wastedRoster.js';
+import {
+  cohortShortLabel,
+  WASTE_COHORTS,
+  wasteCohortSummary,
+} from '../../lib/metrics/wasteCohort.js';
+import type { WasteCohort } from '../../lib/metrics/wasteCohort.js';
 import { downloadRosterCsv } from '../../lib/exportCsv.js';
 import {
   applySpendFilter,
@@ -25,6 +37,7 @@ import type { SpendFilters } from '../../lib/metrics/spendFilter.js';
 import { paginate } from '../../lib/metrics/table.js';
 import { spendRangeBounds, useSpendData } from '../../hooks/useSpendData.js';
 import type { DashboardAction, DashboardState } from '../../state/dashboardState.js';
+import type { RosterGroupBy } from '../../lib/metrics/roster.js';
 import { CostCentreCard } from './CostCentreCard.js';
 import { ModelSpendChart } from './ModelSpendChart.js';
 import { SpendFilterBar } from './SpendFilterBar.js';
@@ -32,7 +45,8 @@ import { SpendKpiRow } from './SpendKpiRow.js';
 import { SpendTrendCard } from './SpendTrendCard.js';
 import { SpendUserTable } from './SpendUserTable.js';
 import { WastedSpendCard } from './WastedSpendCard.js';
-import { RosterTable } from '../RosterTable.js';
+import { ORG_DIMENSIONS, RosterTable } from '../RosterTable.js';
+import type { RosterChip } from '../RosterTable.js';
 import styles from './SpendSection.module.css';
 
 /**
@@ -45,6 +59,23 @@ import styles from './SpendSection.module.css';
 const EMPTY_BILLING: BillingRow[] = [];
 const EMPTY_MODELS: ModelSpendRow[] = [];
 const EMPTY_PEOPLE: SpendPerson[] = [];
+/** No import yet: no floor and no credit day for anybody, which is the truth. */
+const EMPTY_CREDIT_HISTORY: CreditHistory = { floor: null, lastCreditBefore: {} };
+
+/** The dimensions the wasted roster offers — the org three, plus the cohort. */
+const WASTE_DIMENSIONS: ReadonlyArray<{ value: RosterGroupBy; label: string }> = [
+  ...ORG_DIMENSIONS,
+  { value: 'cohort', label: 'Cohort' },
+];
+
+/**
+ * A chip value back to a cohort. Narrowed rather than cast: the table hands
+ * back the string it was given, and a value that is not a cohort would
+ * otherwise silently filter the roster down to nobody.
+ */
+function toCohort(value: string | null): WasteCohort | null {
+  return WASTE_COHORTS.find((cohort) => cohort === value) ?? null;
+}
 
 /**
  * Data freshness for the header — the last billing sync of any status, which
@@ -113,11 +144,39 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
   // disagree with the KPIs about who is being counted.
   const waste = useMemo(() => wastedSpend(userRows), [userRows]);
 
+  // The credit history is range-independent except for its cut-off, which the
+  // API already applied — the client only ever reads it.
+  const creditHistory = payload?.creditHistory ?? EMPTY_CREDIT_HISTORY;
+
+  // Same rows, same test as the card, split by when the credits stopped.
+  const cohorts = useMemo(
+    () => wasteCohortSummary(userRows, creditHistory, bounds.from),
+    [userRows, creditHistory, bounds],
+  );
+
+  // The cohort filter only means anything where the split is measurable at all.
+  const cohortFilter = cohorts.priorHistory ? state.wasteCohort : null;
+
   // Same rows, same test — the roster is the card above it with the names put
   // back in, so its person count is the card's seat count by construction.
   const roster = useMemo(
-    () => wastedRoster(userRows, state.rosterGroupBy),
-    [userRows, state.rosterGroupBy],
+    () => wastedRoster(userRows, state.wasteGroupBy, creditHistory, bounds.from, cohortFilter),
+    [userRows, state.wasteGroupBy, creditHistory, bounds, cohortFilter],
+  );
+
+  // Counts come from the summary rather than from the roster, which is already
+  // narrowed — a chip has to say how many it would select, not how many are on
+  // screen. "All" is the card's own seat count for the same reason.
+  const cohortChips: readonly RosterChip[] = useMemo(
+    () => [
+      { value: null, label: 'All', count: waste.seats },
+      ...cohorts.rows.map((row) => ({
+        value: row.cohort,
+        label: cohortShortLabel(row.cohort),
+        count: row.seats,
+      })),
+    ],
+    [waste.seats, cohorts],
   );
 
   // The rollup runs over the faceted row set: identical to `userRows` unless
@@ -177,21 +236,43 @@ export function SpendSection({ state, dispatch }: SpendSectionProps) {
 
           <div className={styles.split}>
             <SpendTrendCard trend={trend} subtitle={label} />
-            <WastedSpendCard waste={waste} rangeLabel={label} />
+            <WastedSpendCard waste={waste} cohorts={cohorts} rangeLabel={label} />
           </div>
 
           <RosterTable
             title="Who the wasted licences belong to"
             subtitle={`${count(roster.people)} ${roster.people === 1 ? 'person' : 'people'} · ${usd(roster.amount, 2)} · licensed with no AI credits · ${label}`}
             roster={roster}
-            dimension={state.rosterGroupBy}
+            dimension={state.wasteGroupBy}
+            dimensions={WASTE_DIMENSIONS}
             showAmount
             detailLabel="Licence cost in range"
+            noteLabel="Last AI credit"
+            {...(cohorts.priorHistory
+              ? {
+                  chips: {
+                    label: 'Filter by when the credits stopped',
+                    options: cohortChips,
+                    selected: cohortFilter,
+                    onChange: (value: string | null) =>
+                      dispatch({ type: 'setWasteCohort', cohort: toCohort(value) }),
+                  },
+                }
+              : {})}
             unmeasurableNote="No per-model report in this range, so a seat nobody used cannot be told apart from one nobody reported. Import Report 1 for this window to name them."
-            emptyNote="Every licensed person in this range used AI credits."
-            onDimensionChange={(dimension) => dispatch({ type: 'setRosterGroupBy', dimension })}
+            emptyNote={
+              cohortFilter === null
+                ? 'Every licensed person in this range used AI credits.'
+                : 'Nobody in this range falls in that cohort.'
+            }
+            onDimensionChange={(dimension) => dispatch({ type: 'setWasteGroupBy', dimension })}
             onExport={() =>
-              downloadRosterCsv(roster, 'licence_usd', `wasted-seats-${bounds.from}-${bounds.to}.csv`)
+              downloadRosterCsv(
+                roster,
+                'licence_usd',
+                `wasted-seats-${bounds.from}-${bounds.to}.csv`,
+                'last_credit',
+              )
             }
           />
 

@@ -650,6 +650,14 @@ These are load-bearing decisions, not preferences. Breaking one is a real bug.
   or `language` — `/orgs/{org}/copilot/metrics` is org-aggregate only. Those three are nullable end-to-end
   and render as `—` (`EMPTY` in `lib/format.ts`). Zero-filling would assert something false. The `mock`
   source fills all three, so local dev looks like the prototype and live GitHub does not.
+- **"Never used a credit" is only provable back to the first imported day.** The wasted-seat cohorts
+  (`lib/metrics/wasteCohort.ts`) split the pile on `CreditHistory.lastCreditBefore` — the last day each
+  login recorded credits before the range, from Report 1, never from seat activity, which is a different
+  currency over a different population. A login absent from that map spent nothing *in the imported
+  history*, so the cohort names `creditHistory.floor` instead of claiming never, and the split is
+  withheld entirely when the floor is not older than the range start. The gap is measured from the range
+  start rather than today, so a window re-opened months later reads as it did; the boundary is
+  `IDLE_THRESHOLD_DAYS`, read through the same `>=` `isIdle` uses.
 - **Gateway breakdown dimensions overlap — never sum across them.** `model`, `provider`, `api_key`,
   `team`, `tag` and `user` are six slices of the same daily total; `mcp_server` is a subset of it.
   Unlike the Copilot metrics, every gateway counter is non-null — the proxy omits what never happened,
