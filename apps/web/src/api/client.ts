@@ -209,6 +209,12 @@ export async function startBillingSync(): Promise<RefreshJob> {
   return job;
 }
 
+/** Pulls the org roster from GitHub GraphQL into `github_users`. 503 when unset. */
+export async function startMembersSync(): Promise<RefreshJob> {
+  const { job } = await request<{ job: RefreshJob }>('/refresh/members', { method: 'POST' });
+  return job;
+}
+
 /** An inclusive day range for a backfill; absent means the full nightly window. */
 export interface GatewaySyncWindow {
   from: string;
