@@ -57,6 +57,20 @@ const schema = z
       z.string().optional(),
     ),
     /**
+     * Token for the org members GraphQL pull. Falls back to GITHUB_TOKEN.
+     * Kept separate for the same reason billing is, and pulling the opposite
+     * way: this one must carry `read:org` *and* be authorized for the org's
+     * SAML SSO, which the enterprise billing PAT usually is not.
+     *
+     * Unset simply disables the sync (the scheduler skips it, the route
+     * answers 503) rather than refusing boot — JIRA and the gateway behave the
+     * same way; only COPILOT_SOURCE=github is strict.
+     */
+    GITHUB_MEMBERS_TOKEN: z.preprocess(
+      (value) => (value === '' ? undefined : value),
+      z.string().optional(),
+    ),
+    /**
      * The one shared admin secret that unlocks the dashboard. Defaulted so a
      * fresh clone still boots; override it anywhere real. This is the entire
      * auth story — see auth/session.ts.
