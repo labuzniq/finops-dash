@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  Brain,
   CaretDown,
   CaretRight,
   Cloud,
@@ -27,7 +26,6 @@ export type AppView =
   | 'copilot-spend'
   | 'copilot-analytics'
   | 'claude-code'
-  | 'llm-gateway'
   | 'data-sources'
   | 'imports';
 
@@ -67,8 +65,6 @@ const NAV_GROUPS: NavGroup[] = [
       },
       { label: 'Claude Code', icon: TerminalWindow, view: 'claude-code' },
       { label: 'Cloud infrastructure', icon: Cloud },
-      // The corporate LiteLLM proxy — every model call that isn't Copilot.
-      { label: 'LLM gateway', icon: Brain, view: 'llm-gateway' },
       { label: 'SaaS licenses', icon: Package },
     ],
   },

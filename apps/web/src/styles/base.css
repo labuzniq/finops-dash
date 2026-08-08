@@ -33,12 +33,3 @@ button {
 .theme ::selection {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
-
-/*
- * The gateway page's jump targets — the card wrappers the section nav and the
- * attention digest scroll to. The nav is sticky, so a browser landing exactly on
- * an anchor would put the card's first line underneath it.
- */
-.theme [id^='gateway-'] {
-  scroll-margin-top: 64px;
-}
