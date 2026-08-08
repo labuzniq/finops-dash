@@ -4,10 +4,7 @@ import { cx } from '../../lib/cx.js';
 import { relativeTime } from '../../lib/format.js';
 import { useLatestJob } from '../../hooks/useCopilotData.js';
 import type { UseSyncJob } from '../../hooks/useCopilotData.js';
-import { useGatewayStatus } from '../../hooks/useGatewayData.js';
 import { useTelemetryFreshness } from '../../hooks/useTelemetry.js';
-import { GatewayAlertPanel } from './GatewayAlertPanel.js';
-import { GatewayProbePanel } from './GatewayProbePanel.js';
 import styles from './DataSourcesPage.module.css';
 
 /**
@@ -137,44 +134,30 @@ interface DataSourcesPageProps {
   copilot: UseSyncJob;
   billing: UseSyncJob;
   jira: UseSyncJob;
-  gateway: UseSyncJob;
   members: UseSyncJob;
 }
 
-export function DataSourcesPage({
-  copilot,
-  billing,
-  jira,
-  gateway,
-  members,
-}: DataSourcesPageProps) {
+export function DataSourcesPage({ copilot, billing, jira, members }: DataSourcesPageProps) {
   const { sync: syncCopilot, isRunning: isRefreshing, error: refreshError } = copilot;
   const { sync: syncBilling, isRunning: isBillingSyncing, error: billingError } = billing;
   const { sync: syncJira, isRunning: isJiraSyncing, error: jiraError } = jira;
-  const { sync: syncGateway, isRunning: isGatewaySyncing, error: gatewayError } = gateway;
   const { sync: syncMembers, isRunning: isMembersSyncing, error: membersError } = members;
 
   const latestJobQuery = useLatestJob('copilot');
   const billingJobQuery = useLatestJob('billing');
   const jiraJobQuery = useLatestJob('jira');
-  const gatewayJobQuery = useLatestJob('gateway');
   const membersJobQuery = useLatestJob('members');
-  const gatewayStatusQuery = useGatewayStatus();
   const freshnessQuery = useTelemetryFreshness();
 
   const latestJob = latestJobQuery.data ?? null;
   const billingJob = billingJobQuery.data ?? null;
   const jiraJob = jiraJobQuery.data ?? null;
-  const gatewayJob = gatewayJobQuery.data ?? null;
   const membersJob = membersJobQuery.data ?? null;
 
   const copilotState = syncState(latestJob, isRefreshing);
   const billingState = syncState(billingJob, isBillingSyncing);
   const jiraState = syncState(jiraJob, isJiraSyncing);
-  const gatewayState = syncState(gatewayJob, isGatewaySyncing);
   const membersState = syncState(membersJob, isMembersSyncing);
-  const gatewaySource = gatewayStatusQuery.data?.source ?? 'off';
-  const gatewayConfigured = gatewayStatusQuery.data?.configured ?? false;
 
   // Telemetry is pushed, so "connected" means a datapoint has arrived — there
   // is no job whose success or failure could be reported instead.
@@ -290,35 +273,6 @@ export function DataSourcesPage({
             latestAt === null ? 'Not yet received' : `Connected · ${relativeTime(latestAt)}`
           }
         />
-      </ProviderGroup>
-
-      <ProviderGroup label="LLM GATEWAY">
-        <SourceRow
-          name="LiteLLM proxy"
-          fields="spend · tokens · requests · by model, provider, key, team, tag, user"
-          note={
-            gatewayConfigured
-              ? `Source ${gatewaySource}. Runs daily with the other pulls; Sync pulls it now.`
-              : 'GATEWAY_SOURCE is off — set it to mock or litellm to enable this source.'
-          }
-          state={gatewayConfigured ? gatewayState : 'idle'}
-          status={gatewayConfigured ? statusText(gatewayState, gatewayJob) : 'Not configured'}
-          error={errorFor(gatewayError, gatewayJob)}
-          placeholder={!gatewayConfigured}
-          action={
-            <button
-              type="button"
-              className={styles.connect}
-              aria-label="Sync LiteLLM gateway"
-              onClick={() => syncGateway()}
-              disabled={isGatewaySyncing || !gatewayConfigured}
-            >
-              {isGatewaySyncing ? 'Syncing…' : 'Sync'}
-            </button>
-          }
-        />
-        <GatewayProbePanel enabled={gatewayConfigured} />
-        <GatewayAlertPanel enabled={gatewayConfigured} />
       </ProviderGroup>
 
       <ProviderGroup label="AZURE COST MANAGEMENT">
